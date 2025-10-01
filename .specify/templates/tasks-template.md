@@ -119,9 +119,19 @@ Task: "Integration test auth in tests/integration/test_auth.py"
 ## Validation Checklist
 *GATE: Checked by main() before returning*
 
-- [ ] All contracts have corresponding tests
+### Constitution Compliance
+- [ ] All contracts have corresponding tests (TDD requirement)
 - [ ] All entities have model tasks
-- [ ] All tests come before implementation
+- [ ] All tests come before implementation (TDD cycle)
+- [ ] TypeScript strict mode configuration task included
+- [ ] ESLint/Prettier setup tasks included
+- [ ] Accessibility testing tasks included
+- [ ] Performance benchmarking tasks included
+- [ ] Documentation tasks for each component
+
+### Task Quality
 - [ ] Parallel tasks truly independent
 - [ ] Each task specifies exact file path
 - [ ] No task modifies same file as another [P] task
+- [ ] Bundle size validation included in polish phase
+- [ ] Visual regression tests included for UI components

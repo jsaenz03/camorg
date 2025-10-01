@@ -47,7 +47,35 @@
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+### Code Quality Gates
+- [ ] TypeScript strict mode enabled with zero warnings
+- [ ] ESLint/Prettier configuration confirmed
+- [ ] Complexity thresholds defined (cyclomatic <10, cognitive <15, file <300 lines)
+- [ ] Component architecture follows single responsibility principle
+
+### Testing Requirements
+- [ ] TDD approach confirmed: tests written before implementation
+- [ ] Unit test coverage target >95% established
+- [ ] Integration tests planned for user interactions
+- [ ] Visual regression testing strategy defined
+
+### UX Consistency Gates
+- [ ] Design system tokens usage confirmed (shadcn/ui compliance)
+- [ ] WCAG 2.1 AA accessibility requirements planned
+- [ ] Responsive design approach defined (mobile-first)
+- [ ] Component states planned (loading, error, empty, interactive)
+
+### Performance Standards
+- [ ] Bundle size budget established (<50KB per component gzipped)
+- [ ] Performance targets defined (paint <100ms, interaction <16ms)
+- [ ] Tree-shaking compatibility confirmed
+- [ ] Lazy loading strategy for non-critical components
+
+### Documentation Requirements
+- [ ] Storybook integration planned
+- [ ] TypeScript interfaces for prop documentation
+- [ ] Usage guidelines and examples planned
+- [ ] Accessibility documentation included
 
 ## Project Structure
 
@@ -216,4 +244,4 @@ directories captured above]
 - [ ] Complexity deviations documented
 
 ---
-*Based on Constitution v2.1.1 - See `/memory/constitution.md`*
+*Based on Constitution v2.0.0 - See `.specify/memory/constitution.md`*
