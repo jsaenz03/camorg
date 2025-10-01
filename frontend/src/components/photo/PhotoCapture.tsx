@@ -15,6 +15,7 @@ export function PhotoCapture({ onPhotoCapture, onError }: PhotoCaptureProps) {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const displayCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const startCamera = useCallback(async () => {
@@ -59,20 +60,25 @@ export function PhotoCapture({ onPhotoCapture, onError }: PhotoCaptureProps) {
   }, []);
 
   const capturePhoto = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return;
+    if (!videoRef.current || !canvasRef.current || !displayCanvasRef.current) return;
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
+    const displayCanvas = displayCanvasRef.current;
     const ctx = canvas.getContext('2d');
+    const displayCtx = displayCanvas.getContext('2d');
 
-    if (!ctx) return;
+    if (!ctx || !displayCtx) return;
 
     // Set canvas dimensions to match video
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
+    displayCanvas.width = video.videoWidth;
+    displayCanvas.height = video.videoHeight;
 
-    // Draw video frame to canvas
+    // Draw video frame to both canvases
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    displayCtx.drawImage(video, 0, 0, displayCanvas.width, displayCanvas.height);
 
     // Convert to blob
     canvas.toBlob((blob) => {
@@ -85,10 +91,10 @@ export function PhotoCapture({ onPhotoCapture, onError }: PhotoCaptureProps) {
 
   const retakePhoto = useCallback(() => {
     setHasPhoto(false);
-    if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d');
+    if (displayCanvasRef.current) {
+      const ctx = displayCanvasRef.current.getContext('2d');
       if (ctx) {
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        ctx.clearRect(0, 0, displayCanvasRef.current.width, displayCanvasRef.current.height);
       }
     }
   }, []);
@@ -136,7 +142,7 @@ export function PhotoCapture({ onPhotoCapture, onError }: PhotoCaptureProps) {
 
           {hasPhoto && (
             <canvas
-              ref={canvasRef}
+              ref={displayCanvasRef}
               className="w-full h-full object-cover"
             />
           )}
