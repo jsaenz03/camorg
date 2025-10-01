@@ -282,7 +282,7 @@ export class FileSystemService {
   /**
    * Import file using Open dialog
    */
-  async importFile(acceptedTypes: string[] = ['image/*']): Promise<File> {
+  async importFile(_acceptedTypes: string[] = ['image/*']): Promise<File> {
     if (!('showOpenFilePicker' in window)) {
       throw new FileSystemNotSupportedError('File picker is not supported');
     }

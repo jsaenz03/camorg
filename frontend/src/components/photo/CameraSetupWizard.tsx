@@ -22,7 +22,7 @@ type SetupStep = 'intro' | 'permissions' | 'testing' | 'complete';
 export function CameraSetupWizard({ open, onOpenChange, onSetupComplete }: CameraSetupWizardProps) {
   const [currentStep, setCurrentStep] = useState<SetupStep>('intro');
   const [permissionGranted, setPermissionGranted] = useState<boolean | null>(null);
-  const [cameraWorking, setCameraWorking] = useState<boolean | null>(null);
+  const [_cameraWorking, setCameraWorking] = useState<boolean | null>(null);
 
   const requestCameraPermission = async () => {
     try {

@@ -162,7 +162,6 @@ export class BodyPartHierarchyUtils {
    * Build hierarchy tree from flat array of body parts
    */
   static buildHierarchy(bodyParts: BodyPartCategory[]): BodyPartHierarchy {
-    const hierarchy: BodyPartHierarchy = {};
     const categoryMap = new Map<string, BodyPartCategory>();
 
     // Create lookup map

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BodyPartService } from '../../services/body-part-service';
-import type { CreateBodyPartRequest, UpdateBodyPartRequest } from '../../models/body-part';
+import type { CreateBodyPartRequest } from '../../models/body-part';
 
 describe('BodyPartService Contract Tests', () => {
   let bodyPartService: BodyPartService;
@@ -14,7 +14,7 @@ describe('BodyPartService Contract Tests', () => {
       const request: CreateBodyPartRequest = {
         patientId: 'patient-123',
         name: 'Left Arm',
-        parentId: null, // Root level
+        parentId: undefined, // Root level
         displayOrder: 1
       };
 

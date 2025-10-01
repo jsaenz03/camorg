@@ -120,77 +120,81 @@ export class DermatologyDatabase extends Dexie {
    * Set up database hooks for data integrity and maintenance
    */
   private setupHooks(): void {
+    const db = this;
+
     // Patient deletion cascade
-    this.patients.hook('deleting', (primKey, obj, trans) => {
+    this.patients.hook('deleting', (_primKey, obj) => {
       if (obj) {
         // Delete related body part categories
-        trans.bodyPartCategories.where('patientId').equals(obj.id).delete();
+        db.bodyPartCategories.where('patientId').equals(obj.id).delete();
 
         // Delete related photos
-        trans.photos.where('patientId').equals(obj.id).delete();
+        db.photos.where('patientId').equals(obj.id).delete();
 
         // Delete related progress sessions
-        trans.progressSessions.where('patientId').equals(obj.id).delete();
+        db.progressSessions.where('patientId').equals(obj.id).delete();
 
         // Delete related export reports
-        trans.exportReports.where('patientId').equals(obj.id).delete();
+        db.exportReports.where('patientId').equals(obj.id).delete();
       }
     });
 
     // Body part category deletion cascade
-    this.bodyPartCategories.hook('deleting', (primKey, obj, trans) => {
+    this.bodyPartCategories.hook('deleting', (_primKey, obj) => {
       if (obj) {
         // Delete child categories recursively
-        trans.bodyPartCategories.where('parentId').equals(obj.id).delete();
+        db.bodyPartCategories.where('parentId').equals(obj.id).delete();
 
         // Delete related photos
-        trans.photos.where('bodyPartCategoryId').equals(obj.id).delete();
+        db.photos.where('bodyPartCategoryId').equals(obj.id).delete();
       }
     });
 
     // Photo count maintenance for body part categories
-    this.photos.hook('creating', (primKey, obj, trans) => {
+    this.photos.hook('creating', (_primKey, obj) => {
       // Increment photo count for body part category
-      trans.bodyPartCategories
+      db.bodyPartCategories
         .where('id')
         .equals(obj.bodyPartCategoryId)
-        .modify(category => {
+        .modify((category: BodyPartCategory) => {
           category.photoCount = (category.photoCount || 0) + 1;
         });
     });
 
-    this.photos.hook('deleting', (primKey, obj, trans) => {
+    this.photos.hook('deleting', (_primKey, obj) => {
       if (obj) {
         // Decrement photo count for body part category
-        trans.bodyPartCategories
+        db.bodyPartCategories
           .where('id')
           .equals(obj.bodyPartCategoryId)
-          .modify(category => {
+          .modify((category: BodyPartCategory) => {
             category.photoCount = Math.max(0, (category.photoCount || 0) - 1);
           });
       }
     });
 
-    this.photos.hook('updating', (modifications, primKey, obj, trans) => {
+    this.photos.hook('updating', (modifications, _primKey, obj) => {
       // Handle body part category changes
-      if (modifications.bodyPartCategoryId && obj) {
-        const oldCategoryId = obj.bodyPartCategoryId;
-        const newCategoryId = modifications.bodyPartCategoryId;
+      const mods = modifications as Partial<Photo>;
+      if (mods.bodyPartCategoryId && obj) {
+        const photo = obj as Photo;
+        const oldCategoryId = photo.bodyPartCategoryId;
+        const newCategoryId = mods.bodyPartCategoryId;
 
         if (oldCategoryId !== newCategoryId) {
           // Decrement old category
-          trans.bodyPartCategories
+          db.bodyPartCategories
             .where('id')
             .equals(oldCategoryId)
-            .modify(category => {
+            .modify((category: BodyPartCategory) => {
               category.photoCount = Math.max(0, (category.photoCount || 0) - 1);
             });
 
           // Increment new category
-          trans.bodyPartCategories
+          db.bodyPartCategories
             .where('id')
             .equals(newCategoryId)
-            .modify(category => {
+            .modify((category: BodyPartCategory) => {
               category.photoCount = (category.photoCount || 0) + 1;
             });
         }
@@ -198,12 +202,12 @@ export class DermatologyDatabase extends Dexie {
     });
 
     // Update timestamps
-    this.patients.hook('updating', (modifications, primKey, obj, trans) => {
-      modifications.updatedAt = new Date();
+    this.patients.hook('updating', (modifications) => {
+      (modifications as { updatedAt: Date }).updatedAt = new Date();
     });
 
-    this.progressSessions.hook('updating', (modifications, primKey, obj, trans) => {
-      modifications.updatedAt = new Date();
+    this.progressSessions.hook('updating', (modifications) => {
+      (modifications as { updatedAt: Date }).updatedAt = new Date();
     });
   }
 }

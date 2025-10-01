@@ -22,7 +22,7 @@ import {
   ExportGenerationError,
 } from '../models/export';
 import type { Patient } from '../models/patient';
-import type { Photo } from '../models/photo';
+import type { Photo, PhotoSearchFilters } from '../models/photo';
 import type { BodyPartCategory } from '../models/body-part';
 
 export interface ExportProgress {
@@ -250,7 +250,7 @@ export class ExportService {
   }
 
   private async getBodyPartsForReport(
-    request: ExportRequest,
+    _request: ExportRequest,
     photos: Photo[]
   ): Promise<BodyPartCategory[]> {
     try {
@@ -273,7 +273,7 @@ export class ExportService {
     }
   }
 
-  private buildPhotoFilters(parameters: ReportParameters) {
+  private buildPhotoFilters(parameters: ReportParameters): PhotoSearchFilters {
     return {
       dateRange: parameters.dateRange ? {
         start: parameters.dateRange.startDate,
@@ -281,7 +281,7 @@ export class ExportService {
       } : undefined,
       bodyPartCategoryId: parameters.bodyPartIds?.[0], // Simplified for now
       sortBy: this.mapSortOrderToPhotoSort(parameters.sortOrder),
-      sortOrder: parameters.sortOrder.includes('desc') ? 'desc' : 'asc',
+      sortOrder: (parameters.sortOrder.includes('desc') ? 'desc' : 'asc') as 'asc' | 'desc',
     };
   }
 
@@ -458,10 +458,9 @@ export class ExportService {
   private async addPhotoPage(
     pdf: jsPDF,
     photos: Photo[],
-    parameters: ReportParameters,
-    options: ExportOptions
+    _parameters: ReportParameters,
+    _options: ExportOptions
   ): Promise<void> {
-    const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
 
     let currentY = 20;
@@ -519,7 +518,8 @@ export class ExportService {
       pdf.setPage(i);
 
       pdf.saveGraphicsState();
-      pdf.setGState(new pdf.GState({ opacity: 0.1 }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pdf.setGState(new (pdf as any).GState({ opacity: 0.1 }));
       pdf.setTextColor(128, 128, 128);
       pdf.setFontSize(40);
       pdf.setFont('helvetica', 'bold');
@@ -588,5 +588,5 @@ export class ExportService {
 }
 
 // Export service instance and types
-export type { ExportRequest, ReportPreview, ExportOptions, ExportProgress };
+export type { ExportRequest, ReportPreview };
 export { ExportReport, ReportNotFoundError, ExportValidationError, ExportGenerationError };

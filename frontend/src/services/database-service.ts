@@ -130,7 +130,7 @@ export class DatabaseService {
    * Optimize database performance
    */
   async optimizeDatabase(): Promise<void> {
-    const db = await this.getDatabase();
+    await this.getDatabase();
 
     try {
       // Run integrity check first
@@ -191,7 +191,7 @@ export class DatabaseService {
   /**
    * Perform automatic repairs based on integrity report
    */
-  private async performRepairs(report: IntegrityReport): Promise<void> {
+  private async performRepairs(_report: IntegrityReport): Promise<void> {
     const db = await this.getDatabase();
 
     await db.transaction('rw', db.tables, async () => {

@@ -18,8 +18,7 @@ import {
   PhotoUtils,
   PhotoNotFoundError,
   CameraAccessError,
-  FileSystemError,
-  InvalidFileTypeError
+  FileSystemError
 } from '../models/photo';
 
 export interface CameraConstraints {
@@ -440,7 +439,6 @@ export class PhotoService {
   }> {
     const dimensions = await this.getImageDimensions(file);
     const timestamp = Date.now();
-    const extension = PhotoUtils.getFileExtensionFromMimeType(file.type);
     const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const fileName = `imported_${timestamp}_${sanitizedName}`;
     const filePath = `photos/${fileName}`;
