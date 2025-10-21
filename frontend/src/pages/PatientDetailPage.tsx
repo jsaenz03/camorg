@@ -4,10 +4,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PatientService } from '@/services/patient-service';
 import { BodyPartService } from '@/services/body-part-service';
 import { PhotoService } from '@/services/photo-service';
+import { PhotoCaptureDialog } from '@/components/photo/PhotoCaptureDialog';
+import { PhotoThumbnail } from '@/components/photo/PhotoThumbnail';
+import { PhotoDetailDialog } from '@/components/photo/PhotoDetailDialog';
+import { ConfirmationDialog } from '@/components/ui/confirmation-dialog';
 import type { Patient } from '@/models/patient';
 import type { BodyPartCategory } from '@/models/body-part';
 import type { Photo } from '@/models/photo';
-import { ArrowLeft, Camera, Calendar, User, FolderTree, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Camera, Calendar, User, FolderTree, Image as ImageIcon, Trash2 } from 'lucide-react';
 
 interface PatientDetailPageProps {
   patientId: string;
@@ -21,6 +25,12 @@ export function PatientDetailPage({ patientId, onBack }: PatientDetailPageProps)
   const [selectedBodyPart, setSelectedBodyPart] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showCaptureDialog, setShowCaptureDialog] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [photoToDelete, setPhotoToDelete] = useState<Photo | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDetailDialog, setShowDetailDialog] = useState(false);
+  const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
 
   const patientService = new PatientService();
   const bodyPartService = new BodyPartService();
@@ -76,6 +86,46 @@ export function PatientDetailPage({ patientId, onBack }: PatientDetailPageProps)
     return photos.filter(p => p.bodyPartCategoryId === bodyPartId).length;
   };
 
+  const handlePhotoSaved = (savedPhoto: Photo) => {
+    // Add the new photo to the existing photos
+    setPhotos(prevPhotos => [savedPhoto, ...prevPhotos]);
+
+    // If we have a body part selected and it matches the photo's body part,
+    // the photo will automatically appear in the filtered view
+    console.log('Photo saved successfully:', savedPhoto.id);
+  };
+
+  const handlePhotoClick = (photo: Photo) => {
+    setSelectedPhoto(photo);
+    setShowDetailDialog(true);
+  };
+
+  const handlePhotoDelete = (photo: Photo) => {
+    setPhotoToDelete(photo);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDeletePhoto = async () => {
+    if (!photoToDelete) return;
+
+    try {
+      setIsDeleting(true);
+      await photoService.deletePhoto(photoToDelete.id);
+
+      // Remove photo from the state
+      setPhotos(prevPhotos => prevPhotos.filter(p => p.id !== photoToDelete!.id));
+
+      console.log('Photo deleted successfully:', photoToDelete.id);
+      setDeleteConfirmOpen(false);
+      setPhotoToDelete(null);
+    } catch (error) {
+      console.error('Failed to delete photo:', error);
+      // TODO: Show error message to user
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-64">
@@ -114,7 +164,10 @@ export function PatientDetailPage({ patientId, onBack }: PatientDetailPageProps)
           <h1 className="text-3xl font-bold tracking-tight">{patient.name}</h1>
           <p className="text-muted-foreground">Patient Details & Photo Management</p>
         </div>
-        <Button className="flex items-center gap-2">
+        <Button
+          className="flex items-center gap-2"
+          onClick={() => setShowCaptureDialog(true)}
+        >
           <Camera className="h-4 w-4" />
           Capture Photo
         </Button>
@@ -237,29 +290,25 @@ export function PatientDetailPage({ patientId, onBack }: PatientDetailPageProps)
                     ? 'No photos for this body part'
                     : 'Start by capturing your first photo'}
                 </p>
-                <Button>
+                <Button onClick={() => setShowCaptureDialog(true)}>
                   <Camera className="h-4 w-4 mr-2" />
                   Capture Photo
                 </Button>
               </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {filteredPhotos.map((photo) => (
-                  <Card key={photo.id} className="overflow-hidden hover:shadow-md transition-shadow">
-                    <div className="aspect-square bg-muted flex items-center justify-center">
-                      <ImageIcon className="h-12 w-12 text-muted-foreground" />
-                      {/* TODO: Display actual photo thumbnail */}
-                    </div>
-                    <CardContent className="p-3">
-                      <p className="text-xs text-muted-foreground">
-                        {formatDate(photo.captureDate)}
-                      </p>
-                      {photo.description && (
-                        <p className="text-sm mt-1 truncate">{photo.description}</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
+                {filteredPhotos.map((photo) => {
+                  const bodyPartName = bodyParts.find(bp => bp.id === photo.bodyPartCategoryId)?.name;
+                  return (
+                    <PhotoThumbnail
+                      key={photo.id}
+                      photo={photo}
+                      bodyPartName={bodyPartName}
+                      onPhotoClick={handlePhotoClick}
+                      onPhotoDelete={handlePhotoDelete}
+                    />
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -275,6 +324,39 @@ export function PatientDetailPage({ patientId, onBack }: PatientDetailPageProps)
           </div>
         </CardContent>
       </Card>
+
+      {/* Photo Capture Dialog */}
+      <PhotoCaptureDialog
+        open={showCaptureDialog}
+        onOpenChange={setShowCaptureDialog}
+        patientId={patientId}
+        bodyParts={bodyParts}
+        onPhotoSaved={handlePhotoSaved}
+      />
+
+      {/* Photo Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        open={deleteConfirmOpen}
+        onOpenChange={setDeleteConfirmOpen}
+        title="Delete Photo"
+        description={`Are you sure you want to delete this photo? This action cannot be undone.${
+          photoToDelete?.description ? `\n\nDescription: ${photoToDelete.description}` : ''
+        }`}
+        confirmText="Delete Photo"
+        cancelText="Cancel"
+        variant="destructive"
+        onConfirm={confirmDeletePhoto}
+        isConfirming={isDeleting}
+      />
+
+      {/* Photo Detail Dialog */}
+      <PhotoDetailDialog
+        open={showDetailDialog}
+        onOpenChange={setShowDetailDialog}
+        photo={selectedPhoto}
+        bodyPartName={selectedPhoto ? bodyParts.find(bp => bp.id === selectedPhoto.bodyPartCategoryId)?.name : undefined}
+        patientName={patient?.name}
+      />
     </div>
   );
 }

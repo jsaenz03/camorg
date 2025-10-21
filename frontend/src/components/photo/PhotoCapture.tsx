@@ -6,9 +6,10 @@ import { Camera, Square, RotateCcw, Download } from 'lucide-react';
 interface PhotoCaptureProps {
   onPhotoCapture?: (imageBlob: Blob) => void;
   onError?: (error: string) => void;
+  disabled?: boolean;
 }
 
-export function PhotoCapture({ onPhotoCapture, onError }: PhotoCaptureProps) {
+export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: PhotoCaptureProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasPhoto, setHasPhoto] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,7 +152,9 @@ export function PhotoCapture({ onPhotoCapture, onError }: PhotoCaptureProps) {
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
                 <Camera className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">Camera preview will appear here</p>
+                <p className="text-muted-foreground">
+                  {disabled ? 'Please select a body part first' : 'Camera preview will appear here'}
+                </p>
               </div>
             </div>
           )}
@@ -174,7 +177,11 @@ export function PhotoCapture({ onPhotoCapture, onError }: PhotoCaptureProps) {
         {/* Controls */}
         <div className="flex justify-center gap-2">
           {!isStreaming && !hasPhoto && (
-            <Button onClick={startCamera} className="flex items-center gap-2">
+            <Button
+              onClick={startCamera}
+              className="flex items-center gap-2"
+              disabled={disabled}
+            >
               <Camera className="h-4 w-4" />
               Start Camera
             </Button>
@@ -208,7 +215,9 @@ export function PhotoCapture({ onPhotoCapture, onError }: PhotoCaptureProps) {
 
         {/* Instructions */}
         <div className="text-sm text-muted-foreground text-center">
-          {!isStreaming && !hasPhoto && 'Click "Start Camera" to begin photo capture'}
+          {!isStreaming && !hasPhoto && (
+            disabled ? 'Please select a body part to enable camera' : 'Click "Start Camera" to begin photo capture'
+          )}
           {isStreaming && !hasPhoto && 'Position the camera and click "Capture Photo"'}
           {hasPhoto && 'Photo captured! You can retake or download the image'}
         </div>
