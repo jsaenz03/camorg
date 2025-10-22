@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Camera, Square, RotateCcw, Download } from 'lucide-react';
@@ -35,17 +35,48 @@ export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: Phot
         }
       });
 
+      streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        setIsStreaming(true);
+        try {
+          await videoRef.current.play();
+        } catch (playError) {
+          console.warn('Unable to start camera preview automatically', playError);
+        }
       }
+
+      setIsStreaming(true);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to access camera';
       setError(errorMessage);
       onError?.(errorMessage);
     }
   }, [onError]);
+
+  useEffect(() => {
+    if (!isStreaming) {
+      return;
+    }
+
+    const videoElement = videoRef.current;
+    const stream = streamRef.current;
+
+    if (videoElement && stream) {
+      videoElement.srcObject = stream;
+      const playPromise = videoElement.play();
+      if (playPromise) {
+        playPromise.catch((err) => {
+          console.warn('Unable to start camera preview automatically', err);
+        });
+      }
+    }
+
+    return () => {
+      if (videoElement) {
+        videoElement.srcObject = null;
+      }
+    };
+  }, [isStreaming]);
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
