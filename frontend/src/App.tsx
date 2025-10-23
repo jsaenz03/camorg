@@ -3,6 +3,7 @@ import { PatientListPage } from '@/pages/PatientListPage';
 import { PatientDetailPage } from '@/pages/PatientDetailPage';
 import { CameraTestPage } from '@/pages/CameraTestPage';
 import { CameraSetupWizard } from '@/components/photo/CameraSetupWizard';
+import { Toaster } from '@/components/ui/toaster';
 import { Button } from '@/components/ui/button';
 import { Users, Camera } from 'lucide-react';
 
@@ -99,6 +100,9 @@ function App() {
         onOpenChange={setShowCameraWizard}
         onSetupComplete={handleSetupComplete}
       />
+
+      {/* Toast Notifications */}
+      <Toaster />
     </div>
   );
 }

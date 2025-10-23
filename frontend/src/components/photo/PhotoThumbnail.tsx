@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { PhotoService } from '@/services/photo-service';
 import { FileSystemService } from '@/services/file-system-service';
 import type { Photo } from '@/models/photo';
 import { Image as ImageIcon, Download, Trash2, Calendar } from 'lucide-react';
@@ -140,8 +139,9 @@ export function PhotoThumbnail({
                 setError(null);
                 setLoading(true);
                 // Try loading full image as fallback
-                fileSystemService.getFileUrl(photo.filePath).then(url => {
-                  if (url) {
+                fileSystemService.loadPhoto(photo.filePath).then(blob => {
+                  if (blob) {
+                    const url = URL.createObjectURL(blob);
                     setImageUrl(url);
                     setError(null);
                   } else {
