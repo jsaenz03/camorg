@@ -2,12 +2,13 @@ import { useState, useEffect } from 'react';
 import { PatientListPage } from '@/pages/PatientListPage';
 import { PatientDetailPage } from '@/pages/PatientDetailPage';
 import { CameraTestPage } from '@/pages/CameraTestPage';
+import { SettingsPage } from '@/pages/SettingsPage';
 import { CameraSetupWizard } from '@/components/photo/CameraSetupWizard';
 import { Toaster } from '@/components/ui/toaster';
 import { Button } from '@/components/ui/button';
-import { Users, Camera } from 'lucide-react';
+import { Users, Camera, Settings } from 'lucide-react';
 
-type CurrentPage = 'patients' | 'patient-detail' | 'camera';
+type CurrentPage = 'patients' | 'patient-detail' | 'camera' | 'settings';
 
 const CAMERA_SETUP_KEY = 'camorg-camera-setup-complete';
 
@@ -54,6 +55,8 @@ function App() {
         );
       case 'camera':
         return <CameraTestPage onBack={() => setCurrentPage('patients')} />;
+      case 'settings':
+        return <SettingsPage onBack={() => setCurrentPage('patients')} />;
       default:
         return <PatientListPage onPatientSelect={handlePatientSelect} />;
     }
@@ -85,6 +88,15 @@ function App() {
               >
                 <Camera className="h-4 w-4" />
                 Camera Test
+              </Button>
+              <Button
+                variant={currentPage === 'settings' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setCurrentPage('settings')}
+                className="flex items-center gap-2"
+              >
+                <Settings className="h-4 w-4" />
+                Settings
               </Button>
             </nav>
           </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { FileSystemService } from '@/services/file-system-service';
+import { PhotoStorageService } from '@/services/photo-storage-service';
 import type { Photo } from '@/models/photo';
 import { Image as ImageIcon, Download, Trash2, Calendar } from 'lucide-react';
 
@@ -23,8 +23,6 @@ export function PhotoThumbnail({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const fileSystemService = new FileSystemService();
 
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('en-US', {
@@ -50,8 +48,9 @@ export function PhotoThumbnail({
       setError(null);
 
       // Try to load thumbnail first, then full image as fallback
-      const pathToLoad = photo.thumbnailPath || photo.filePath;
-      const imageBlob = await fileSystemService.loadPhoto(pathToLoad);
+      const imageBlob = photo.thumbnailPath
+        ? await PhotoStorageService.loadThumbnail(photo.thumbnailPath, photo.id)
+        : await PhotoStorageService.loadPhoto(photo.filePath, photo.id);
 
       if (imageBlob) {
         const url = URL.createObjectURL(imageBlob);
@@ -69,7 +68,7 @@ export function PhotoThumbnail({
 
   const handleDownload = async () => {
     try {
-      const imageBlob = await fileSystemService.loadPhoto(photo.filePath);
+      const imageBlob = await PhotoStorageService.loadPhoto(photo.filePath, photo.id);
       if (imageBlob) {
         const url = URL.createObjectURL(imageBlob);
         const a = document.createElement('a');
@@ -139,7 +138,7 @@ export function PhotoThumbnail({
                 setError(null);
                 setLoading(true);
                 // Try loading full image as fallback
-                fileSystemService.loadPhoto(photo.filePath).then(blob => {
+                PhotoStorageService.loadPhoto(photo.filePath, photo.id).then(blob => {
                   if (blob) {
                     const url = URL.createObjectURL(blob);
                     setImageUrl(url);

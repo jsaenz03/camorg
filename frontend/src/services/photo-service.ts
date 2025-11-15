@@ -4,7 +4,7 @@
  */
 
 import { DatabaseService } from './database-service';
-import { FileSystemService } from './file-system-service';
+import { PhotoStorageService } from './photo-storage-service';
 import type {
   Photo,
   CapturePhotoRequest,
@@ -38,12 +38,10 @@ export interface CaptureSettings {
 
 export class PhotoService {
   private databaseService: DatabaseService;
-  private fileSystemService: FileSystemService;
   private currentStream: MediaStream | null = null;
 
   constructor() {
     this.databaseService = new DatabaseService();
-    this.fileSystemService = new FileSystemService();
   }
 
   /**
@@ -266,10 +264,15 @@ export class PhotoService {
         throw new PhotoNotFoundError(photoId);
       }
 
-      // Delete files
+      // Delete files using the storage service
       try {
-        // TODO: Implement deleteFile method in FileSystemService
-        console.warn('File deletion not implemented, skipping cleanup for:', photo.filePath);
+        // Delete original photo
+        await PhotoStorageService.deletePhoto(photo.filePath, photo.id);
+
+        // Delete thumbnail if exists
+        if (photo.thumbnailPath) {
+          await PhotoStorageService.deleteThumbnail(photo.thumbnailPath, photo.id);
+        }
       } catch (fileError) {
         console.warn('Failed to delete photo files:', fileError);
         // Continue with database deletion even if file deletion fails
@@ -523,7 +526,25 @@ export class PhotoService {
 
   private async savePhotoFile(photo: Photo, blob: Blob): Promise<void> {
     try {
-      await this.fileSystemService.saveFileAs(photo.filePath, blob, photo.fileName);
+      // Get body part name from database
+      const db = await this.databaseService.getDatabase();
+      const bodyPart = await db.bodyPartCategories.get(photo.bodyPartCategoryId);
+      const bodyPartName = bodyPart?.name || 'unknown';
+
+      // Save using the storage service
+      const result = await PhotoStorageService.savePhoto(
+        photo.patientId,
+        bodyPartName,
+        photo.fileName,
+        blob,
+        photo.id
+      );
+
+      // Update photo with actual file path
+      await db.photos.update(photo.id, {
+        filePath: result.filePath,
+        fileSize: result.fileSize
+      });
     } catch (error) {
       throw new FileSystemError('photo save', 'Failed to save photo file');
     }
@@ -538,13 +559,23 @@ export class PhotoService {
         photo.fileName,
         thumbnailSize
       );
-      const thumbnailPath = `thumbnails/${thumbnailFileName}`;
 
-      await this.fileSystemService.saveFileAs(thumbnailPath, thumbnailBlob, thumbnailFileName);
+      // Get body part name from database
+      const db = await this.databaseService.getDatabase();
+      const bodyPart = await db.bodyPartCategories.get(photo.bodyPartCategoryId);
+      const bodyPartName = bodyPart?.name || 'unknown';
+
+      // Save using the storage service
+      const result = await PhotoStorageService.saveThumbnail(
+        photo.patientId,
+        bodyPartName,
+        thumbnailFileName,
+        thumbnailBlob,
+        photo.id
+      );
 
       // Update photo record with thumbnail path
-      const db = await this.databaseService.getDatabase();
-      await db.photos.update(photo.id, { thumbnailPath });
+      await db.photos.update(photo.id, { thumbnailPath: result.filePath });
 
     } catch (error) {
       console.warn('Failed to generate thumbnail:', error);
