@@ -14,6 +14,7 @@ import {
   PatientValidationError,
 } from '../models/patient';
 import { databaseService } from './database-service';
+import { bodyPartInitializer } from './body-part-initializer';
 
 export class PatientService {
   /**
@@ -34,6 +35,16 @@ export class PatientService {
       await db.patients.add(patient);
 
       console.log(`Patient created: ${patient.id}`);
+
+      // Initialize default body parts for the new patient
+      try {
+        const bodyPartsCount = await bodyPartInitializer.initializeBodyPartsForPatient(patient.id);
+        console.log(`Initialized ${bodyPartsCount} body parts for patient ${patient.id}`);
+      } catch (error) {
+        console.warn('Failed to initialize body parts for patient:', error);
+        // Don't throw - patient was created successfully, body parts can be added later
+      }
+
       return patient;
     } catch (error) {
       console.error('Failed to create patient:', error);
