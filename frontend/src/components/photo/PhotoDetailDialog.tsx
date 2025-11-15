@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { PhotoStorageService } from '@/services/photo-storage-service';
 import { PhotoService } from '@/services/photo-service';
 import type { Photo } from '@/models/photo';
 import { Calendar, Download, Image as ImageIcon, User, AlertTriangle, Clock, FileImage } from 'lucide-react';
@@ -60,6 +61,7 @@ export function PhotoDetailDialog({
       setError(null);
 
       // Load the full image for detail view
+      const imageBlob = await PhotoStorageService.loadPhoto(photo.filePath, photo.id);
       const imageBlob = await photoService.loadPhotoBlob(photo.id);
 
       if (imageBlob) {
@@ -80,6 +82,7 @@ export function PhotoDetailDialog({
     if (!photo) return;
 
     try {
+      const imageBlob = await PhotoStorageService.loadPhoto(photo.filePath, photo.id);
       const imageBlob = await photoService.loadPhotoBlob(photo.id);
       if (imageBlob) {
         const url = URL.createObjectURL(imageBlob);

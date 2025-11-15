@@ -17,6 +17,12 @@ export const DATABASE_VERSION = 1;
 /**
  * Main database class extending Dexie
  */
+export interface PhotoBlob {
+  id: string; // Matches photo ID
+  blob: Blob;
+  type: 'original' | 'thumbnail';
+}
+
 export class DermatologyDatabase extends Dexie {
   // Table declarations
   patients!: Table<Patient>;
@@ -24,6 +30,7 @@ export class DermatologyDatabase extends Dexie {
   photos!: Table<Photo>;
   progressSessions!: Table<ProgressSession>;
   exportReports!: Table<ExportReport>;
+  photoBlobs!: Table<PhotoBlob>; // For IndexedDB storage mode
 
   constructor() {
     super(DATABASE_NAME);
@@ -109,6 +116,12 @@ export class DermatologyDatabase extends Dexie {
         [patientId+generatedAt],
         [patientId+reportType],
         [reportType+generatedAt]
+      `,
+
+      // Photo blobs table (for IndexedDB storage mode)
+      photoBlobs: `
+        id,
+        type
       `,
     });
 

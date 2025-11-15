@@ -67,13 +67,8 @@ export function HierarchicalBodyPartSelector({
     setSelectedLevel1('');
     setSelectedLevel2('');
 
-    // If this level 0 part has no children, select it
-    const hasChildren = bodyParts.some(bp => bp.parentId === partId);
-    if (!hasChildren) {
-      onChange(partId);
-    } else {
-      onChange(''); // Clear selection until a leaf is selected
-    }
+    // Always allow selection at this level
+    onChange(partId);
   };
 
   // Handle level 1 selection
@@ -81,13 +76,8 @@ export function HierarchicalBodyPartSelector({
     setSelectedLevel1(partId);
     setSelectedLevel2('');
 
-    // If this level 1 part has no children, select it
-    const hasChildren = bodyParts.some(bp => bp.parentId === partId);
-    if (!hasChildren) {
-      onChange(partId);
-    } else {
-      onChange(''); // Clear selection until a leaf is selected
-    }
+    // Always allow selection at this level
+    onChange(partId);
   };
 
   // Handle level 2 selection
