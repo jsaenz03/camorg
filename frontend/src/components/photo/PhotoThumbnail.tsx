@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PhotoStorageService } from '@/services/photo-storage-service';
-import { PhotoService } from '@/services/photo-service';
 import type { Photo } from '@/models/photo';
 import { Image as ImageIcon, Download, Trash2, Calendar } from 'lucide-react';
 
@@ -24,8 +23,6 @@ export function PhotoThumbnail({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const photoService = new PhotoService();
 
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('en-US', {
@@ -54,13 +51,6 @@ export function PhotoThumbnail({
       const imageBlob = photo.thumbnailPath
         ? await PhotoStorageService.loadThumbnail(photo.thumbnailPath, photo.id)
         : await PhotoStorageService.loadPhoto(photo.filePath, photo.id);
-      let imageBlob: Blob;
-      try {
-        imageBlob = await photoService.loadThumbnailBlob(photo.id);
-      } catch {
-        // Fallback to full image if thumbnail fails
-        imageBlob = await photoService.loadPhotoBlob(photo.id);
-      }
 
       if (imageBlob) {
         const url = URL.createObjectURL(imageBlob);
@@ -79,7 +69,6 @@ export function PhotoThumbnail({
   const handleDownload = async () => {
     try {
       const imageBlob = await PhotoStorageService.loadPhoto(photo.filePath, photo.id);
-      const imageBlob = await photoService.loadPhotoBlob(photo.id);
       if (imageBlob) {
         const url = URL.createObjectURL(imageBlob);
         const a = document.createElement('a');
