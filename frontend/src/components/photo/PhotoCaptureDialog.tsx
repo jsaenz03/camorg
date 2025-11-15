@@ -72,12 +72,7 @@ export function PhotoCaptureDialog({
         isUrgent: false,
       };
 
-      const savedPhoto = await photoService.capturePhoto(captureRequest, {
-        quality: 0.9,
-        format: 'jpeg',
-        maxWidth: 1920,
-        maxHeight: 1080,
-      });
+      const savedPhoto = await photoService.savePhotoFromBlob(captureRequest, capturedBlob);
 
       onPhotoSaved(savedPhoto);
       handleClose();
@@ -102,7 +97,7 @@ export function PhotoCaptureDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Camera className="h-5 w-5" />

@@ -166,7 +166,7 @@ export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: Phot
   }, []);
 
   return (
-    <Card className="w-full max-w-2xl mx-auto">
+    <Card className="w-full mx-auto">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Camera className="h-5 w-5" />
