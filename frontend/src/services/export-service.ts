@@ -325,7 +325,7 @@ export class ExportService {
     // Title
     pdf.setFontSize(20);
     pdf.setFont('helvetica', 'bold');
-    pdf.text('Dermatology Report', pageWidth / 2, 30, { align: 'center' });
+    pdf.text('cIQCam Medical Report', pageWidth / 2, 30, { align: 'center' });
 
     // Report type
     pdf.setFontSize(16);

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1d4ed8;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="256" fill="url(#grad)"/>
+
+  <!-- Camera icon -->
+  <g transform="translate(256, 256)">
+    <!-- Camera body -->
+    <rect x="-90" y="-50" width="180" height="120" rx="15" fill="white" opacity="0.95"/>
+
+    <!-- Lens -->
+    <circle cx="0" cy="10" r="45" fill="#2563eb"/>
+    <circle cx="0" cy="10" r="35" fill="#1d4ed8"/>
+    <circle cx="0" cy="10" r="20" fill="white" opacity="0.3"/>
+
+    <!-- Flash -->
+    <rect x="50" y="-40" width="25" height="15" rx="3" fill="white" opacity="0.9"/>
+
+    <!-- Shutter button -->
+    <circle cx="60" cy="-25" r="8" fill="#ef4444"/>
+
+    <!-- cIQ text -->
+    <text x="0" y="-75" font-family="Arial, sans-serif" font-size="45" font-weight="bold" fill="white" text-anchor="middle">cIQ</text>
+  </g>
+</svg>
