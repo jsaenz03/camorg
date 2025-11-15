@@ -8,17 +8,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { PhotoCapture } from './PhotoCapture';
+import { HierarchicalBodyPartSelector } from './HierarchicalBodyPartSelector';
 import { PhotoService } from '@/services/photo-service';
 import type { BodyPartCategory } from '@/models/body-part';
 import type { Photo } from '@/models/photo';
@@ -123,37 +117,43 @@ export function PhotoCaptureDialog({
           {/* Body Part Selection */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">1. Select Body Part</CardTitle>
+              <CardTitle className="text-lg">1. Select Body Part Location</CardTitle>
               <CardDescription>
-                Choose the anatomical region being photographed
+                Choose the anatomical region being photographed (select from major region down to specific location)
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="body-part">Body Part *</Label>
-                  <Select value={selectedBodyPart} onValueChange={setSelectedBodyPart}>
-                    <SelectTrigger id="body-part">
-                      <SelectValue placeholder="Select a body part" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {bodyParts.map((bodyPart) => (
-                        <SelectItem key={bodyPart.id} value={bodyPart.id}>
-                          {bodyPart.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description (optional)</Label>
-                  <Input
-                    id="description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Brief description of the photo"
-                    maxLength={500}
-                  />
+            <CardContent>
+              <HierarchicalBodyPartSelector
+                bodyParts={bodyParts}
+                value={selectedBodyPart}
+                onChange={setSelectedBodyPart}
+                patientId={patientId}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Description */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">2. Add Description (Optional)</CardTitle>
+              <CardDescription>
+                Add notes about the condition, lesion, or area being documented
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <Label htmlFor="description">Photo Description</Label>
+                <Textarea
+                  id="description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="E.g., 'Mole on left shoulder, approximately 5mm diameter, irregular borders...'"
+                  maxLength={500}
+                  rows={4}
+                  className="resize-none"
+                />
+                <div className="text-xs text-muted-foreground text-right">
+                  {description.length}/500 characters
                 </div>
               </div>
             </CardContent>
@@ -162,10 +162,10 @@ export function PhotoCaptureDialog({
           {/* Photo Capture */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">2. Capture Photo</CardTitle>
+              <CardTitle className="text-lg">3. Capture Photo</CardTitle>
               <CardDescription>
                 {selectedBodyPart
-                  ? 'Position the camera and capture the photo'
+                  ? 'Position the camera and capture the photo. Use "Flip Camera" to switch between front/back cameras.'
                   : 'Please select a body part first'
                 }
               </CardDescription>

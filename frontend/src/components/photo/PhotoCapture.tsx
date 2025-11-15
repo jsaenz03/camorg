@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Camera, Square, RotateCcw, Download } from 'lucide-react';
+import { Camera, Square, RotateCcw, Download, SwitchCamera } from 'lucide-react';
 
 interface PhotoCaptureProps {
   onPhotoCapture?: (imageBlob: Blob) => void;
@@ -9,17 +9,20 @@ interface PhotoCaptureProps {
   disabled?: boolean;
 }
 
+type FacingMode = 'user' | 'environment';
+
 export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: PhotoCaptureProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasPhoto, setHasPhoto] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [facingMode, setFacingMode] = useState<FacingMode>('environment'); // Default to back camera for dermatology
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(async (mode?: FacingMode) => {
     try {
       setError(null);
 
@@ -27,11 +30,13 @@ export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: Phot
         throw new Error('Camera is not supported in this browser');
       }
 
+      const cameraMode = mode || facingMode;
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1920 },
           height: { ideal: 1080 },
-          facingMode: 'user'
+          facingMode: cameraMode
         }
       });
 
@@ -51,7 +56,7 @@ export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: Phot
       setError(errorMessage);
       onError?.(errorMessage);
     }
-  }, [onError]);
+  }, [onError, facingMode]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -90,6 +95,18 @@ export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: Phot
 
     setIsStreaming(false);
   }, []);
+
+  const switchCamera = useCallback(async () => {
+    // Stop current camera
+    stopCamera();
+
+    // Switch facing mode
+    const newFacingMode: FacingMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(newFacingMode);
+
+    // Start camera with new facing mode
+    await startCamera(newFacingMode);
+  }, [facingMode, stopCamera, startCamera]);
 
   const capturePhoto = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || !displayCanvasRef.current) return;
@@ -194,7 +211,7 @@ export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: Phot
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
                 <p className="text-destructive mb-4">{error}</p>
-                <Button onClick={startCamera} variant="outline">
+                <Button onClick={() => startCamera()} variant="outline">
                   Try Again
                 </Button>
               </div>
@@ -209,7 +226,7 @@ export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: Phot
         <div className="flex justify-center gap-2">
           {!isStreaming && !hasPhoto && (
             <Button
-              onClick={startCamera}
+              onClick={() => startCamera()}
               className="flex items-center gap-2"
               disabled={disabled}
             >
@@ -220,9 +237,13 @@ export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: Phot
 
           {isStreaming && !hasPhoto && (
             <>
-              <Button onClick={capturePhoto} className="flex items-center gap-2">
-                <Square className="h-4 w-4" />
+              <Button onClick={capturePhoto} className="flex items-center gap-2" size="lg">
+                <Square className="h-5 w-5" />
                 Capture Photo
+              </Button>
+              <Button onClick={switchCamera} variant="outline" className="flex items-center gap-2">
+                <SwitchCamera className="h-4 w-4" />
+                Flip Camera
               </Button>
               <Button onClick={stopCamera} variant="outline">
                 Stop Camera
