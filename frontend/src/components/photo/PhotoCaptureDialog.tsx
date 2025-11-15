@@ -97,27 +97,27 @@ export function PhotoCaptureDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Camera className="h-5 w-5" />
+      <DialogContent className="w-[95vw] max-w-4xl max-h-[95vh] p-3 sm:p-6 overflow-y-auto">
+        <DialogHeader className="pb-2 sm:pb-4">
+          <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+            <Camera className="h-4 w-4 sm:h-5 sm:w-5" />
             Capture Photo for Patient
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-xs sm:text-sm">
             Select a body part and capture a photo for documentation
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6">
+        <div className="space-y-3 sm:space-y-6">
           {/* Body Part Selection */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">1. Select Body Part Location</CardTitle>
-              <CardDescription>
-                Choose the anatomical region being photographed (select from major region down to specific location)
+            <CardHeader className="pb-2 sm:pb-4 px-3 sm:px-6 pt-3 sm:pt-6">
+              <CardTitle className="text-sm sm:text-lg">1. Select Body Part Location</CardTitle>
+              <CardDescription className="text-xs sm:text-sm">
+                Choose the anatomical region being photographed
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
               <HierarchicalBodyPartSelector
                 bodyParts={bodyParts}
                 value={selectedBodyPart}
@@ -129,23 +129,23 @@ export function PhotoCaptureDialog({
 
           {/* Description */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">2. Add Description (Optional)</CardTitle>
-              <CardDescription>
-                Add notes about the condition, lesion, or area being documented
+            <CardHeader className="pb-2 sm:pb-4 px-3 sm:px-6 pt-3 sm:pt-6">
+              <CardTitle className="text-sm sm:text-lg">2. Add Description (Optional)</CardTitle>
+              <CardDescription className="text-xs sm:text-sm">
+                Add notes about the condition or area
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
               <div className="space-y-2">
-                <Label htmlFor="description">Photo Description</Label>
+                <Label htmlFor="description" className="text-xs sm:text-sm">Photo Description</Label>
                 <Textarea
                   id="description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="E.g., 'Mole on left shoulder, approximately 5mm diameter, irregular borders...'"
+                  placeholder="E.g., 'Mole on left shoulder, approximately 5mm diameter...'"
                   maxLength={500}
-                  rows={4}
-                  className="resize-none"
+                  rows={3}
+                  className="resize-none text-xs sm:text-sm"
                 />
                 <div className="text-xs text-muted-foreground text-right">
                   {description.length}/500 characters
@@ -156,16 +156,16 @@ export function PhotoCaptureDialog({
 
           {/* Photo Capture */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">3. Capture Photo</CardTitle>
-              <CardDescription>
+            <CardHeader className="pb-2 sm:pb-4 px-3 sm:px-6 pt-3 sm:pt-6">
+              <CardTitle className="text-sm sm:text-lg">3. Capture Photo</CardTitle>
+              <CardDescription className="text-xs sm:text-sm">
                 {selectedBodyPart
-                  ? 'Position the camera and capture the photo. Use "Flip Camera" to switch between front/back cameras.'
+                  ? 'Position the camera and capture the photo'
                   : 'Please select a body part first'
                 }
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
               <PhotoCapture
                 onPhotoCapture={handlePhotoCapture}
                 onError={handleCameraError}
@@ -177,10 +177,10 @@ export function PhotoCaptureDialog({
           {/* Error Display */}
           {error && (
             <Card className="border-destructive">
-              <CardContent className="pt-6">
+              <CardContent className="pt-3 sm:pt-6 pb-3 sm:pb-6 px-3 sm:px-6">
                 <div className="flex items-center gap-2 text-destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <span className="text-sm">{error}</span>
+                  <AlertCircle className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
+                  <span className="text-xs sm:text-sm">{error}</span>
                 </div>
               </CardContent>
             </Card>
@@ -189,33 +189,33 @@ export function PhotoCaptureDialog({
           {/* Success Indicator */}
           {capturedBlob && !error && (
             <Card className="border-green-200 bg-green-50">
-              <CardContent className="pt-6">
+              <CardContent className="pt-3 sm:pt-6 pb-3 sm:pb-6 px-3 sm:px-6">
                 <div className="flex items-center gap-2 text-green-700">
-                  <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                  <span className="text-sm">Photo captured successfully! Ready to save.</span>
+                  <div className="h-2 w-2 rounded-full bg-green-500 flex-shrink-0"></div>
+                  <span className="text-xs sm:text-sm">Photo captured successfully! Ready to save.</span>
                 </div>
               </CardContent>
             </Card>
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={handleClose}>
+        <DialogFooter className="gap-2 sm:gap-0 flex-col sm:flex-row">
+          <Button variant="outline" onClick={handleClose} className="w-full sm:w-auto text-xs sm:text-sm">
             Cancel
           </Button>
           <Button
             onClick={handleSavePhoto}
             disabled={!canSave}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 w-full sm:w-auto text-xs sm:text-sm"
           >
             {isCapturing ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
                 Saving...
               </>
             ) : (
               <>
-                <Camera className="h-4 w-4" />
+                <Camera className="h-3 w-3 sm:h-4 sm:w-4" />
                 Save Photo
               </>
             )}

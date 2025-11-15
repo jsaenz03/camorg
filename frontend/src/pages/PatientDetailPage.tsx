@@ -59,9 +59,27 @@ export function PatientDetailPage({ patientId, onBack }: PatientDetailPageProps)
       }
       setPatient(patientData);
 
-      // Load body parts hierarchy
+      // Load body parts hierarchy and flatten to get all levels
       const bodyPartHierarchy = await bodyPartService.getBodyPartsForPatient(patientId);
-      const bodyPartsList = Object.values(bodyPartHierarchy).map(item => item.category);
+
+      // Flatten the hierarchy to get all body parts at all levels
+      const flattenHierarchy = (hierarchy: typeof bodyPartHierarchy): BodyPartCategory[] => {
+        const result: BodyPartCategory[] = [];
+
+        const traverse = (node: typeof bodyPartHierarchy) => {
+          Object.values(node).forEach(item => {
+            result.push(item.category);
+            if (item.children && Object.keys(item.children).length > 0) {
+              traverse(item.children);
+            }
+          });
+        };
+
+        traverse(hierarchy);
+        return result;
+      };
+
+      const bodyPartsList = flattenHierarchy(bodyPartHierarchy);
       setBodyParts(bodyPartsList);
 
       // Load all photos for patient

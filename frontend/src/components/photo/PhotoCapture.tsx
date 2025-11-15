@@ -166,114 +166,104 @@ export function PhotoCapture({ onPhotoCapture, onError, disabled = false }: Phot
   }, []);
 
   return (
-    <Card className="w-full mx-auto">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Camera className="h-5 w-5" />
-          Photo Capture
-        </CardTitle>
-        <CardDescription>
-          Capture photos directly from your camera for patient documentation
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Camera View */}
-        <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
-          {isStreaming && (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-full object-cover"
-            />
-          )}
+    <div className="w-full space-y-3 sm:space-y-4">
+      {/* Camera View */}
+      <div className="relative aspect-video sm:aspect-video bg-muted rounded-lg overflow-hidden min-h-[200px]">
+        {isStreaming && (
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full h-full object-cover"
+          />
+        )}
 
-          {hasPhoto && (
-            <canvas
-              ref={displayCanvasRef}
-              className="w-full h-full object-cover"
-            />
-          )}
+        {hasPhoto && (
+          <canvas
+            ref={displayCanvasRef}
+            className="w-full h-full object-cover"
+          />
+        )}
 
-          {!isStreaming && !hasPhoto && (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <Camera className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">
-                  {disabled ? 'Please select a body part first' : 'Camera preview will appear here'}
-                </p>
-              </div>
+        {!isStreaming && !hasPhoto && (
+          <div className="flex items-center justify-center h-full p-4">
+            <div className="text-center">
+              <Camera className="h-8 w-8 sm:h-12 sm:w-12 mx-auto text-muted-foreground mb-2 sm:mb-4" />
+              <p className="text-xs sm:text-sm text-muted-foreground">
+                {disabled ? 'Please select a body part first' : 'Camera preview will appear here'}
+              </p>
             </div>
-          )}
+          </div>
+        )}
 
-          {error && (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <p className="text-destructive mb-4">{error}</p>
-                <Button onClick={() => startCamera()} variant="outline">
-                  Try Again
-                </Button>
-              </div>
+        {error && (
+          <div className="flex items-center justify-center h-full p-4">
+            <div className="text-center">
+              <p className="text-destructive text-xs sm:text-sm mb-2 sm:mb-4">{error}</p>
+              <Button onClick={() => startCamera()} variant="outline" size="sm" className="text-xs">
+                Try Again
+              </Button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+      </div>
 
-        {/* Canvas for photo capture (hidden) */}
-        <canvas ref={canvasRef} className="hidden" />
+      {/* Canvas for photo capture (hidden) */}
+      <canvas ref={canvasRef} className="hidden" />
 
-        {/* Controls */}
-        <div className="flex justify-center gap-2">
-          {!isStreaming && !hasPhoto && (
-            <Button
-              onClick={() => startCamera()}
-              className="flex items-center gap-2"
-              disabled={disabled}
-            >
-              <Camera className="h-4 w-4" />
-              Start Camera
+      {/* Controls */}
+      <div className="flex flex-wrap justify-center gap-2">
+        {!isStreaming && !hasPhoto && (
+          <Button
+            onClick={() => startCamera()}
+            className="flex items-center gap-2 text-xs sm:text-sm"
+            size="sm"
+            disabled={disabled}
+          >
+            <Camera className="h-3 w-3 sm:h-4 sm:w-4" />
+            Start Camera
+          </Button>
+        )}
+
+        {isStreaming && !hasPhoto && (
+          <>
+            <Button onClick={capturePhoto} className="flex items-center gap-2 text-xs sm:text-sm" size="sm">
+              <Square className="h-4 w-4 sm:h-5 sm:w-5" />
+              Capture
             </Button>
-          )}
+            <Button onClick={switchCamera} variant="outline" className="flex items-center gap-2 text-xs sm:text-sm" size="sm">
+              <SwitchCamera className="h-3 w-3 sm:h-4 sm:w-4" />
+              Flip
+            </Button>
+            <Button onClick={stopCamera} variant="outline" size="sm" className="text-xs sm:text-sm">
+              Stop
+            </Button>
+          </>
+        )}
 
-          {isStreaming && !hasPhoto && (
-            <>
-              <Button onClick={capturePhoto} className="flex items-center gap-2" size="lg">
-                <Square className="h-5 w-5" />
-                Capture Photo
-              </Button>
-              <Button onClick={switchCamera} variant="outline" className="flex items-center gap-2">
-                <SwitchCamera className="h-4 w-4" />
-                Flip Camera
-              </Button>
-              <Button onClick={stopCamera} variant="outline">
-                Stop Camera
-              </Button>
-            </>
-          )}
+        {hasPhoto && (
+          <>
+            <Button onClick={retakePhoto} variant="outline" className="flex items-center gap-2 text-xs sm:text-sm" size="sm">
+              <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4" />
+              Retake
+            </Button>
+            <Button onClick={downloadPhoto} className="flex items-center gap-2 text-xs sm:text-sm" size="sm">
+              <Download className="h-3 w-3 sm:h-4 sm:w-4" />
+              Download
+            </Button>
+          </>
+        )}
+      </div>
 
-          {hasPhoto && (
-            <>
-              <Button onClick={retakePhoto} variant="outline" className="flex items-center gap-2">
-                <RotateCcw className="h-4 w-4" />
-                Retake
-              </Button>
-              <Button onClick={downloadPhoto} className="flex items-center gap-2">
-                <Download className="h-4 w-4" />
-                Download
-              </Button>
-            </>
-          )}
-        </div>
-
-        {/* Instructions */}
-        <div className="text-sm text-muted-foreground text-center">
-          {!isStreaming && !hasPhoto && (
-            disabled ? 'Please select a body part to enable camera' : 'Click "Start Camera" to begin photo capture'
-          )}
-          {isStreaming && !hasPhoto && 'Position the camera and click "Capture Photo"'}
-          {hasPhoto && 'Photo captured! You can retake or download the image'}
-        </div>
-      </CardContent>
-    </Card>
+      {/* Instructions */}
+      <div className="text-xs sm:text-sm text-muted-foreground text-center">
+        {!isStreaming && !hasPhoto && (
+          disabled ? 'Please select a body part to enable camera' : 'Click "Start Camera" to begin'
+        )}
+        {isStreaming && !hasPhoto && 'Position the camera and click "Capture"'}
+        {hasPhoto && 'Photo captured! You can retake or download'}
+      </div>
+    </div>
   );
 }

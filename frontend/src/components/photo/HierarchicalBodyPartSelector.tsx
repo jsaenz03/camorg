@@ -105,18 +105,18 @@ export function HierarchicalBodyPartSelector({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 sm:space-y-4">
       <div className="space-y-2">
         <Label htmlFor="body-part-level-0" className="flex items-center gap-2">
-          <span className="text-base font-semibold">Step 1: Select Body Region *</span>
+          <span className="text-xs sm:text-base font-semibold">Step 1: Select Body Region *</span>
         </Label>
         <Select value={selectedLevel0} onValueChange={handleLevel0Change}>
-          <SelectTrigger id="body-part-level-0" className="w-full">
+          <SelectTrigger id="body-part-level-0" className="w-full text-xs sm:text-sm">
             <SelectValue placeholder="Select major body region..." />
           </SelectTrigger>
           <SelectContent>
             {level0Parts.map((bodyPart) => (
-              <SelectItem key={bodyPart.id} value={bodyPart.id}>
+              <SelectItem key={bodyPart.id} value={bodyPart.id} className="text-xs sm:text-sm">
                 {bodyPart.name}
               </SelectItem>
             ))}
@@ -125,18 +125,18 @@ export function HierarchicalBodyPartSelector({
       </div>
 
       {level1Parts.length > 0 && (
-        <div className="space-y-2 pl-4 border-l-2 border-primary/20">
+        <div className="space-y-2 pl-2 sm:pl-4 border-l-2 border-primary/20">
           <Label htmlFor="body-part-level-1" className="flex items-center gap-2">
-            <ChevronRight className="h-4 w-4" />
-            <span className="text-base font-semibold">Step 2: Select Specific Area *</span>
+            <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4" />
+            <span className="text-xs sm:text-base font-semibold">Step 2: Select Specific Area *</span>
           </Label>
           <Select value={selectedLevel1} onValueChange={handleLevel1Change}>
-            <SelectTrigger id="body-part-level-1" className="w-full">
+            <SelectTrigger id="body-part-level-1" className="w-full text-xs sm:text-sm">
               <SelectValue placeholder="Select specific area..." />
             </SelectTrigger>
             <SelectContent>
               {level1Parts.map((bodyPart) => (
-                <SelectItem key={bodyPart.id} value={bodyPart.id}>
+                <SelectItem key={bodyPart.id} value={bodyPart.id} className="text-xs sm:text-sm">
                   {bodyPart.name}
                 </SelectItem>
               ))}
@@ -146,18 +146,18 @@ export function HierarchicalBodyPartSelector({
       )}
 
       {level2Parts.length > 0 && (
-        <div className="space-y-2 pl-8 border-l-2 border-primary/20">
+        <div className="space-y-2 pl-4 sm:pl-8 border-l-2 border-primary/20">
           <Label htmlFor="body-part-level-2" className="flex items-center gap-2">
-            <ChevronRight className="h-4 w-4" />
-            <span className="text-base font-semibold">Step 3: Select Precise Location</span>
+            <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4" />
+            <span className="text-xs sm:text-base font-semibold">Step 3: Select Precise Location</span>
           </Label>
           <Select value={selectedLevel2} onValueChange={handleLevel2Change}>
-            <SelectTrigger id="body-part-level-2" className="w-full">
+            <SelectTrigger id="body-part-level-2" className="w-full text-xs sm:text-sm">
               <SelectValue placeholder="Select precise location..." />
             </SelectTrigger>
             <SelectContent>
               {level2Parts.map((bodyPart) => (
-                <SelectItem key={bodyPart.id} value={bodyPart.id}>
+                <SelectItem key={bodyPart.id} value={bodyPart.id} className="text-xs sm:text-sm">
                   {bodyPart.name}
                 </SelectItem>
               ))}
@@ -167,9 +167,9 @@ export function HierarchicalBodyPartSelector({
       )}
 
       {value && getSelectedPath() && (
-        <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
-          <div className="text-sm font-medium text-primary">Selected Location:</div>
-          <div className="text-sm text-foreground mt-1">{getSelectedPath()}</div>
+        <div className="bg-primary/5 border border-primary/20 rounded-lg p-2 sm:p-3">
+          <div className="text-xs sm:text-sm font-medium text-primary">Selected Location:</div>
+          <div className="text-xs sm:text-sm text-foreground mt-1">{getSelectedPath()}</div>
         </div>
       )}
     </div>
