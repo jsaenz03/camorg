@@ -100,6 +100,53 @@ export class PhotoService {
   }
 
   /**
+   * Save photo from already-captured blob
+   */
+  async savePhotoFromBlob(
+    request: CapturePhotoRequest,
+    imageBlob: Blob
+  ): Promise<Photo> {
+    try {
+      // Validate request
+      const validationErrors = PhotoValidator.validateCaptureRequest(request);
+      if (validationErrors.length > 0) {
+        throw new Error(`Validation failed: ${validationErrors.join(', ')}`);
+      }
+
+      // Process captured image
+      const imageInfo = await this.processImageBlob(imageBlob, 'captured');
+
+      // Validate image dimensions
+      const dimensionErrors = PhotoValidator.validateImageDimensions(
+        imageInfo.width,
+        imageInfo.height
+      );
+      if (dimensionErrors.length > 0) {
+        throw new Error(`Invalid image dimensions: ${dimensionErrors.join(', ')}`);
+      }
+
+      // Create photo record
+      const photo = PhotoFactory.create(request, imageInfo);
+
+      // Save to database
+      await this.savePhotoToDatabase(photo);
+
+      // Save image blob to IndexedDB instead of file system
+      await this.savePhotoBlobToIndexedDB(photo, imageBlob);
+
+      // Generate and save thumbnail
+      await this.generateAndSaveThumbnail(photo, imageBlob);
+
+      console.log('Photo saved successfully:', photo.id);
+      return photo;
+
+    } catch (error) {
+      console.error('Failed to save photo from blob:', error);
+      throw error instanceof Error ? error : new Error('Unknown save error');
+    }
+  }
+
+  /**
    * Import photo from file
    */
   async importPhoto(request: ImportPhotoRequest): Promise<Photo> {
@@ -592,6 +639,192 @@ export class PhotoService {
       img.onerror = () => reject(new Error('Failed to load image for thumbnail'));
       img.src = URL.createObjectURL(blob);
     });
+  }
+
+  /**
+   * Save photo blob to IndexedDB for storage
+   */
+  private async savePhotoBlobToIndexedDB(photo: Photo, blob: Blob): Promise<void> {
+    try {
+      // Open a separate IndexedDB for photo blobs
+      const request = indexedDB.open('PhotoStorage', 1);
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains('photos')) {
+          db.createObjectStore('photos');
+        }
+        if (!db.objectStoreNames.contains('thumbnails')) {
+          db.createObjectStore('thumbnails');
+        }
+      };
+
+      return new Promise((resolve, reject) => {
+        request.onsuccess = async (event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+          const transaction = db.transaction(['photos'], 'readwrite');
+          const store = transaction.objectStore('photos');
+
+          store.put(blob, photo.id);
+
+          transaction.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+
+          transaction.onerror = () => {
+            db.close();
+            reject(new Error('Failed to store photo blob'));
+          };
+        };
+
+        request.onerror = () => {
+          reject(new Error('Failed to open photo storage database'));
+        };
+      });
+    } catch (error) {
+      console.error('Failed to save photo blob to IndexedDB:', error);
+      throw new FileSystemError('photo save', 'Failed to save photo blob');
+    }
+  }
+
+  /**
+   * Load photo blob from IndexedDB
+   */
+  async loadPhotoBlob(photoId: string): Promise<Blob> {
+    try {
+      const request = indexedDB.open('PhotoStorage', 1);
+
+      return new Promise((resolve, reject) => {
+        request.onsuccess = (event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+
+          if (!db.objectStoreNames.contains('photos')) {
+            db.close();
+            reject(new Error('Photo storage not initialized'));
+            return;
+          }
+
+          const transaction = db.transaction(['photos'], 'readonly');
+          const store = transaction.objectStore('photos');
+          const getRequest = store.get(photoId);
+
+          getRequest.onsuccess = () => {
+            db.close();
+            if (getRequest.result) {
+              resolve(getRequest.result);
+            } else {
+              reject(new Error('Photo not found'));
+            }
+          };
+
+          getRequest.onerror = () => {
+            db.close();
+            reject(new Error('Failed to retrieve photo blob'));
+          };
+        };
+
+        request.onerror = () => {
+          reject(new Error('Failed to open photo storage database'));
+        };
+      });
+    } catch (error) {
+      console.error('Failed to load photo blob from IndexedDB:', error);
+      throw new Error('Failed to load photo blob');
+    }
+  }
+
+  /**
+   * Generate and save thumbnail to IndexedDB
+   */
+  private async generateAndSaveThumbnail(photo: Photo, originalBlob: Blob): Promise<void> {
+    try {
+      const thumbnailSize = 200;
+      const thumbnailBlob = await this.createThumbnail(originalBlob, thumbnailSize);
+
+      // Save thumbnail to IndexedDB
+      const request = indexedDB.open('PhotoStorage', 1);
+
+      return new Promise((resolve, reject) => {
+        request.onsuccess = async (event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+          const transaction = db.transaction(['thumbnails'], 'readwrite');
+          const store = transaction.objectStore('thumbnails');
+
+          store.put(thumbnailBlob, photo.id);
+
+          transaction.oncomplete = () => {
+            db.close();
+
+            // Update photo record with thumbnail path (using photo.id as reference)
+            this.databaseService.getDatabase().then(async (database) => {
+              await database.photos.update(photo.id, {
+                thumbnailPath: `thumbnail://${photo.id}`
+              });
+              resolve();
+            });
+          };
+
+          transaction.onerror = () => {
+            db.close();
+            reject(new Error('Failed to store thumbnail'));
+          };
+        };
+
+        request.onerror = () => {
+          reject(new Error('Failed to open photo storage database'));
+        };
+      });
+    } catch (error) {
+      console.warn('Failed to generate and save thumbnail:', error);
+      // Don't throw - thumbnail generation is optional
+    }
+  }
+
+  /**
+   * Load thumbnail blob from IndexedDB
+   */
+  async loadThumbnailBlob(photoId: string): Promise<Blob> {
+    try {
+      const request = indexedDB.open('PhotoStorage', 1);
+
+      return new Promise((resolve, reject) => {
+        request.onsuccess = (event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+
+          if (!db.objectStoreNames.contains('thumbnails')) {
+            db.close();
+            reject(new Error('Thumbnail storage not initialized'));
+            return;
+          }
+
+          const transaction = db.transaction(['thumbnails'], 'readonly');
+          const store = transaction.objectStore('thumbnails');
+          const getRequest = store.get(photoId);
+
+          getRequest.onsuccess = () => {
+            db.close();
+            if (getRequest.result) {
+              resolve(getRequest.result);
+            } else {
+              reject(new Error('Thumbnail not found'));
+            }
+          };
+
+          getRequest.onerror = () => {
+            db.close();
+            reject(new Error('Failed to retrieve thumbnail blob'));
+          };
+        };
+
+        request.onerror = () => {
+          reject(new Error('Failed to open photo storage database'));
+        };
+      });
+    } catch (error) {
+      console.error('Failed to load thumbnail blob from IndexedDB:', error);
+      throw new Error('Failed to load thumbnail blob');
+    }
   }
 }
 
