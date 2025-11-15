@@ -31,9 +31,9 @@ export default defineConfig({
         ],
       },
       manifest: {
-        name: 'Dermatology Photo Organization',
-        short_name: 'DermatologyApp',
-        description: 'Organize and track dermatology patient photos',
+        name: 'cIQCam',
+        short_name: 'cIQCam',
+        description: 'Professional medical photo organization and tracking',
         theme_color: '#ffffff',
         background_color: '#ffffff',
         display: 'standalone',

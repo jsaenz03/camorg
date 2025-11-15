@@ -65,7 +65,7 @@ function App() {
         <div className="container mx-auto px-4 py-3">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold text-foreground">
-              Dermatology Photo Organization
+              cIQCam
             </h1>
             <nav className="flex gap-2">
               <Button

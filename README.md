@@ -1,6 +1,6 @@
-# Dermatology Photo Organization System
+# cIQCam
 
-A Progressive Web App (PWA) for medical professionals to organize and track patient dermatology photos, categorized by body parts, with offline-first capabilities.
+A Progressive Web App (PWA) for medical professionals to organize and track patient medical photos, categorized by body parts, with offline-first capabilities.
 
 ## Features
 
