@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { FileSystemService } from '@/services/file-system-service';
+import { PhotoService } from '@/services/photo-service';
 import type { Photo } from '@/models/photo';
 import { Calendar, Download, Image as ImageIcon, User, AlertTriangle, Clock, FileImage } from 'lucide-react';
 
@@ -31,7 +31,7 @@ export function PhotoDetailDialog({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fileSystemService = new FileSystemService();
+  const photoService = new PhotoService();
 
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('en-US', {
@@ -60,7 +60,7 @@ export function PhotoDetailDialog({
       setError(null);
 
       // Load the full image for detail view
-      const imageBlob = await fileSystemService.loadPhoto(photo.filePath);
+      const imageBlob = await photoService.loadPhotoBlob(photo.id);
 
       if (imageBlob) {
         const url = URL.createObjectURL(imageBlob);
@@ -80,7 +80,7 @@ export function PhotoDetailDialog({
     if (!photo) return;
 
     try {
-      const imageBlob = await fileSystemService.loadPhoto(photo.filePath);
+      const imageBlob = await photoService.loadPhotoBlob(photo.id);
       if (imageBlob) {
         const url = URL.createObjectURL(imageBlob);
         const a = document.createElement('a');
@@ -116,7 +116,7 @@ export function PhotoDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ImageIcon className="h-5 w-5" />

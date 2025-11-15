@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { FileSystemService } from '@/services/file-system-service';
+import { PhotoService } from '@/services/photo-service';
 import type { Photo } from '@/models/photo';
 import { Image as ImageIcon, Download, Trash2, Calendar } from 'lucide-react';
 
@@ -24,7 +24,7 @@ export function PhotoThumbnail({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fileSystemService = new FileSystemService();
+  const photoService = new PhotoService();
 
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('en-US', {
@@ -50,8 +50,13 @@ export function PhotoThumbnail({
       setError(null);
 
       // Try to load thumbnail first, then full image as fallback
-      const pathToLoad = photo.thumbnailPath || photo.filePath;
-      const imageBlob = await fileSystemService.loadPhoto(pathToLoad);
+      let imageBlob: Blob;
+      try {
+        imageBlob = await photoService.loadThumbnailBlob(photo.id);
+      } catch {
+        // Fallback to full image if thumbnail fails
+        imageBlob = await photoService.loadPhotoBlob(photo.id);
+      }
 
       if (imageBlob) {
         const url = URL.createObjectURL(imageBlob);
@@ -69,7 +74,7 @@ export function PhotoThumbnail({
 
   const handleDownload = async () => {
     try {
-      const imageBlob = await fileSystemService.loadPhoto(photo.filePath);
+      const imageBlob = await photoService.loadPhotoBlob(photo.id);
       if (imageBlob) {
         const url = URL.createObjectURL(imageBlob);
         const a = document.createElement('a');
@@ -133,28 +138,7 @@ export function PhotoThumbnail({
             alt={photo.description || 'Patient photo'}
             className="w-full h-full object-cover"
             onError={() => {
-              // If thumbnail fails, try full image
-              if (photo.thumbnailPath) {
-                setImageUrl(null);
-                setError(null);
-                setLoading(true);
-                // Try loading full image as fallback
-                fileSystemService.loadPhoto(photo.filePath).then(blob => {
-                  if (blob) {
-                    const url = URL.createObjectURL(blob);
-                    setImageUrl(url);
-                    setError(null);
-                  } else {
-                    setError('Image not available');
-                  }
-                  setLoading(false);
-                }).catch(() => {
-                  setError('Image not available');
-                  setLoading(false);
-                });
-              } else {
-                setError('Failed to load image');
-              }
+              setError('Failed to load image');
             }}
           />
         )}
