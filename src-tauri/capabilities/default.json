@@ -12,8 +12,8 @@
     {
       "identifier": "fs:scope",
       "allow": [
-        { "path": "$APPDATA/camog/**" },
-        { "path": "$APPCONFIG/camog/**" }
+        { "path": "$APPDATA/com.camog.app/**" },
+        { "path": "$APPCONFIG/com.camog.app/**" }
       ]
     }
   ]

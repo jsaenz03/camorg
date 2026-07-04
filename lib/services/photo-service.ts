@@ -14,7 +14,8 @@ import type { PhotoRecordCreate, PhotoRecordUpdate } from '@/lib/validators/sche
 import type { BodyPart } from '@/types/body-part';
 import type { IPhotoService } from '@/specs/001-role-you-are/contracts/photo-service';
 import { photoRecordCreateSchema, photoRecordUpdateSchema } from '@/lib/validators/schemas';
-import { getDB, photoPath } from '@/lib/db/database';
+import { getDB, photoPath, getPhotosDir } from '@/lib/db/database';
+import { join } from '@tauri-apps/api/path';
 import { compressImage, generateThumbnail } from '@/lib/utils/image-processing';
 import { patientService } from '@/lib/services/patient-service';
 import { subpartService } from '@/lib/services/subpart-service';
@@ -80,8 +81,12 @@ export class PhotoService implements IPhotoService {
       const thumbnailBlob = await generateThumbnail(compressedBlob, 200);
 
       const id = uuidv4();
-      const imagePath = await photoPath(`${id}.jpg`);
-      const thumbPath = await photoPath(`${id}.thumb.jpg`);
+      // ponytail: store only the filename in DB so paths are portable across
+      // machines/OSes. Resolved against photosDir at read time.
+      const imageFilename = `${id}.jpg`;
+      const thumbFilename = `${id}.thumb.jpg`;
+      const imagePath = await photoPath(imageFilename);
+      const thumbPath = await photoPath(thumbFilename);
 
       // Write JPEGs to disk (binary-safe via Uint8Array).
       await writeFile(imagePath, new Uint8Array(await compressedBlob.arrayBuffer()));
@@ -93,44 +98,41 @@ export class PhotoService implements IPhotoService {
 
       const db = await getDB();
 
-      await db.execute('BEGIN');
-      try {
-        await db.execute(
-          `INSERT INTO photos
-             (id, patient_id, image_path, thumbnail_path, original_file_name,
-              mime_type, file_size_bytes, body_part, subpart, clinical_notes,
-              captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, NULL)`,
-          [
-            id,
-            validated.patientId,
-            imagePath,
-            thumbPath,
-            '', // originalFileName: not in the create DTO
-            validated.mimeType,
-            compressedBlob.size,
-            validated.bodyPart,
-            validated.subpart ?? null,
-            validated.clinicalNotes ?? null,
-            capturedMs,
-            nowMs,
-            nowMs,
-            '', // clinicianId: set by auth context when implemented
-          ]
-        );
+      // ponytail: no explicit BEGIN/COMMIT — tauri-plugin-sql (sqlx) doesn't
+      // reliably honour raw transaction control via execute(), and the only
+      // writers are this single-user desktop app. If counts drift, recompute
+      // via patientService.getPatientWithAccurateCount, or wire the plugin's
+      // db.transaction() API.
+      await db.execute(
+        `INSERT INTO photos
+           (id, patient_id, image_path, thumbnail_path, original_file_name,
+            mime_type, file_size_bytes, body_part, subpart, clinical_notes,
+            captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, NULL)`,
+        [
+          id,
+          validated.patientId,
+          imageFilename,
+          thumbFilename,
+          '', // originalFileName: not in the create DTO
+          validated.mimeType,
+          compressedBlob.size,
+          validated.bodyPart,
+          validated.subpart ?? null,
+          validated.clinicalNotes ?? null,
+          capturedMs,
+          nowMs,
+          nowMs,
+          '', // clinicianId: set by auth context when implemented
+        ]
+      );
 
-        // Update patient denormalised counts (separate statements, same tx).
-        await patientService.updatePhotoCount(validated.patientId, 1, false);
+      // Update patient denormalised counts.
+      await patientService.updatePhotoCount(validated.patientId, 1, false);
 
-        // Record subpart usage if provided.
-        if (validated.subpart) {
-          await subpartService.recordUsage(validated.bodyPart, validated.subpart);
-        }
-
-        await db.execute('COMMIT');
-      } catch (error) {
-        await db.execute('ROLLBACK');
-        throw error;
+      // Record subpart usage if provided.
+      if (validated.subpart) {
+        await subpartService.recordUsage(validated.bodyPart, validated.subpart);
       }
 
       return {
@@ -254,22 +256,14 @@ export class PhotoService implements IPhotoService {
 
     const nowMs = Date.now();
 
-    await db.execute('BEGIN');
-    try {
-      await db.execute(
-        `UPDATE photos SET is_deleted = 1, deleted_at = $1, updated_at = $2 WHERE id = $3`,
-        [nowMs, nowMs, id]
-      );
+    await db.execute(
+      `UPDATE photos SET is_deleted = 1, deleted_at = $1, updated_at = $2 WHERE id = $3`,
+      [nowMs, nowMs, id]
+    );
 
-      // Maintain denormalised counts: active -1, deleted +1.
-      await patientService.updatePhotoCount(photo.patientId, -1, false);
-      await patientService.updatePhotoCount(photo.patientId, 1, true);
-
-      await db.execute('COMMIT');
-    } catch (error) {
-      await db.execute('ROLLBACK');
-      throw error;
-    }
+    // Maintain denormalised counts: active -1, deleted +1.
+    await patientService.updatePhotoCount(photo.patientId, -1, false);
+    await patientService.updatePhotoCount(photo.patientId, 1, true);
   }
 
   /**
@@ -288,21 +282,13 @@ export class PhotoService implements IPhotoService {
 
     const nowMs = Date.now();
 
-    await db.execute('BEGIN');
-    try {
-      await db.execute(
-        `UPDATE photos SET is_deleted = 0, deleted_at = NULL, updated_at = $1 WHERE id = $2`,
-        [nowMs, id]
-      );
+    await db.execute(
+      `UPDATE photos SET is_deleted = 0, deleted_at = NULL, updated_at = $1 WHERE id = $2`,
+      [nowMs, id]
+    );
 
-      await patientService.updatePhotoCount(photo.patientId, 1, false);
-      await patientService.updatePhotoCount(photo.patientId, -1, true);
-
-      await db.execute('COMMIT');
-    } catch (error) {
-      await db.execute('ROLLBACK');
-      throw error;
-    }
+    await patientService.updatePhotoCount(photo.patientId, 1, false);
+    await patientService.updatePhotoCount(photo.patientId, -1, true);
 
     return { ...photo, isDeleted: false, deletedAt: null, updatedAt: new Date(nowMs) };
   }
@@ -363,7 +349,12 @@ export class PhotoService implements IPhotoService {
     if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
 
     const row = rows[0];
-    const path = useThumbnail ? row.thumbnail_path : row.image_path;
+    // ponytail: image_path/thumbnail_path are stored relative to photos dir
+    // (just the filename) so the DB is portable across machines/OSes. Resolve
+    // against the live appDataDir at read time.
+    const relPath = useThumbnail ? row.thumbnail_path : row.image_path;
+    const dir = await getPhotosDir();
+    const path = await join(dir, relPath);
     const bytes = await readFile(path);
     const base64 = uint8ToBase64(new Uint8Array(bytes));
     const mime = useThumbnail ? 'image/jpeg' : row.mime_type;

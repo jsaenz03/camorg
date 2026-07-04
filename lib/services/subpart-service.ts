@@ -151,18 +151,11 @@ export class SubpartService implements ISubpartService {
       source.lastUsedAt.getTime()
     );
 
-    await db.execute('BEGIN');
-    try {
-      await db.execute(
-        'UPDATE subparts SET usage_count = $1, last_used_at = $2 WHERE id = $3',
-        [mergedCount, mergedLastUsed, targetId]
-      );
-      await db.execute('DELETE FROM subparts WHERE id = $1', [sourceId]);
-      await db.execute('COMMIT');
-    } catch (error) {
-      await db.execute('ROLLBACK');
-      throw error;
-    }
+    await db.execute(
+      'UPDATE subparts SET usage_count = $1, last_used_at = $2 WHERE id = $3',
+      [mergedCount, mergedLastUsed, targetId]
+    );
+    await db.execute('DELETE FROM subparts WHERE id = $1', [sourceId]);
 
     return { ...target, usageCount: mergedCount, lastUsedAt: new Date(mergedLastUsed) };
   }
