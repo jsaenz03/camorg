@@ -8,6 +8,7 @@
 'use client';
 
 import { useRef, useEffect, useState } from 'react';
+import { Aperture, SwitchCamera, Loader2 } from 'lucide-react';
 import { useCamera } from '@/lib/hooks/use-camera';
 import type { CapturedPhoto, CameraFacingMode } from '@/specs/001-role-you-are/contracts/camera-service';
 import { cameraService } from '@/lib/services/camera-service';
@@ -136,7 +137,7 @@ export function CameraCapture({
         <div className="text-center space-y-4">
           <h3 className="text-lg font-semibold">Initializing Camera...</h3>
           <div className="flex justify-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+            <Loader2 className="size-12 animate-spin text-muted-foreground" />
           </div>
           <p className="text-sm text-muted-foreground">
             Please allow camera access when prompted
@@ -171,21 +172,7 @@ export function CameraCapture({
             className="absolute top-4 right-4"
             aria-label="Switch camera"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
-              <circle cx="12" cy="13" r="3" />
-              <path d="M16 19h2" />
-            </svg>
+            <SwitchCamera className="size-5" />
           </Button>
         )}
       </div>
@@ -200,26 +187,12 @@ export function CameraCapture({
         >
           {isCapturing ? (
             <>
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+              <Loader2 className="size-4 animate-spin" />
               Capturing...
             </>
           ) : (
             <>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="mr-2"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
+              <Aperture className="size-5" />
               Capture Photo
             </>
           )}

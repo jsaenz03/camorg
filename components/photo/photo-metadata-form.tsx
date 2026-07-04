@@ -10,6 +10,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { Loader2 } from 'lucide-react';
 import { BodyPart, BodyPartLabels } from '@/types/body-part';
 import { Button } from '@/components/ui/button';
 import {
@@ -203,7 +204,7 @@ export function PhotoMetadataForm({
           <Button type="submit" disabled={isSubmitting}>
             {isSubmitting ? (
               <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                <Loader2 className="size-4 animate-spin" />
                 Saving...
               </>
             ) : (

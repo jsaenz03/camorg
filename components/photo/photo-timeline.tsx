@@ -10,9 +10,11 @@
 import { useState, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRef } from 'react';
+import { Images, FilterX } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
 import type { BodyPart } from '@/types/body-part';
 import { PhotoCard } from './photo-card';
+import { EmptyState } from '@/components/empty-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BODY_PARTS } from '@/types/body-part';
 
@@ -58,27 +60,11 @@ export function PhotoTimeline({
   // Empty state
   if (photos.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-          <svg
-            className="w-8 h-8 text-muted-foreground"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-            />
-          </svg>
-        </div>
-        <h3 className="text-lg font-semibold mb-2">No photos yet</h3>
-        <p className="text-sm text-muted-foreground">
-          Capture your first photo to see it here
-        </p>
-      </div>
+      <EmptyState
+        icon={Images}
+        title="No photos yet"
+        description="Capture your first photo to see it here"
+      />
     );
   }
 
@@ -104,27 +90,11 @@ export function PhotoTimeline({
             </Select>
           </div>
         )}
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-            <svg
-              className="w-8 h-8 text-muted-foreground"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
-              />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold mb-2">No photos found</h3>
-          <p className="text-sm text-muted-foreground">
-            No photos match the selected body part filter
-          </p>
-        </div>
+        <EmptyState
+          icon={FilterX}
+          title="No photos found"
+          description="No photos match the selected body part filter"
+        />
       </div>
     );
   }

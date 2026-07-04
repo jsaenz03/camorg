@@ -9,8 +9,10 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { AlertCircle, Users, SearchX } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import { PatientCard } from './patient-card';
+import { EmptyState } from '@/components/empty-state';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -76,25 +78,12 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
           onChange={handleSearchChange}
           className="max-w-md"
         />
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-4">
-            <svg
-              className="w-8 h-8 text-destructive"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold mb-2">Error loading patients</h3>
-          <p className="text-sm text-muted-foreground">{error.message}</p>
-        </div>
+        <EmptyState
+          icon={AlertCircle}
+          tone="destructive"
+          title="Error loading patients"
+          description={error.message}
+        />
       </div>
     );
   }
@@ -111,27 +100,11 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
           className="max-w-md"
           disabled
         />
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-            <svg
-              className="w-8 h-8 text-muted-foreground"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-              />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold mb-2">No patients yet</h3>
-          <p className="text-sm text-muted-foreground">
-            Patients will appear here after capturing your first photo
-          </p>
-        </div>
+        <EmptyState
+          icon={Users}
+          title="No patients yet"
+          description="Patients will appear here after capturing your first photo"
+        />
       </div>
     );
   }
@@ -147,27 +120,11 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
           onChange={handleSearchChange}
           className="max-w-md"
         />
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-            <svg
-              className="w-8 h-8 text-muted-foreground"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold mb-2">No patients found</h3>
-          <p className="text-sm text-muted-foreground">
-            No patients match &quot;{searchTerm}&quot;
-          </p>
-        </div>
+        <EmptyState
+          icon={SearchX}
+          title="No patients found"
+          description={`No patients match "${searchTerm}"`}
+        />
       </div>
     );
   }

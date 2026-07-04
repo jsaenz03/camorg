@@ -12,9 +12,11 @@
 
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useState, useCallback, useEffect, Suspense } from 'react';
+import { ArrowLeft, AlertCircle } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import type { PhotoRecord } from '@/types/photo';
 import { PhotoTimeline } from '@/components/photo/photo-timeline';
+import { EmptyState } from '@/components/empty-state';
 import { usePhotos } from '@/lib/hooks/use-photos';
 import { patientService } from '@/lib/services/patient-service';
 import { Button } from '@/components/ui/button';
@@ -131,26 +133,13 @@ function PatientTimelineView() {
   if (error) {
     return (
       <div className="container mx-auto px-4 py-8">
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-4">
-            <svg
-              className="w-8 h-8 text-destructive"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold mb-2">Error loading timeline</h3>
-          <p className="text-sm text-muted-foreground mb-4">{error.message}</p>
-          <Button onClick={handleBackClick}>Back to Patients</Button>
-        </div>
+        <EmptyState
+          icon={AlertCircle}
+          tone="destructive"
+          title="Error loading timeline"
+          description={error.message}
+          action={<Button onClick={handleBackClick}>Back to Patients</Button>}
+        />
       </div>
     );
   }
@@ -168,19 +157,7 @@ function PatientTimelineView() {
           onClick={handleBackClick}
           className="mb-4"
         >
-          <svg
-            className="w-4 h-4 mr-2"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 19l-7-7 7-7"
-            />
-          </svg>
+          <ArrowLeft className="size-4" />
           Back to Patients
         </Button>
 
