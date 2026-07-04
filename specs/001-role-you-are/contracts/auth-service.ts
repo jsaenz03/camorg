@@ -1,46 +1,62 @@
 /**
  * Auth Service Contract
  *
- * Defines the interface for authentication and session management.
- * v1 implementation uses simple PIN/passcode stored in localStorage.
+ * Defines the interface for authentication, session management, user/role
+ * administration, and invitations. Backed by SQLite via Tauri.
  *
- * SECURITY NOTE: This is NOT production-grade authentication. It's sufficient
- * for v1 single-user deployments but should NOT be used for multi-user or
- * HIPAA-compliant scenarios.
+ * Passcodes are hashed with PBKDF2-SHA256 (per-user salt, 210k iters).
+ * Sessions are client-side only (sessionStorage) — sufficient for the Tauri
+ * desktop deployment model.
+ *
+ * SECURITY NOTE: This is local-device auth, not network auth. The DB file is
+ * not encrypted at rest; for HIPAA-grade deployments, add encryption and
+ * audit logging.
  */
 
 import { Clinician } from '@/types/clinician';
-import type { ClinicianRegister, ClinicianLogin } from '@/lib/validators/schemas';
+import { Invitation, AppSettings } from '@/types/invitation';
+import type {
+  ClinicianRegister,
+  ClinicianLogin,
+  InvitationCreate,
+  InvitationAccept,
+  SettingsUpdate,
+} from '@/lib/validators/schemas';
 
 export interface SessionInfo {
   clinicianId: string;
   username: string;
   displayName: string;
+  role: Clinician['role'];
   loginAt: Date;
   expiresAt: Date;
 }
 
 export interface IAuthService {
   /**
-   * Registers a new clinician (first-time setup)
+   * Registers a new clinician.
+   *
+   * Public signup requires `settings.allow_public_signup === true`. Otherwise
+   * an `inviteToken` MUST be supplied and validated against the invitations table.
    *
    * @param data - Registration data (validated via Zod schema)
    * @returns Promise resolving to created Clinician (passcodeHash excluded)
    * @throws ValidationError if data fails schema validation
    * @throws AlreadyExistsError if username already taken
-   * @throws Error if IndexedDB transaction fails
+   * @throws PermissionDeniedError if public signup is disabled and no valid token
    *
    * Side effects:
-   * - Hashes passcode using SHA-256 (Web Crypto API)
-   * - Stores clinician in IndexedDB 'clinicians' store
+   * - Hashes passcode using PBKDF2-SHA256 (Web Crypto API)
+   * - Stores clinician in the `clinicians` table
    * - Sets default preferences (theme: 'system', autoCompressPhotos: true)
+   * - Marks the invitation accepted (if a token was supplied)
    * - Creates active session (auto-login after registration)
    *
    * Security:
-   * - Passcode must be 6+ characters with letters and numbers
+   * - Passcode must be 8+ characters with letters and numbers
    * - Passcode is hashed before storage (never stored in plaintext)
    */
-  register(data: ClinicianRegister): Promise<Clinician>;
+  register(data: ClinicianRegister, inviteToken?: string): Promise<Clinician>;
 
   /**
    * Authenticates a clinician and creates session
@@ -53,11 +69,12 @@ export interface IAuthService {
    *
    * Side effects:
    * - Updates Clinician.lastLoginAt
-   * - Sets Clinician.sessionExpiresAt to now + 30 minutes
+   * - Sets Clinician.sessionExpiresAt to now + `settings.session_timeout_ms`
    * - Stores session token in sessionStorage
    *
    * Security:
-   * - Compares SHA-256 hash of input passcode with stored hash
+   * - Compares PBKDF2 hash of input passcode with stored hash (constant-time)
+   * - Refuses login if `is_active = 0`
    * - Generic error message for failed login (don't leak whether username exists)
    */
   login(data: ClinicianLogin): Promise<SessionInfo>;
@@ -119,8 +136,9 @@ export interface IAuthService {
    * @throws Error if IndexedDB transaction fails
    *
    * Side effects:
-   * - Updates Clinician.passcodeHash with new hash
-   * - Clears all other sessions (if multi-device in future)
+   * - Updates Clinician.passcodeHash with new PBKDF2 hash
+   * - Clears the `must_change_passcode` flag
+   * - Sets `passcode_changed_at`
    */
   changePasscode(currentPasscode: string, newPasscode: string): Promise<void>;
 
@@ -164,6 +182,62 @@ export interface IAuthService {
    * - Updates Clinician.updatedAt
    */
   updatePreferences(preferences: Partial<Clinician['preferences']>): Promise<Clinician>;
+
+  // ----- User & invitation administration (admin only) -----
+
+  /**
+   * Lists all clinicians. Admin only.
+   * @throws NotAuthenticatedError / PermissionDeniedError
+   */
+  listUsers(): Promise<Clinician[]>;
+
+  /** Activate or deactivate a clinician. Admin only. */
+  setUserActive(id: string, active: boolean): Promise<Clinician>;
+
+  /** Change a clinician's role. Admin only. */
+  setUserRole(id: string, role: Clinician['role']): Promise<Clinician>;
+
+  /**
+   * Create an invitation. Admin only.
+   * - `kind: 'token'` returns an Invitation with a one-time code the user
+   *   enters at /signup.
+   * - `kind: 'precreated'` requires `tempPasscode`; the user logs in with it
+   *   and is then forced to change it.
+   * @throws AlreadyExistsError if username is taken or has a pending invite
+   */
+  createInvitation(input: InvitationCreate): Promise<Invitation>;
+
+  /** Validate an invite token without consuming it (used by the signup screen). */
+  resolveInvitation(token: string): Promise<Invitation>;
+
+  /**
+   * Consume an invitation and create the resulting clinician. Used by signup
+   * for `token`-kind invites. Auto-logs in.
+   */
+  acceptInvitation(input: InvitationAccept): Promise<Clinician>;
+
+  /** Revoke a pending invitation. Admin only. */
+  revokeInvitation(id: string): Promise<void>;
+
+  /** List pending/accepted invitations. Admin only. */
+  listInvitations(): Promise<Invitation[]>;
+
+  // ----- App settings (admin only) -----
+
+  getSettings(): Promise<AppSettings>;
+  updateSettings(patch: SettingsUpdate): Promise<AppSettings>;
+
+  // ----- Dev / bootstrapping -----
+
+  /** Count of registered clinicians (used to decide whether seeding is allowed). */
+  countUsers(): Promise<number>;
+
+  /**
+   * Idempotent dev seed. Only runs when zero clinicians exist. Creates an
+   * `admin` / `devpass123` account with `must_change_passcode = true`.
+   * Throws if users already exist.
+   */
+  seedDevAdmin(): Promise<void>;
 }
 
 /**

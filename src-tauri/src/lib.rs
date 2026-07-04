@@ -13,6 +13,12 @@ pub fn run() {
       sql: include_str!("../migrations/001_init.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 2,
+      description: "auth: roles, invitations, settings",
+      sql: include_str!("../migrations/002_auth.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   tauri::Builder::default()
