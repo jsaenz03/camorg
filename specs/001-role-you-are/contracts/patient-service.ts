@@ -5,7 +5,8 @@
  * documentation system. All operations are client-side (IndexedDB).
  */
 
-import { Patient, PatientCreate, PatientUpdate } from '@/types/patient';
+import { Patient } from '@/types/patient';
+import type { PatientCreate, PatientUpdate } from '@/lib/validators/schemas';
 
 export interface IPatientService {
   /**

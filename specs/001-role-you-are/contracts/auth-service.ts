@@ -9,7 +9,8 @@
  * HIPAA-compliant scenarios.
  */
 
-import { Clinician, ClinicianRegister, ClinicianLogin } from '@/types/clinician';
+import { Clinician } from '@/types/clinician';
+import type { ClinicianRegister, ClinicianLogin } from '@/lib/validators/schemas';
 
 export interface SessionInfo {
   clinicianId: string;

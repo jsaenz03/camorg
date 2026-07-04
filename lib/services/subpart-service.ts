@@ -1,60 +1,60 @@
 /**
- * Subpart Service Implementation
+ * Subpart Service Implementation (Tauri SQLite)
  *
  * Manages autocomplete suggestions for subpart values per body part.
- * Implements ISubpartService interface from contracts/subpart-service.ts
+ * Drop-in replacement for the IndexedDB version.
  */
 
 import { v4 as uuidv4 } from 'uuid';
 import type { SubpartSuggestion } from '@/types/subpart';
 import type { BodyPart } from '@/types/body-part';
 import type { ISubpartService } from '@/specs/001-role-you-are/contracts/subpart-service';
-import { getDB } from '@/lib/db/indexeddb';
-import { STORES } from '@/lib/db/schema';
+import { getDB } from '@/lib/db/database';
 import { NotFoundError, ValidationError } from '@/lib/validators/errors';
 
+function rowToSuggestion(row: Record<string, unknown>): SubpartSuggestion {
+  return {
+    id: row.id as string,
+    bodyPart: row.body_part as BodyPart,
+    subpart: row.subpart as string,
+    displayText: row.display_text as string,
+    usageCount: row.usage_count as number,
+    lastUsedAt: new Date(row.last_used_at as number),
+    clinicianId: (row.clinician_id as string) || '',
+  };
+}
+
 export class SubpartService implements ISubpartService {
-  /**
-   * Gets autocomplete suggestions for a specific body part
-   */
   async getSuggestionsForBodyPart(
     bodyPart: BodyPart,
     limit: number = 10
   ): Promise<SubpartSuggestion[]> {
     const db = await getDB();
-    let suggestions = await db.getAllFromIndex(STORES.SUBPARTS, 'bodyPart', bodyPart);
-
-    // Sort by usageCount DESC, then lastUsedAt DESC
-    suggestions.sort((a, b) => {
-      if (a.usageCount !== b.usageCount) {
-        return b.usageCount - a.usageCount;
-      }
-      return b.lastUsedAt.getTime() - a.lastUsedAt.getTime();
-    });
-
-    // Limit results
-    return suggestions.slice(0, limit);
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT * FROM subparts WHERE body_part = $1
+       ORDER BY usage_count DESC, last_used_at DESC LIMIT $2`,
+      [bodyPart, limit]
+    );
+    return rows.map(rowToSuggestion);
   }
 
-  /**
-   * Searches subpart suggestions by partial text match
-   */
   async searchSuggestions(
     bodyPart: BodyPart,
     searchTerm: string,
     limit: number = 5
   ): Promise<SubpartSuggestion[]> {
-    const db = await getDB();
     const normalizedSearch = searchTerm.trim().toLowerCase();
-
-    let suggestions = await db.getAllFromIndex(STORES.SUBPARTS, 'bodyPart', bodyPart);
-
-    // Filter by search term
-    suggestions = suggestions.filter((s) =>
-      s.subpart.includes(normalizedSearch) || s.displayText.toLowerCase().includes(normalizedSearch)
+    const db = await getDB();
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT * FROM subparts
+        WHERE body_part = $1
+          AND (LOWER(subpart) LIKE $2 OR LOWER(display_text) LIKE $2)`,
+      [bodyPart, `%${normalizedSearch}%`]
     );
+    const suggestions = rows.map(rowToSuggestion);
 
-    // Sort by relevance (exact match first, then starts with, then usage count)
+    // ponytail: "exact, then prefix, then usage" tiebreak is fiddly in SQL;
+    // apply client-side on the small filtered set.
     suggestions.sort((a, b) => {
       const aExact = a.subpart === normalizedSearch;
       const bExact = b.subpart === normalizedSearch;
@@ -66,114 +66,78 @@ export class SubpartService implements ISubpartService {
       if (aStarts && !bStarts) return -1;
       if (!aStarts && bStarts) return 1;
 
-      // Fallback to usage count
-      if (a.usageCount !== b.usageCount) {
-        return b.usageCount - a.usageCount;
-      }
+      if (a.usageCount !== b.usageCount) return b.usageCount - a.usageCount;
       return b.lastUsedAt.getTime() - a.lastUsedAt.getTime();
     });
 
-    // Limit results
     return suggestions.slice(0, limit);
   }
 
   /**
-   * Records usage of a subpart (creates or updates suggestion)
+   * Records usage: insert-or-update on (bodyPart, normalized subpart).
    */
   async recordUsage(bodyPart: BodyPart, subpartText: string): Promise<SubpartSuggestion> {
-    // Validate length
     if (subpartText.length > 100) {
       throw new ValidationError('Subpart text exceeds 100 characters');
     }
 
-    const db = await getDB();
     const normalizedSubpart = subpartText.trim().toLowerCase();
+    const displayText = subpartText.trim();
+    const nowMs = Date.now();
+    const db = await getDB();
 
-    // Check if suggestion already exists
-    const existing = await db.getFromIndex(
-      STORES.SUBPARTS,
-      'bodyPart_subpart',
-      [bodyPart, normalizedSubpart]
+    // ponytail: ON CONFLICT upsert — SQLite >=3.24, Tauri bundles newer.
+    // We bump usage_count and refresh display_text/last_used_at in one statement.
+    await db.execute(
+      `INSERT INTO subparts (id, body_part, subpart, display_text, usage_count, last_used_at, clinician_id)
+       VALUES ($1, $2, $3, $4, 1, $5, '')
+       ON CONFLICT(body_part, subpart) DO UPDATE SET
+         usage_count = usage_count + 1,
+         last_used_at = $5,
+         display_text = $4`,
+      [uuidv4(), bodyPart, normalizedSubpart, displayText, nowMs]
     );
 
-    const now = new Date();
-
-    if (existing) {
-      // Update existing suggestion
-      const updated: SubpartSuggestion = {
-        ...existing,
-        usageCount: existing.usageCount + 1,
-        lastUsedAt: now,
-        displayText: subpartText.trim(), // Update display text to latest casing
-      };
-
-      await db.put(STORES.SUBPARTS, updated);
-      return updated;
-    } else {
-      // Create new suggestion
-      const newSuggestion: SubpartSuggestion = {
-        id: uuidv4(),
-        bodyPart,
-        subpart: normalizedSubpart,
-        displayText: subpartText.trim(),
-        usageCount: 1,
-        lastUsedAt: now,
-        clinicianId: '', // Will be set by auth context in real implementation
-      };
-
-      await db.add(STORES.SUBPARTS, newSuggestion);
-      return newSuggestion;
-    }
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM subparts WHERE body_part = $1 AND subpart = $2',
+      [bodyPart, normalizedSubpart]
+    );
+    return rowToSuggestion(rows[0]);
   }
 
-  /**
-   * Deletes a subpart suggestion
-   */
   async deleteSuggestion(id: string): Promise<void> {
     const db = await getDB();
-    const suggestion = await db.get(STORES.SUBPARTS, id);
-
-    if (!suggestion) {
-      throw new NotFoundError(`Subpart suggestion not found: ${id}`);
-    }
-
-    await db.delete(STORES.SUBPARTS, id);
+    const rows = await db.select<{ id: string }[]>(
+      'SELECT id FROM subparts WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Subpart suggestion not found: ${id}`);
+    await db.execute('DELETE FROM subparts WHERE id = $1', [id]);
   }
 
-  /**
-   * Gets all suggestions across all body parts
-   */
   async getAllSuggestions(): Promise<SubpartSuggestion[]> {
     const db = await getDB();
-    const suggestions = await db.getAll(STORES.SUBPARTS);
-
-    // Sort by usage count DESC
-    suggestions.sort((a, b) => {
-      if (a.usageCount !== b.usageCount) {
-        return b.usageCount - a.usageCount;
-      }
-      return b.lastUsedAt.getTime() - a.lastUsedAt.getTime();
-    });
-
-    return suggestions;
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM subparts ORDER BY usage_count DESC, last_used_at DESC'
+    );
+    return rows.map(rowToSuggestion);
   }
 
-  /**
-   * Merges duplicate suggestions (combines usage counts)
-   */
   async mergeSuggestions(sourceId: string, targetId: string): Promise<SubpartSuggestion> {
     const db = await getDB();
+    const srcRows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM subparts WHERE id = $1',
+      [sourceId]
+    );
+    if (!srcRows.length) throw new NotFoundError(`Source suggestion not found: ${sourceId}`);
+    const tgtRows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM subparts WHERE id = $1',
+      [targetId]
+    );
+    if (!tgtRows.length) throw new NotFoundError(`Target suggestion not found: ${targetId}`);
 
-    const source = await db.get(STORES.SUBPARTS, sourceId);
-    const target = await db.get(STORES.SUBPARTS, targetId);
-
-    if (!source) {
-      throw new NotFoundError(`Source suggestion not found: ${sourceId}`);
-    }
-
-    if (!target) {
-      throw new NotFoundError(`Target suggestion not found: ${targetId}`);
-    }
+    const source = rowToSuggestion(srcRows[0]);
+    const target = rowToSuggestion(tgtRows[0]);
 
     if (source.bodyPart !== target.bodyPart) {
       throw new ValidationError(
@@ -181,38 +145,37 @@ export class SubpartService implements ISubpartService {
       );
     }
 
-    // Update target
-    const merged: SubpartSuggestion = {
-      ...target,
-      usageCount: target.usageCount + source.usageCount,
-      lastUsedAt: new Date(
-        Math.max(target.lastUsedAt.getTime(), source.lastUsedAt.getTime())
-      ),
-    };
+    const mergedCount = target.usageCount + source.usageCount;
+    const mergedLastUsed = Math.max(
+      target.lastUsedAt.getTime(),
+      source.lastUsedAt.getTime()
+    );
 
-    // Use transaction to ensure atomicity
-    const tx = db.transaction([STORES.SUBPARTS], 'readwrite');
-    await tx.objectStore(STORES.SUBPARTS).put(merged);
-    await tx.objectStore(STORES.SUBPARTS).delete(sourceId);
-    await tx.done;
+    await db.execute('BEGIN');
+    try {
+      await db.execute(
+        'UPDATE subparts SET usage_count = $1, last_used_at = $2 WHERE id = $3',
+        [mergedCount, mergedLastUsed, targetId]
+      );
+      await db.execute('DELETE FROM subparts WHERE id = $1', [sourceId]);
+      await db.execute('COMMIT');
+    } catch (error) {
+      await db.execute('ROLLBACK');
+      throw error;
+    }
 
-    return merged;
+    return { ...target, usageCount: mergedCount, lastUsedAt: new Date(mergedLastUsed) };
   }
 
-  /**
-   * Clears all suggestions for a specific body part
-   */
   async clearSuggestionsForBodyPart(bodyPart: BodyPart): Promise<number> {
     const db = await getDB();
-    const suggestions = await db.getAllFromIndex(STORES.SUBPARTS, 'bodyPart', bodyPart);
-
-    const tx = db.transaction([STORES.SUBPARTS], 'readwrite');
-    for (const suggestion of suggestions) {
-      await tx.objectStore(STORES.SUBPARTS).delete(suggestion.id);
-    }
-    await tx.done;
-
-    return suggestions.length;
+    const rows = await db.select<{ cnt: number }[]>(
+      'SELECT COUNT(*) AS cnt FROM subparts WHERE body_part = $1',
+      [bodyPart]
+    );
+    const count = rows[0]?.cnt ?? 0;
+    await db.execute('DELETE FROM subparts WHERE body_part = $1', [bodyPart]);
+    return count;
   }
 }
 

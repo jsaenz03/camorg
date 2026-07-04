@@ -19,6 +19,11 @@ export enum BodyPart {
 }
 
 /**
+ * Array of all body parts for iteration
+ */
+export const BODY_PARTS = Object.values(BodyPart);
+
+/**
  * Display labels for UI
  */
 export const BodyPartLabels: Record<BodyPart, string> = {

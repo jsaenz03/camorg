@@ -5,7 +5,8 @@
  * documentation system. All operations are client-side (IndexedDB).
  */
 
-import { PhotoRecord, PhotoRecordCreate, PhotoRecordUpdate } from '@/types/photo';
+import { PhotoRecord } from '@/types/photo';
+import type { PhotoRecordCreate, PhotoRecordUpdate } from '@/lib/validators/schemas';
 import { BodyPart } from '@/types/body-part';
 
 export interface IPhotoService {

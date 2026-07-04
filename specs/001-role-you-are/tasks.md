@@ -66,11 +66,11 @@ description: "Task list for Clinical Photo Documentation System implementation"
 - [X] T017 [P] [US1] Implement SubpartService.recordUsage() in `lib/services/subpart-service.ts`: Create or update SubpartSuggestion with usageCount and lastUsedAt
 - [X] T018 [P] [US1] Create useCamera hook in `lib/hooks/use-camera.ts`: Manage MediaStream state, permission state, error state, start/stop functions, cleanup on unmount
 - [X] T019 [P] [US1] Create image processing utilities in `lib/utils/image-processing.ts`: compressImage(), generateThumbnail(), blobToDataUrl() helpers
-- [ ] T020 [US1] Create CameraCapture component in `components/camera/camera-capture.tsx`: Video preview, capture button, integrate useCamera hook, handle permission errors
-- [ ] T021 [US1] Create PhotoMetadataForm component in `components/photo/photo-metadata-form.tsx`: Form with patient name (required), body part select, subpart input, clinical notes textarea, use react-hook-form + Zod validation
-- [ ] T022 [US1] Create capture page in `app/(dashboard)/capture/page.tsx`: Compose CameraCapture + PhotoMetadataForm, handle save flow, success/error toast notifications
-- [ ] T023 [US1] Add loading states: Implement skeleton loaders and Suspense boundaries for camera initialization and photo save operation
-- [ ] T024 [US1] Add error handling: Camera permission denied UI, storage quota exceeded warning, invalid file format validation errors
+- [X] T020 [US1] Create CameraCapture component in `components/camera/camera-capture.tsx`: Video preview, capture button, integrate useCamera hook, handle permission errors
+- [X] T021 [US1] Create PhotoMetadataForm component in `components/photo/photo-metadata-form.tsx`: Form with patient name (required), body part select, subpart input, clinical notes textarea, use react-hook-form + Zod validation
+- [X] T022 [US1] Create capture page in `app/(dashboard)/capture/page.tsx`: Compose CameraCapture + PhotoMetadataForm, handle save flow, success/error toast notifications
+- [X] T023 [US1] Add loading states: Implement skeleton loaders and Suspense boundaries for camera initialization and photo save operation
+- [X] T024 [US1] Add error handling: Camera permission denied UI, storage quota exceeded warning, invalid file format validation errors
 
 **Checkpoint**: User Story 1 fully functional - can capture photos with metadata, save to IndexedDB, receive confirmation
 
@@ -84,18 +84,18 @@ description: "Task list for Clinical Photo Documentation System implementation"
 
 ### Implementation for User Story 2
 
-- [ ] T025 [P] [US2] Implement PhotoService.getPhotosByPatient() in `lib/services/photo-service.ts`: Indexed query with includeDeleted and bodyPart filter options, sort by capturedAt DESC
-- [ ] T026 [P] [US2] Implement PatientService methods in `lib/services/patient-service.ts`: getAllPatients(), searchPatients() with normalized name search
-- [ ] T027 [P] [US2] Create usePhotos hook in `lib/hooks/use-photos.ts`: Load photos for patient, handle loading state, refresh on data changes
-- [ ] T028 [P] [US2] Create usePatients hook in `lib/hooks/use-patients.ts`: Load patient list, search functionality, loading state
-- [ ] T029 [P] [US2] Create PhotoCard component in `components/photo/photo-card.tsx`: Display photo thumbnail, capture date, body part, subpart, clinical notes preview
-- [ ] T030 [US2] Create PhotoTimeline component in `components/photo/photo-timeline.tsx`: Use TanStack Virtual for virtualization, render PhotoCard items, handle body part filter, empty state for no photos
-- [ ] T031 [P] [US2] Create PatientCard component in `components/patient/patient-card.tsx`: Display patient name, photo count, last photo timestamp, click to view timeline
-- [ ] T032 [P] [US2] Create PatientList component in `components/patient/patient-list.tsx`: Render patient cards, implement search box, integrate usePatients hook
-- [ ] T033 [US2] Create patients list page in `app/(dashboard)/patients/page.tsx`: Display PatientList component with search functionality
-- [ ] T034 [US2] Create patient timeline page in `app/(dashboard)/patients/[id]/page.tsx`: Display PhotoTimeline for selected patient, body part filter dropdown, back navigation
-- [ ] T035 [US2] Add virtual scrolling performance: Configure TanStack Virtual estimateSize, implement scroll restoration on navigation back
-- [ ] T036 [US2] Implement thumbnail loading: PhotoCard uses imageThumbnail blob, lazy load full resolution on demand
+- [X] T025 [P] [US2] Implement PhotoService.getPhotosByPatient() in `lib/services/photo-service.ts`: Indexed query with includeDeleted and bodyPart filter options, sort by capturedAt DESC
+- [X] T026 [P] [US2] Implement PatientService methods in `lib/services/patient-service.ts`: getAllPatients(), searchPatients() with normalized name search
+- [X] T027 [P] [US2] Create usePhotos hook in `lib/hooks/use-photos.ts`: Load photos for patient, handle loading state, refresh on data changes
+- [X] T028 [P] [US2] Create usePatients hook in `lib/hooks/use-patients.ts`: Load patient list, search functionality, loading state
+- [X] T029 [P] [US2] Create PhotoCard component in `components/photo/photo-card.tsx`: Display photo thumbnail, capture date, body part, subpart, clinical notes preview
+- [X] T030 [US2] Create PhotoTimeline component in `components/photo/photo-timeline.tsx`: Use TanStack Virtual for virtualization, render PhotoCard items, handle body part filter, empty state for no photos
+- [X] T031 [P] [US2] Create PatientCard component in `components/patient/patient-card.tsx`: Display patient name, photo count, last photo timestamp, click to view timeline
+- [X] T032 [P] [US2] Create PatientList component in `components/patient/patient-list.tsx`: Render patient cards, implement search box, integrate usePatients hook
+- [X] T033 [US2] Create patients list page in `app/(dashboard)/patients/page.tsx`: Display PatientList component with search functionality
+- [X] T034 [US2] Create patient timeline page in `app/(dashboard)/patients/[id]/page.tsx`: Display PhotoTimeline for selected patient, body part filter dropdown, back navigation
+- [X] T035 [US2] Add virtual scrolling performance: Configure TanStack Virtual estimateSize, implement scroll restoration on navigation back
+- [X] T036 [US2] Implement thumbnail loading: PhotoCard uses imageThumbnail blob, lazy load full resolution on demand
 
 **Checkpoint**: User Story 2 fully functional - can search/select patients, view chronological timelines, filter by body part, see empty states
 

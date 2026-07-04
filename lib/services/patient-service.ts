@@ -1,117 +1,108 @@
 /**
- * Patient Service Implementation
+ * Patient Service Implementation (Tauri SQLite)
  *
- * Handles all patient-related operations including CRUD, search, and denormalized count updates.
- * Implements IPatientService interface from contracts/patient-service.ts
+ * Handles patient CRUD + search + denormalised photo counts.
+ * Drop-in replacement for the IndexedDB version.
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import type { Patient, PatientCreate, PatientUpdate } from '@/types/patient';
+import type { Patient } from '@/types/patient';
+import type { PatientCreate, PatientUpdate } from '@/lib/validators/schemas';
 import type { IPatientService } from '@/specs/001-role-you-are/contracts/patient-service';
 import { patientCreateSchema, patientUpdateSchema } from '@/lib/validators/schemas';
-import { getDB } from '@/lib/db/indexeddb';
-import { STORES } from '@/lib/db/schema';
+import { getDB } from '@/lib/db/database';
 import {
   NotFoundError,
-  ValidationError,
-  DuplicateWarning,
 } from '@/lib/validators/errors';
 
+function rowToPatient(row: Record<string, unknown>): Patient {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    normalizedName: row.normalized_name as string,
+    photoCount: row.photo_count as number,
+    deletedPhotoCount: row.deleted_photo_count as number,
+    createdAt: new Date(row.created_at as number),
+    updatedAt: new Date(row.updated_at as number),
+    lastPhotoAt: row.last_photo_at != null ? new Date(row.last_photo_at as number) : null,
+    clinicianId: (row.clinician_id as string) || '',
+    isArchived: Boolean(row.is_archived),
+    archivedAt: row.archived_at != null ? new Date(row.archived_at as number) : null,
+  };
+}
+
 export class PatientService implements IPatientService {
-  /**
-   * Creates a new patient record
-   */
   async createPatient(data: PatientCreate): Promise<Patient> {
-    // Validate data
     const validated = patientCreateSchema.parse(data);
 
-    // Check for duplicate name (warning, non-blocking)
     const isDuplicate = await this.isDuplicateName(validated.name);
     if (isDuplicate) {
       console.warn(`Duplicate patient name: ${validated.name}`);
-      // Note: This is a warning, not an error - allow creation
     }
 
-    const now = new Date();
-    const patient: Patient = {
-      id: uuidv4(),
+    const id = uuidv4();
+    const nowMs = Date.now();
+    const normalizedName = validated.name.trim().toLowerCase();
+
+    const db = await getDB();
+    await db.execute(
+      `INSERT INTO patients
+         (id, name, normalized_name, photo_count, deleted_photo_count,
+          created_at, updated_at, last_photo_at, clinician_id, is_archived, archived_at)
+       VALUES ($1, $2, $3, 0, 0, $4, $4, NULL, '', 0, NULL)`,
+      [id, validated.name, normalizedName, nowMs]
+    );
+
+    return {
+      id,
       name: validated.name,
-      normalizedName: validated.name.trim().toLowerCase(),
+      normalizedName,
       photoCount: 0,
       deletedPhotoCount: 0,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: new Date(nowMs),
+      updatedAt: new Date(nowMs),
       lastPhotoAt: null,
-      clinicianId: '', // Will be set by auth context in real implementation
+      clinicianId: '',
       isArchived: false,
       archivedAt: null,
     };
-
-    const db = await getDB();
-    await db.add(STORES.PATIENTS, patient);
-
-    return patient;
   }
 
-  /**
-   * Retrieves a single patient by ID
-   */
   async getPatientById(id: string): Promise<Patient | null> {
     const db = await getDB();
-    const patient = await db.get(STORES.PATIENTS, id);
-    return patient || null;
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM patients WHERE id = $1',
+      [id]
+    );
+    return rows.length ? rowToPatient(rows[0]) : null;
   }
 
-  /**
-   * Retrieves all patients
-   */
   async getAllPatients(options: { includeArchived?: boolean } = {}): Promise<Patient[]> {
     const { includeArchived = false } = options;
-
     const db = await getDB();
-    let patients = await db.getAll(STORES.PATIENTS);
-
-    // Filter archived if needed
-    if (!includeArchived) {
-      patients = patients.filter((p) => !p.isArchived);
-    }
-
-    // Sort by lastPhotoAt DESC (most recent first), then by createdAt DESC
-    patients.sort((a, b) => {
-      if (a.lastPhotoAt && b.lastPhotoAt) {
-        return b.lastPhotoAt.getTime() - a.lastPhotoAt.getTime();
-      }
-      if (a.lastPhotoAt) return -1;
-      if (b.lastPhotoAt) return 1;
-      return b.createdAt.getTime() - a.createdAt.getTime();
-    });
-
-    return patients;
+    const sql = includeArchived
+      ? 'SELECT * FROM patients ORDER BY last_photo_at DESC NULLS LAST, created_at DESC'
+      : 'SELECT * FROM patients WHERE is_archived = 0 ORDER BY last_photo_at DESC NULLS LAST, created_at DESC';
+    const rows = await db.select<Record<string, unknown>[]>(sql);
+    return rows.map(rowToPatient);
   }
 
-  /**
-   * Searches patients by name (case-insensitive, partial match)
-   */
   async searchPatients(
     searchTerm: string,
     options: { includeArchived?: boolean } = {}
   ): Promise<Patient[]> {
     const { includeArchived = false } = options;
-
-    const db = await getDB();
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
-    // Get all patients from index and filter
-    let patients = await db.getAll(STORES.PATIENTS);
+    const db = await getDB();
+    let sql = 'SELECT * FROM patients WHERE normalized_name LIKE $1';
+    if (!includeArchived) sql += ' AND is_archived = 0';
 
-    // Filter by search term and archived status
-    patients = patients.filter((p) => {
-      const matchesSearch = p.normalizedName.includes(normalizedSearch);
-      const matchesArchived = includeArchived || !p.isArchived;
-      return matchesSearch && matchesArchived;
-    });
+    // ponytail: SQL can't easily express the "exact match first, then prefix,
+    // then lastPhotoAt" tiebreak. Apply it client-side on the small result set.
+    const rows = await db.select<Record<string, unknown>[]>(sql, [`%${normalizedSearch}%`]);
+    const patients = rows.map(rowToPatient);
 
-    // Sort by relevance (exact match first, then partial, then by lastPhotoAt)
     patients.sort((a, b) => {
       const aExact = a.normalizedName === normalizedSearch;
       const bExact = b.normalizedName === normalizedSearch;
@@ -123,7 +114,6 @@ export class PatientService implements IPatientService {
       if (aStarts && !bStarts) return -1;
       if (!aStarts && bStarts) return 1;
 
-      // Fallback to lastPhotoAt
       if (a.lastPhotoAt && b.lastPhotoAt) {
         return b.lastPhotoAt.getTime() - a.lastPhotoAt.getTime();
       }
@@ -135,169 +125,145 @@ export class PatientService implements IPatientService {
     return patients;
   }
 
-  /**
-   * Updates patient name
-   */
   async updatePatient(id: string, data: PatientUpdate): Promise<Patient> {
-    // Validate data
     const validated = patientUpdateSchema.parse(data);
 
     const db = await getDB();
-    const patient = await db.get(STORES.PATIENTS, id);
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM patients WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
 
-    if (!patient) {
-      throw new NotFoundError(`Patient not found: ${id}`);
-    }
-
-    // Check for duplicate name (excluding current patient)
     const isDuplicate = await this.isDuplicateName(validated.name, id);
     if (isDuplicate) {
       console.warn(`Duplicate patient name: ${validated.name}`);
-      // Non-blocking warning
     }
 
-    // Update patient
-    const updatedPatient: Patient = {
-      ...patient,
-      name: validated.name,
-      normalizedName: validated.name.trim().toLowerCase(),
-      updatedAt: new Date(),
-    };
+    const normalizedName = validated.name.trim().toLowerCase();
+    const nowMs = Date.now();
 
-    await db.put(STORES.PATIENTS, updatedPatient);
+    await db.execute(
+      `UPDATE patients SET name = $1, normalized_name = $2, updated_at = $3 WHERE id = $4`,
+      [validated.name, normalizedName, nowMs, id]
+    );
 
-    return updatedPatient;
+    const prior = rowToPatient(rows[0]);
+    return { ...prior, name: validated.name, normalizedName, updatedAt: new Date(nowMs) };
   }
 
-  /**
-   * Archives a patient
-   */
   async archivePatient(id: string): Promise<void> {
     const db = await getDB();
-    const patient = await db.get(STORES.PATIENTS, id);
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM patients WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
 
-    if (!patient) {
-      throw new NotFoundError(`Patient not found: ${id}`);
-    }
-
-    const updatedPatient: Patient = {
-      ...patient,
-      isArchived: true,
-      archivedAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    await db.put(STORES.PATIENTS, updatedPatient);
+    const nowMs = Date.now();
+    await db.execute(
+      `UPDATE patients SET is_archived = 1, archived_at = $1, updated_at = $2 WHERE id = $3`,
+      [nowMs, nowMs, id]
+    );
   }
 
-  /**
-   * Unarchives a patient
-   */
   async unarchivePatient(id: string): Promise<Patient> {
     const db = await getDB();
-    const patient = await db.get(STORES.PATIENTS, id);
-
-    if (!patient) {
-      throw new NotFoundError(`Patient not found: ${id}`);
-    }
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM patients WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
+    const patient = rowToPatient(rows[0]);
 
     if (!patient.isArchived) {
       throw new NotFoundError(`Patient is not archived: ${id}`);
     }
 
-    const updatedPatient: Patient = {
-      ...patient,
-      isArchived: false,
-      archivedAt: null,
-      updatedAt: new Date(),
-    };
+    const nowMs = Date.now();
+    await db.execute(
+      `UPDATE patients SET is_archived = 0, archived_at = NULL, updated_at = $1 WHERE id = $2`,
+      [nowMs, id]
+    );
 
-    await db.put(STORES.PATIENTS, updatedPatient);
-
-    return updatedPatient;
+    return { ...patient, isArchived: false, archivedAt: null, updatedAt: new Date(nowMs) };
   }
 
-  /**
-   * Gets patient with accurate photo count (recalculated from photos table)
-   */
   async getPatientWithAccurateCount(id: string): Promise<Patient> {
     const db = await getDB();
-    const patient = await db.get(STORES.PATIENTS, id);
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM patients WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
+    const patient = rowToPatient(rows[0]);
 
-    if (!patient) {
-      throw new NotFoundError(`Patient not found: ${id}`);
-    }
+    const counts = await db.select<{ active: number; deleted: number }[]>(
+      `SELECT
+         SUM(CASE WHEN is_deleted = 0 THEN 1 ELSE 0 END) AS active,
+         SUM(CASE WHEN is_deleted = 1 THEN 1 ELSE 0 END) AS deleted
+       FROM photos WHERE patient_id = $1`,
+      [id]
+    );
+    const active = counts[0]?.active ?? 0;
+    const deleted = counts[0]?.deleted ?? 0;
 
-    // Count photos from photos table
-    const photos = await db.getAllFromIndex(STORES.PHOTOS, 'patientId', id);
-    const activePhotos = photos.filter((p) => !p.isDeleted);
-    const deletedPhotos = photos.filter((p) => p.isDeleted);
-
-    // Update counts if they differ
-    if (
-      patient.photoCount !== activePhotos.length ||
-      patient.deletedPhotoCount !== deletedPhotos.length
-    ) {
-      const updatedPatient: Patient = {
-        ...patient,
-        photoCount: activePhotos.length,
-        deletedPhotoCount: deletedPhotos.length,
-        updatedAt: new Date(),
-      };
-
-      await db.put(STORES.PATIENTS, updatedPatient);
-      return updatedPatient;
+    if (patient.photoCount !== active || patient.deletedPhotoCount !== deleted) {
+      const nowMs = Date.now();
+      await db.execute(
+        `UPDATE patients SET photo_count = $1, deleted_photo_count = $2, updated_at = $3 WHERE id = $4`,
+        [active, deleted, nowMs, id]
+      );
+      return { ...patient, photoCount: active, deletedPhotoCount: deleted, updatedAt: new Date(nowMs) };
     }
 
     return patient;
   }
 
-  /**
-   * Checks if patient name already exists
-   */
   async isDuplicateName(name: string, excludeId?: string): Promise<boolean> {
-    const db = await getDB();
     const normalizedName = name.trim().toLowerCase();
-
-    const patients = await db.getAllFromIndex(
-      STORES.PATIENTS,
-      'normalizedName',
-      normalizedName
-    );
-
-    // Filter out the excluded ID if provided
-    const duplicates = excludeId
-      ? patients.filter((p) => p.id !== excludeId)
-      : patients;
-
-    return duplicates.length > 0;
-  }
-
-  /**
-   * Updates denormalized photo counts
-   */
-  async updatePhotoCount(id: string, delta: number, isDeleted: boolean): Promise<void> {
     const db = await getDB();
-    const patient = await db.get(STORES.PATIENTS, id);
 
-    if (!patient) {
-      throw new NotFoundError(`Patient not found: ${id}`);
+    if (excludeId) {
+      const rows = await db.select<{ id: string }[]>(
+        'SELECT id FROM patients WHERE normalized_name = $1 AND id != $2',
+        [normalizedName, excludeId]
+      );
+      return rows.length > 0;
     }
 
-    const now = new Date();
-    const updatedPatient: Patient = {
-      ...patient,
-      photoCount: isDeleted
-        ? patient.photoCount
-        : Math.max(0, patient.photoCount + delta),
-      deletedPhotoCount: isDeleted
-        ? Math.max(0, patient.deletedPhotoCount + delta)
-        : patient.deletedPhotoCount,
-      lastPhotoAt: delta > 0 && !isDeleted ? now : patient.lastPhotoAt,
-      updatedAt: now,
-    };
+    const rows = await db.select<{ id: string }[]>(
+      'SELECT id FROM patients WHERE normalized_name = $1',
+      [normalizedName]
+    );
+    return rows.length > 0;
+  }
 
-    await db.put(STORES.PATIENTS, updatedPatient);
+  async updatePhotoCount(id: string, delta: number, isDeleted: boolean): Promise<void> {
+    const db = await getDB();
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM patients WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
+    const patient = rowToPatient(rows[0]);
+
+    const nowMs = Date.now();
+    const newPhotoCount = isDeleted
+      ? patient.photoCount
+      : Math.max(0, patient.photoCount + delta);
+    const newDeletedCount = isDeleted
+      ? Math.max(0, patient.deletedPhotoCount + delta)
+      : patient.deletedPhotoCount;
+    const newLastPhotoAt =
+      delta > 0 && !isDeleted ? nowMs : patient.lastPhotoAt?.getTime() ?? null;
+
+    await db.execute(
+      `UPDATE patients
+         SET photo_count = $1, deleted_photo_count = $2, last_photo_at = $3, updated_at = $4
+       WHERE id = $5`,
+      [newPhotoCount, newDeletedCount, newLastPhotoAt, nowMs, id]
+    );
   }
 }
 

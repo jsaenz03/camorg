@@ -1,46 +1,144 @@
 /**
- * Photo Service Implementation
+ * Photo Service Implementation (Tauri SQLite + filesystem)
  *
- * Handles all photo-related operations including creation, retrieval, updates, and search.
- * Implements IPhotoService interface from contracts/photo-service.ts
+ * Persists photo binaries as JPEG files on disk (via tauri-plugin-fs) and
+ * metadata in SQLite (via tauri-plugin-sql). Drop-in replacement for the
+ * prior IndexedDB version: same class name, same method signatures, same
+ * returned PhotoRecord shape (imageBlob/imageThumbnail carry placeholder
+ * Blobs — no component reads them; exportPhotoAsDataUrl is the byte path).
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import type { PhotoRecord, PhotoRecordCreate, PhotoRecordUpdate } from '@/types/photo';
+import type { PhotoRecord } from '@/types/photo';
+import type { PhotoRecordCreate, PhotoRecordUpdate } from '@/lib/validators/schemas';
 import type { BodyPart } from '@/types/body-part';
 import type { IPhotoService } from '@/specs/001-role-you-are/contracts/photo-service';
 import { photoRecordCreateSchema, photoRecordUpdateSchema } from '@/lib/validators/schemas';
-import { getDB } from '@/lib/db/indexeddb';
-import { STORES } from '@/lib/db/schema';
-import { compressImage, generateThumbnail, blobToDataUrl } from '@/lib/utils/image-processing';
+import { getDB, photoPath } from '@/lib/db/database';
+import { compressImage, generateThumbnail } from '@/lib/utils/image-processing';
 import { patientService } from '@/lib/services/patient-service';
 import { subpartService } from '@/lib/services/subpart-service';
+import { writeFile, readFile } from '@tauri-apps/plugin-fs';
 import {
   NotFoundError,
   ValidationError,
   StorageQuotaError,
 } from '@/lib/validators/errors';
 
+// ponytail: empty Blob placeholder — PhotoRecord.imageBlob stays on the type
+// for contract compatibility, but bytes live on disk. No component reads it.
+const PLACEHOLDER_BLOB = new Blob();
+
+/**
+ * Convert a SQLite row to a PhotoRecord.
+ * Dates come back as INTEGER unix ms; booleans as 0/1.
+ */
+function rowToPhoto(row: Record<string, unknown>): PhotoRecord {
+  return {
+    id: row.id as string,
+    patientId: row.patient_id as string,
+    imageBlob: PLACEHOLDER_BLOB,
+    imageThumbnail: PLACEHOLDER_BLOB,
+    originalFileName: (row.original_file_name as string) || '',
+    mimeType: row.mime_type as string,
+    fileSizeBytes: row.file_size_bytes as number,
+    bodyPart: row.body_part as BodyPart,
+    subpart: (row.subpart as string | null) ?? null,
+    clinicalNotes: (row.clinical_notes as string | null) ?? null,
+    capturedAt: new Date(row.captured_at as number),
+    createdAt: new Date(row.created_at as number),
+    updatedAt: new Date(row.updated_at as number),
+    clinicianId: (row.clinician_id as string) || '',
+    isDeleted: Boolean(row.is_deleted),
+    deletedAt: row.deleted_at != null ? new Date(row.deleted_at as number) : null,
+  };
+}
+
+/**
+ * Convert a Uint8Array to a base64 string, chunked to avoid call-stack limits.
+ */
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000; // 32k
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export class PhotoService implements IPhotoService {
   /**
-   * Creates a new photo record with metadata
+   * Creates a new photo record with metadata.
+   * Compresses the source blob, generates a thumbnail, writes both JPEGs to
+   * disk, then inserts the row and updates denormalised patient counts.
    */
   async createPhoto(data: PhotoRecordCreate): Promise<PhotoRecord> {
-    // Validate data
     const validated = photoRecordCreateSchema.parse(data);
 
     try {
-      // Compress photo and generate thumbnail
       const compressedBlob = await compressImage(validated.imageBlob, 1920, 0.85);
       const thumbnailBlob = await generateThumbnail(compressedBlob, 200);
 
+      const id = uuidv4();
+      const imagePath = await photoPath(`${id}.jpg`);
+      const thumbPath = await photoPath(`${id}.thumb.jpg`);
+
+      // Write JPEGs to disk (binary-safe via Uint8Array).
+      await writeFile(imagePath, new Uint8Array(await compressedBlob.arrayBuffer()));
+      await writeFile(thumbPath, new Uint8Array(await thumbnailBlob.arrayBuffer()));
+
       const now = new Date();
-      const photo: PhotoRecord = {
-        id: uuidv4(),
+      const nowMs = now.getTime();
+      const capturedMs = validated.capturedAt.getTime();
+
+      const db = await getDB();
+
+      await db.execute('BEGIN');
+      try {
+        await db.execute(
+          `INSERT INTO photos
+             (id, patient_id, image_path, thumbnail_path, original_file_name,
+              mime_type, file_size_bytes, body_part, subpart, clinical_notes,
+              captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, NULL)`,
+          [
+            id,
+            validated.patientId,
+            imagePath,
+            thumbPath,
+            '', // originalFileName: not in the create DTO
+            validated.mimeType,
+            compressedBlob.size,
+            validated.bodyPart,
+            validated.subpart ?? null,
+            validated.clinicalNotes ?? null,
+            capturedMs,
+            nowMs,
+            nowMs,
+            '', // clinicianId: set by auth context when implemented
+          ]
+        );
+
+        // Update patient denormalised counts (separate statements, same tx).
+        await patientService.updatePhotoCount(validated.patientId, 1, false);
+
+        // Record subpart usage if provided.
+        if (validated.subpart) {
+          await subpartService.recordUsage(validated.bodyPart, validated.subpart);
+        }
+
+        await db.execute('COMMIT');
+      } catch (error) {
+        await db.execute('ROLLBACK');
+        throw error;
+      }
+
+      return {
+        id,
         patientId: validated.patientId,
-        imageBlob: compressedBlob,
-        imageThumbnail: thumbnailBlob,
-        originalFileName: validated.originalFileName || '',
+        imageBlob: PLACEHOLDER_BLOB,
+        imageThumbnail: PLACEHOLDER_BLOB,
+        originalFileName: '',
         mimeType: validated.mimeType,
         fileSizeBytes: compressedBlob.size,
         bodyPart: validated.bodyPart,
@@ -49,55 +147,38 @@ export class PhotoService implements IPhotoService {
         capturedAt: validated.capturedAt,
         createdAt: now,
         updatedAt: now,
-        clinicianId: '', // Will be set by auth context in real implementation
+        clinicianId: '',
         isDeleted: false,
         deletedAt: null,
       };
-
-      // Use transaction to ensure atomicity
-      const db = await getDB();
-      const tx = db.transaction([STORES.PHOTOS, STORES.PATIENTS], 'readwrite');
-
-      try {
-        // Add photo
-        await tx.objectStore(STORES.PHOTOS).add(photo);
-
-        // Update patient denormalized counts
-        await patientService.updatePhotoCount(validated.patientId, 1, false);
-
-        // Record subpart usage if provided
-        if (validated.subpart) {
-          await subpartService.recordUsage(validated.bodyPart, validated.subpart);
-        }
-
-        await tx.done;
-
-        return photo;
-      } catch (error) {
-        // Transaction failed, rollback
-        tx.abort();
-        throw error;
-      }
     } catch (error) {
-      // Check for quota exceeded error
-      if (error instanceof Error && error.name === 'QuotaExceededError') {
-        throw new StorageQuotaError('Storage quota exceeded. Please delete old photos or clear browser data.');
+      // Surface disk-full / quota as StorageQuotaError for UI parity.
+      if (
+        error instanceof Error &&
+        (error.name === 'QuotaExceededError' || /No space left/i.test(error.message))
+      ) {
+        throw new StorageQuotaError(
+          'Storage quota exceeded. Please delete old photos or free disk space.'
+        );
       }
       throw error;
     }
   }
 
   /**
-   * Retrieves a single photo by ID
+   * Retrieves a single photo by ID.
    */
   async getPhotoById(id: string): Promise<PhotoRecord | null> {
     const db = await getDB();
-    const photo = await db.get(STORES.PHOTOS, id);
-    return photo || null;
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM photos WHERE id = $1',
+      [id]
+    );
+    return rows.length ? rowToPhoto(rows[0]) : null;
   }
 
   /**
-   * Retrieves all photos for a specific patient
+   * Retrieves all photos for a specific patient, newest first.
    */
   async getPhotosByPatient(
     patientId: string,
@@ -106,207 +187,191 @@ export class PhotoService implements IPhotoService {
     const { includeDeleted = false, bodyPart } = options;
 
     const db = await getDB();
-    let photos: PhotoRecord[];
+    let sql = 'SELECT * FROM photos WHERE patient_id = $1';
+    const binds: unknown[] = [patientId];
 
     if (bodyPart) {
-      // Use composite index for filtered query
-      photos = await db.getAllFromIndex(
-        STORES.PHOTOS,
-        'patientId_bodyPart',
-        [patientId, bodyPart]
-      );
-    } else {
-      // Use patientId index
-      photos = await db.getAllFromIndex(STORES.PHOTOS, 'patientId', patientId);
+      sql += ' AND body_part = $2';
+      binds.push(bodyPart);
     }
 
-    // Filter deleted if needed
     if (!includeDeleted) {
-      photos = photos.filter((p) => !p.isDeleted);
+      sql += ' AND is_deleted = 0';
     }
 
-    // Sort by capturedAt DESC (newest first)
-    photos.sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime());
+    sql += ' ORDER BY captured_at DESC';
 
-    return photos;
+    const rows = await db.select<Record<string, unknown>[]>(sql, binds);
+    return rows.map(rowToPhoto);
   }
 
   /**
-   * Updates photo metadata (notes and subpart only)
+   * Updates photo metadata (notes and subpart only).
    */
   async updatePhoto(id: string, data: PhotoRecordUpdate): Promise<PhotoRecord> {
-    // Validate data
     const validated = photoRecordUpdateSchema.parse(data);
 
     const db = await getDB();
-    const photo = await db.get(STORES.PHOTOS, id);
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM photos WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
+    const photo = rowToPhoto(rows[0]);
 
-    if (!photo) {
-      throw new NotFoundError(`Photo not found: ${id}`);
-    }
+    const updatedSubpart =
+      validated.subpart !== undefined ? validated.subpart : photo.subpart;
+    const updatedNotes =
+      validated.clinicalNotes !== undefined ? validated.clinicalNotes : photo.clinicalNotes;
+    const nowMs = Date.now();
 
-    // Update photo
-    const updatedPhoto: PhotoRecord = {
-      ...photo,
-      subpart: validated.subpart !== undefined ? validated.subpart : photo.subpart,
-      clinicalNotes: validated.clinicalNotes !== undefined ? validated.clinicalNotes : photo.clinicalNotes,
-      updatedAt: new Date(),
-    };
+    await db.execute(
+      `UPDATE photos
+         SET subpart = $1, clinical_notes = $2, updated_at = $3
+       WHERE id = $4`,
+      [updatedSubpart ?? null, updatedNotes ?? null, nowMs, id]
+    );
 
-    await db.put(STORES.PHOTOS, updatedPhoto);
-
-    // Update subpart usage if changed and provided
+    // Record subpart usage if changed and provided.
     if (validated.subpart && validated.subpart !== photo.subpart) {
       await subpartService.recordUsage(photo.bodyPart, validated.subpart);
     }
 
-    return updatedPhoto;
+    return { ...photo, subpart: updatedSubpart, clinicalNotes: updatedNotes, updatedAt: new Date(nowMs) };
   }
 
   /**
-   * Soft deletes a photo
+   * Soft deletes a photo.
    */
   async deletePhoto(id: string): Promise<void> {
     const db = await getDB();
-    const photo = await db.get(STORES.PHOTOS, id);
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM photos WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
+    const photo = rowToPhoto(rows[0]);
 
-    if (!photo) {
-      throw new NotFoundError(`Photo not found: ${id}`);
-    }
+    const nowMs = Date.now();
 
-    const now = new Date();
-    const updatedPhoto: PhotoRecord = {
-      ...photo,
-      isDeleted: true,
-      deletedAt: now,
-      updatedAt: now,
-    };
-
-    // Use transaction to ensure atomicity
-    const tx = db.transaction([STORES.PHOTOS, STORES.PATIENTS], 'readwrite');
-
+    await db.execute('BEGIN');
     try {
-      await tx.objectStore(STORES.PHOTOS).put(updatedPhoto);
+      await db.execute(
+        `UPDATE photos SET is_deleted = 1, deleted_at = $1, updated_at = $2 WHERE id = $3`,
+        [nowMs, nowMs, id]
+      );
 
-      // Update patient denormalized counts
+      // Maintain denormalised counts: active -1, deleted +1.
       await patientService.updatePhotoCount(photo.patientId, -1, false);
       await patientService.updatePhotoCount(photo.patientId, 1, true);
 
-      await tx.done;
+      await db.execute('COMMIT');
     } catch (error) {
-      tx.abort();
+      await db.execute('ROLLBACK');
       throw error;
     }
   }
 
   /**
-   * Restores a soft-deleted photo
+   * Restores a soft-deleted photo.
    */
   async restorePhoto(id: string): Promise<PhotoRecord> {
     const db = await getDB();
-    const photo = await db.get(STORES.PHOTOS, id);
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM photos WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
+    const photo = rowToPhoto(rows[0]);
 
-    if (!photo) {
-      throw new NotFoundError(`Photo not found: ${id}`);
-    }
+    if (!photo.isDeleted) throw new NotFoundError(`Photo is not deleted: ${id}`);
 
-    if (!photo.isDeleted) {
-      throw new NotFoundError(`Photo is not deleted: ${id}`);
-    }
+    const nowMs = Date.now();
 
-    const updatedPhoto: PhotoRecord = {
-      ...photo,
-      isDeleted: false,
-      deletedAt: null,
-      updatedAt: new Date(),
-    };
-
-    // Use transaction to ensure atomicity
-    const tx = db.transaction([STORES.PHOTOS, STORES.PATIENTS], 'readwrite');
-
+    await db.execute('BEGIN');
     try {
-      await tx.objectStore(STORES.PHOTOS).put(updatedPhoto);
+      await db.execute(
+        `UPDATE photos SET is_deleted = 0, deleted_at = NULL, updated_at = $1 WHERE id = $2`,
+        [nowMs, id]
+      );
 
-      // Update patient denormalized counts
       await patientService.updatePhotoCount(photo.patientId, 1, false);
       await patientService.updatePhotoCount(photo.patientId, -1, true);
 
-      await tx.done;
-
-      return updatedPhoto;
+      await db.execute('COMMIT');
     } catch (error) {
-      tx.abort();
+      await db.execute('ROLLBACK');
       throw error;
     }
+
+    return { ...photo, isDeleted: false, deletedAt: null, updatedAt: new Date(nowMs) };
   }
 
   /**
-   * Searches photos by clinical notes keyword
+   * Searches photos by clinical notes keyword.
    */
   async searchPhotosByNotes(
     keyword: string,
     options: { patientId?: string; bodyPart?: BodyPart } = {}
   ): Promise<PhotoRecord[]> {
     const { patientId, bodyPart } = options;
-
-    const db = await getDB();
     const normalizedKeyword = keyword.trim().toLowerCase();
 
-    let photos: PhotoRecord[];
+    const db = await getDB();
+    let sql = 'SELECT * FROM photos WHERE is_deleted = 0';
+    const binds: unknown[] = [];
 
     if (patientId) {
-      photos = await db.getAllFromIndex(STORES.PHOTOS, 'patientId', patientId);
-    } else {
-      photos = await db.getAll(STORES.PHOTOS);
+      binds.push(patientId);
+      sql += ` AND patient_id = $${binds.length}`;
     }
+    if (bodyPart) {
+      binds.push(bodyPart);
+      sql += ` AND body_part = $${binds.length}`;
+    }
+    binds.push(`%${normalizedKeyword}%`);
+    sql += ` AND LOWER(COALESCE(clinical_notes, '')) LIKE $${binds.length}`;
 
-    // Filter by keyword, body part, and deleted status
-    photos = photos.filter((p) => {
-      const matchesKeyword = p.clinicalNotes?.toLowerCase().includes(normalizedKeyword);
-      const matchesBodyPart = bodyPart ? p.bodyPart === bodyPart : true;
-      const notDeleted = !p.isDeleted;
-      return matchesKeyword && matchesBodyPart && notDeleted;
-    });
+    sql += ' ORDER BY captured_at DESC';
 
-    // Sort by capturedAt DESC
-    photos.sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime());
-
-    return photos;
+    const rows = await db.select<Record<string, unknown>[]>(sql, binds);
+    return rows.map(rowToPhoto);
   }
 
   /**
-   * Gets count of photos for a patient
+   * Gets count of photos for a patient.
    */
   async getPhotoCount(patientId: string, includeDeleted: boolean = false): Promise<number> {
     const db = await getDB();
-    const photos = await db.getAllFromIndex(STORES.PHOTOS, 'patientId', patientId);
+    let sql = 'SELECT COUNT(*) AS cnt FROM photos WHERE patient_id = $1';
+    if (!includeDeleted) sql += ' AND is_deleted = 0';
 
-    if (includeDeleted) {
-      return photos.length;
-    } else {
-      return photos.filter((p) => !p.isDeleted).length;
-    }
+    const rows = await db.select<{ cnt: number }[]>(sql, [patientId]);
+    return rows[0]?.cnt ?? 0;
   }
 
   /**
-   * Exports photo as data URL
+   * Exports photo bytes as a base64 data URL.
+   * Reads the on-disk JPEG (full or thumbnail) and base64-encodes it.
    */
   async exportPhotoAsDataUrl(id: string, useThumbnail: boolean = false): Promise<string> {
     const db = await getDB();
-    const photo = await db.get(STORES.PHOTOS, id);
+    const rows = await db.select<{ image_path: string; thumbnail_path: string; mime_type: string }[]>(
+      'SELECT image_path, thumbnail_path, mime_type FROM photos WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
 
-    if (!photo) {
-      throw new NotFoundError(`Photo not found: ${id}`);
-    }
-
-    const blob = useThumbnail ? photo.imageThumbnail : photo.imageBlob;
-    const dataUrl = await blobToDataUrl(blob);
-
-    return dataUrl;
+    const row = rows[0];
+    const path = useThumbnail ? row.thumbnail_path : row.image_path;
+    const bytes = await readFile(path);
+    const base64 = uint8ToBase64(new Uint8Array(bytes));
+    const mime = useThumbnail ? 'image/jpeg' : row.mime_type;
+    return `data:${mime};base64,${base64}`;
   }
 
   /**
-   * Gets photos for comparison
+   * Gets photos for comparison (2-4 photos, returned in requested order).
    */
   async getPhotosForComparison(photoIds: string[]): Promise<PhotoRecord[]> {
     if (photoIds.length < 2 || photoIds.length > 4) {
@@ -314,18 +379,18 @@ export class PhotoService implements IPhotoService {
     }
 
     const db = await getDB();
-    const photos: PhotoRecord[] = [];
+    const placeholders = photoIds.map((_, i) => `$${i + 1}`).join(',');
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT * FROM photos WHERE id IN (${placeholders})`,
+      photoIds
+    );
 
-    for (const id of photoIds) {
-      const photo = await db.get(STORES.PHOTOS, id);
-      if (!photo) {
-        throw new NotFoundError(`Photo not found: ${id}`);
-      }
-      photos.push(photo);
-    }
-
-    // Return in requested order
-    return photos;
+    // Preserve requested order.
+    return photoIds.map((id) => {
+      const row = rows.find((r) => r.id === id);
+      if (!row) throw new NotFoundError(`Photo not found: ${id}`);
+      return rowToPhoto(row);
+    });
   }
 }
 

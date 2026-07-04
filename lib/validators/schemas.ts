@@ -11,10 +11,10 @@ export const photoRecordCreateSchema = z.object({
     { message: 'Photo must be between 0 and 20MB' }
   ),
   mimeType: z.enum(['image/jpeg', 'image/png', 'image/heic', 'image/webp'], {
-    errorMap: () => ({ message: 'Invalid image format. Supported: JPEG, PNG, HEIC, WebP' }),
+    message: 'Invalid image format. Supported: JPEG, PNG, HEIC, WebP',
   }),
   bodyPart: z.nativeEnum(BodyPart, {
-    errorMap: () => ({ message: 'Please select a body part' }),
+    message: 'Please select a body part',
   }),
   subpart: z.string().max(100, 'Subpart must be 100 characters or less').optional().nullable(),
   clinicalNotes: z.string().max(2000, 'Clinical notes must be 2000 characters or less').optional().nullable(),

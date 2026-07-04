@@ -80,6 +80,20 @@ export class CameraService implements ICameraService {
         if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
           throw new Error('Camera is already in use by another application');
         }
+        // ponytail: Windows laptops typically have one front webcam and reject
+        // facingMode:'environment' with OverconstrainedError. Fall back to
+        // 'user' once before giving up.
+        if (
+          error.name === 'OverconstrainedError' &&
+          !constraints &&
+          facingMode !== 'user'
+        ) {
+          const fallbackConstraints: MediaStreamConstraints = {
+            video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } },
+            audio: false,
+          };
+          return navigator.mediaDevices.getUserMedia(fallbackConstraints);
+        }
       }
       throw error;
     }
@@ -182,10 +196,14 @@ export class CameraService implements ICameraService {
           ideal: 1080,
         },
       },
+      // @ts-expect-error - zoom is supported but not in TypeScript types
       zoom: capabilities.zoom
         ? {
+            // @ts-expect-error - zoom is supported but not in TypeScript types
             min: capabilities.zoom.min,
+            // @ts-expect-error - zoom is supported but not in TypeScript types
             max: capabilities.zoom.max,
+            // @ts-expect-error - zoom is supported but not in TypeScript types
             step: capabilities.zoom.step || 0.1,
           }
         : null,
@@ -201,7 +219,11 @@ export class CameraService implements ICameraService {
       throw new Error('No video track found in stream');
     }
 
-    const capabilities = videoTrack.getCapabilities();
+    // ponytail: zoom is a Chrome/Android capability not in TS lib.dom.d.ts.
+    // Cast to a minimal shape; the inner @ts-expect-error already assumes this.
+    const capabilities = videoTrack.getCapabilities() as MediaTrackCapabilities & {
+      zoom?: { min: number; max: number; step: number };
+    };
     if (!capabilities.zoom) {
       throw new NotSupportedError('Zoom not supported on this device');
     }
@@ -213,7 +235,8 @@ export class CameraService implements ICameraService {
     }
 
     await videoTrack.applyConstraints({
-      advanced: [{ zoom: zoomLevel } as any],
+      // @ts-expect-error - zoom is supported but not in TypeScript types
+      advanced: [{ zoom: zoomLevel }],
     });
   }
 
