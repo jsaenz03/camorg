@@ -5,9 +5,10 @@
  *
  * Always shows: passcode change.
  * Admin-only: tabs for Users, Invitations, App settings.
+ * Uses shadcn Tabs and Switch (replaces the prior hand-rolled tab bar and
+ * native checkboxes).
  */
 
-import { useState } from 'react';
 import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
 import { toast } from 'sonner';
@@ -20,6 +21,7 @@ import { ChangePasscodeForm } from '@/components/settings/change-passcode-form';
 import { UsersPanel } from '@/components/settings/users-panel';
 import { InvitationsPanel } from '@/components/settings/invitations-panel';
 import { AppSettingsPanel } from '@/components/settings/app-settings-panel';
+import { PageHeader } from '@/components/page-header';
 
 import {
   Card,
@@ -35,18 +37,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 
-type Tab = 'profile' | 'users' | 'invitations' | 'app';
-
 export default function SettingsPage() {
   const { clinician, refresh } = useAuth();
-  const [tab, setTab] = useState<Tab>('profile');
 
   if (!clinician) {
     return (
-      <div className="container mx-auto max-w-3xl px-4 py-8">
+      <div className="container mx-auto max-w-3xl px-4 py-8 md:px-6 md:py-10">
         <Skeleton className="h-8 w-48" />
       </div>
     );
@@ -55,65 +56,43 @@ export default function SettingsPage() {
   const isAdmin = clinician.role === 'admin';
 
   return (
-    <div className="container mx-auto max-w-3xl px-4 py-8">
-      <div className="mb-6 flex items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <Badge variant="secondary">{clinician.role}</Badge>
-      </div>
+    <div className="container mx-auto max-w-3xl px-4 py-8 md:px-6 md:py-10">
+      <PageHeader
+        title="Settings"
+        description="Manage your profile and application preferences."
+        actions={<Badge variant="secondary">{clinician.role}</Badge>}
+      />
 
-      <div className="mb-6 flex gap-1 border-b">
-        <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>
-          Profile
-        </TabButton>
-        {isAdmin && (
-          <>
-            <TabButton active={tab === 'users'} onClick={() => setTab('users')}>
-              Users
-            </TabButton>
-            <TabButton active={tab === 'invitations'} onClick={() => setTab('invitations')}>
-              Invitations
-            </TabButton>
-            <TabButton active={tab === 'app'} onClick={() => setTab('app')}>
-              App
-            </TabButton>
-          </>
-        )}
-      </div>
+      <Tabs defaultValue="profile">
+        <TabsList>
+          <TabsTrigger value="profile">Profile</TabsTrigger>
+          {isAdmin && <TabsTrigger value="users">Users</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="invitations">Invitations</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="app">App</TabsTrigger>}
+        </TabsList>
 
-      {tab === 'profile' && (
-        <div className="space-y-4">
+        <TabsContent value="profile" className="mt-6 space-y-4">
           <ProfileCard clinician={clinician} onchanged={refresh} />
           <ChangePasscodeForm onchanged={refresh} />
-        </div>
-      )}
-      {tab === 'users' && isAdmin && <UsersPanel currentUserId={clinician.id} />}
-      {tab === 'invitations' && isAdmin && <InvitationsPanel />}
-      {tab === 'app' && isAdmin && <AppSettingsPanel />}
-    </div>
-  );
-}
+        </TabsContent>
 
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-        active
-          ? 'border-primary text-foreground'
-          : 'border-transparent text-muted-foreground hover:text-foreground'
-      }`}
-    >
-      {children}
-    </button>
+        {isAdmin && (
+          <TabsContent value="users" className="mt-6">
+            <UsersPanel currentUserId={clinician.id} />
+          </TabsContent>
+        )}
+        {isAdmin && (
+          <TabsContent value="invitations" className="mt-6">
+            <InvitationsPanel />
+          </TabsContent>
+        )}
+        {isAdmin && (
+          <TabsContent value="app" className="mt-6">
+            <AppSettingsPanel />
+          </TabsContent>
+        )}
+      </Tabs>
+    </div>
   );
 }
 
@@ -124,18 +103,13 @@ function ProfileCard({
   clinician: Clinician;
   onchanged: () => void;
 }) {
-  const [saving, setSaving] = useState(false);
-
   async function updatePrefs(patch: Partial<Clinician['preferences']>) {
-    setSaving(true);
     try {
       await authService.updatePreferences(patch);
       await onchanged();
       toast.success('Preference saved');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Save failed');
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -152,12 +126,11 @@ function ProfileCard({
             value={clinician.preferences.defaultBodyPart ?? '__none__'}
             onValueChange={(v) =>
               updatePrefs({
-                defaultBodyPart:
-                  v === '__none__' ? null : (v as BodyPart),
+                defaultBodyPart: v === '__none__' ? null : (v as BodyPart),
               })
             }
           >
-            <SelectTrigger className="w-full" disabled={saving}>
+            <SelectTrigger className="w-full">
               <SelectValue placeholder="No default" />
             </SelectTrigger>
             <SelectContent>
@@ -171,42 +144,42 @@ function ProfileCard({
           </Select>
         </div>
 
-        <label className="flex items-center justify-between rounded-md border p-3 text-sm">
-          <span>
-            <span className="font-medium">Show deleted photos</span>
-            <span className="block text-xs text-muted-foreground">
-              Display soft-deleted records in timelines.
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            className="size-4"
-            checked={clinician.preferences.showDeletedPhotos}
-            onChange={(e) =>
-              updatePrefs({ showDeletedPhotos: e.target.checked })
-            }
-            disabled={saving}
-          />
-        </label>
+        <PreferenceRow
+          title="Show deleted photos"
+          description="Display soft-deleted records in timelines."
+          checked={clinician.preferences.showDeletedPhotos}
+          onCheckedChange={(v) => updatePrefs({ showDeletedPhotos: v })}
+        />
 
-        <label className="flex items-center justify-between rounded-md border p-3 text-sm">
-          <span>
-            <span className="font-medium">Auto-compress photos</span>
-            <span className="block text-xs text-muted-foreground">
-              Downscale large captures before storing.
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            className="size-4"
-            checked={clinician.preferences.autoCompressPhotos}
-            onChange={(e) =>
-              updatePrefs({ autoCompressPhotos: e.target.checked })
-            }
-            disabled={saving}
-          />
-        </label>
+        <PreferenceRow
+          title="Auto-compress photos"
+          description="Downscale large captures before storing."
+          checked={clinician.preferences.autoCompressPhotos}
+          onCheckedChange={(v) => updatePrefs({ autoCompressPhotos: v })}
+        />
       </CardContent>
     </Card>
+  );
+}
+
+function PreferenceRow({
+  title,
+  description,
+  checked,
+  onCheckedChange,
+}: {
+  title: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-md border p-3">
+      <div className="pr-4">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
   );
 }

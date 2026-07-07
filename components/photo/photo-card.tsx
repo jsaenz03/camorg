@@ -1,8 +1,11 @@
 /**
  * PhotoCard Component
  *
- * Displays a single photo with metadata in timeline or search results.
- * Shows thumbnail, capture date, body part, subpart, and clinical notes preview.
+ * Image-forward bento tile for a single photo. The image fills the tile;
+ * body-part label + relative capture time sit in a compact persistent caption.
+ * Optional hover overlay reveals the full capture date and clinical notes.
+ *
+ * Used in: patient timeline, home dashboard.
  */
 
 'use client';
@@ -10,10 +13,11 @@
 import { useState, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { BodyPartLabels } from '@/types/body-part';
 import { Badge } from '@/components/ui/badge';
 import { photoService } from '@/lib/services/photo-service';
-import { formatCaptureDate } from '@/lib/utils/date-formatting';
+import { formatCaptureDate, formatRelativeTime } from '@/lib/utils/date-formatting';
+import { cn } from '@/lib/utils';
 
 interface PhotoCardProps {
   photo: PhotoRecord;
@@ -21,23 +25,28 @@ interface PhotoCardProps {
   isSelected?: boolean;
   showCheckbox?: boolean;
   onSelectionChange?: (selected: boolean) => void;
+  /** Tone of the tile surface. Default uses card tokens. */
+  className?: string;
+  /**
+   * Stretch the image to fill the card's available height (drops the fixed
+   * aspect-square). Used by bento layouts where the grid controls sizing.
+   */
+  fillContainer?: boolean;
 }
 
-/**
- * PhotoCard displays a photo thumbnail with metadata
- */
 export function PhotoCard({
   photo,
   onClick,
   isSelected = false,
   showCheckbox = false,
   onSelectionChange,
+  className,
+  fillContainer = false,
 }: PhotoCardProps) {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  // Load thumbnail
   useEffect(() => {
     let mounted = true;
 
@@ -60,10 +69,6 @@ export function PhotoCard({
 
     return () => {
       mounted = false;
-      // Revoke object URL if it was created
-      if (thumbnailUrl) {
-        URL.revokeObjectURL(thumbnailUrl);
-      }
     };
   }, [photo.id]);
 
@@ -83,66 +88,74 @@ export function PhotoCard({
   };
 
   return (
-    <Card
-      className={`cursor-pointer transition-all hover:shadow-md ${
-        isSelected ? 'ring-2 ring-primary' : ''
-      }`}
+    <button
+      type="button"
       onClick={handleCardClick}
+      aria-label={`Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? `, ${photo.subpart}` : ''}, captured ${formatCaptureDate(photo.capturedAt)}`}
+      className={cn(
+        'group relative flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all',
+        'hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+        'active:translate-y-px',
+        isSelected && 'ring-2 ring-primary',
+        className,
+      )}
     >
-      <CardHeader className="p-4 pb-2">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-foreground">
+      {/* Image surface */}
+      <div className={cn('relative w-full bg-muted', fillContainer ? 'flex-1' : 'aspect-square')}>
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="size-7 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {error && !isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center px-3 text-center text-xs text-muted-foreground">
+            Failed to load image
+          </div>
+        )}
+        {thumbnailUrl && !isLoading && !error && (
+          <img
+            src={thumbnailUrl}
+            alt={`Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? ` — ${photo.subpart}` : ''}`}
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+            loading="lazy"
+          />
+        )}
+
+        {/* Selection checkbox */}
+        {showCheckbox && (
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={handleCheckboxChange}
+            className="absolute right-3 top-3 size-5 rounded border-input bg-background/80 text-primary accent-primary focus:ring-2 focus:ring-ring"
+            aria-label={`Select photo from ${formatCaptureDate(photo.capturedAt)}`}
+          />
+        )}
+
+        {/* Hover overlay: full date + notes */}
+        {!error && !isLoading && (
+          <div className="pointer-events-none absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/70 via-black/0 to-black/0 p-3 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
+            <p className="text-xs font-medium text-white drop-shadow">
               {formatCaptureDate(photo.capturedAt)}
             </p>
-            <div className="flex flex-wrap gap-1 mt-1">
-              <Badge variant="secondary">{photo.bodyPart}</Badge>
-              {photo.subpart && (
-                <Badge variant="outline">{photo.subpart}</Badge>
-              )}
-            </div>
+            {photo.clinicalNotes && (
+              <p className="mt-1 line-clamp-2 text-xs text-white/80">
+                {photo.clinicalNotes}
+              </p>
+            )}
           </div>
-          {showCheckbox && (
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onChange={handleCheckboxChange}
-              className="size-5 rounded border-input text-primary accent-primary focus:ring-2 focus:ring-ring focus:ring-offset-0"
-              aria-label={`Select photo from ${formatCaptureDate(photo.capturedAt)}`}
-            />
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="p-4 pt-2">
-        {/* Thumbnail */}
-        <div className="relative aspect-square w-full bg-muted rounded-md overflow-hidden mb-2">
-          {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Loader2 className="size-8 animate-spin text-muted-foreground" />
-            </div>
-          )}
-          {error && (
-            <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-              Failed to load image
-            </div>
-          )}
-          {thumbnailUrl && !isLoading && !error && (
-            <img
-              src={thumbnailUrl}
-              alt={`Photo of ${photo.bodyPart}${photo.subpart ? ` - ${photo.subpart}` : ''}`}
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
-          )}
-        </div>
-
-        {/* Clinical Notes Preview */}
-        {photo.clinicalNotes && (
-          <p className="text-sm text-muted-foreground line-clamp-2">
-            {photo.clinicalNotes}
-          </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+
+      {/* Persistent caption */}
+      <div className="flex items-center justify-between gap-2 p-3">
+        <Badge variant="secondary" className="shrink-0">
+          {BodyPartLabels[photo.bodyPart]}
+        </Badge>
+        <span className="truncate text-xs text-muted-foreground" title={formatCaptureDate(photo.capturedAt)}>
+          {formatRelativeTime(photo.capturedAt)}
+        </span>
+      </div>
+    </button>
   );
 }

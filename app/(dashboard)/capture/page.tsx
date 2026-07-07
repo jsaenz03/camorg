@@ -3,24 +3,31 @@
  *
  * Main page for capturing clinical photos with metadata.
  * Composes CameraCapture + PhotoMetadataForm + save logic.
+ *
+ * Reads ?patient= to prefill the patient name (linked from home/timeline).
+ * useSearchParams forces a Suspense boundary for static export.
  */
 
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Camera } from 'lucide-react';
 import { CameraCapture } from '@/components/camera/camera-capture';
 import { PhotoMetadataForm, type PhotoMetadataFormValues } from '@/components/photo/photo-metadata-form';
+import { PageHeader } from '@/components/page-header';
 import type { CapturedPhoto } from '@/specs/001-role-you-are/contracts/camera-service';
 import { photoService } from '@/lib/services/photo-service';
 import { patientService } from '@/lib/services/patient-service';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 
-export default function CapturePage() {
+function CaptureView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const patientHint = searchParams.get('patient') ?? '';
   const [capturedPhoto, setCapturedPhoto] = useState<CapturedPhoto | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -53,10 +60,8 @@ export default function CapturePage() {
       let patientId: string;
 
       if (exactMatch) {
-        // Use existing patient
         patientId = exactMatch.id;
       } else {
-        // Create new patient
         const newPatient = await patientService.createPatient({
           name: formData.patientName,
         });
@@ -64,15 +69,15 @@ export default function CapturePage() {
         toast.info(`Created new patient: ${formData.patientName}`);
       }
 
-      // 2. Create photo record
-      const photoRecord = await photoService.createPhoto({
+      // 2. Create photo record (honour an optional capture-date override).
+      await photoService.createPhoto({
         patientId,
         imageBlob: capturedPhoto.blob,
         mimeType: capturedPhoto.blob.type as 'image/jpeg' | 'image/png' | 'image/heic' | 'image/webp',
         bodyPart: formData.bodyPart,
         subpart: formData.subpart || null,
         clinicalNotes: formData.clinicalNotes || null,
-        capturedAt: capturedPhoto.capturedAt,
+        capturedAt: formData.capturedAt ?? capturedPhoto.capturedAt,
       });
 
       toast.success('Photo saved successfully');
@@ -114,15 +119,12 @@ export default function CapturePage() {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl">
+    <div className="container mx-auto max-w-5xl px-4 py-8 md:px-6 md:py-10">
       <div className="space-y-6">
-        {/* Page Header */}
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Capture Photo</h1>
-          <p className="text-muted-foreground mt-2">
-            Capture a clinical photograph and add patient metadata
-          </p>
-        </div>
+        <PageHeader
+          title="Capture Photo"
+          description="Capture a clinical photograph and add patient metadata."
+        />
 
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Left: Camera or Captured Photo */}
@@ -182,6 +184,7 @@ export default function CapturePage() {
                     onSubmit={handleFormSubmit}
                     onCancel={handleCancel}
                     isSubmitting={isSubmitting}
+                    defaultValues={patientHint ? { patientName: patientHint } : undefined}
                   />
                 ) : (
                   <div className="text-center py-12 text-muted-foreground">
@@ -195,5 +198,24 @@ export default function CapturePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function CapturePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="container mx-auto max-w-5xl px-4 py-8 md:px-6 md:py-10">
+          <Skeleton className="h-9 w-48" />
+          <Skeleton className="mt-2 h-4 w-72" />
+          <div className="mt-8 grid gap-6 lg:grid-cols-2">
+            <Skeleton className="aspect-video w-full rounded-xl" />
+            <Skeleton className="h-96 w-full rounded-xl" />
+          </div>
+        </div>
+      }
+    >
+      <CaptureView />
+    </Suspense>
   );
 }

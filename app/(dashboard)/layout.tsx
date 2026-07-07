@@ -3,53 +3,38 @@
 /**
  * Dashboard route-group layout.
  *
- * Acts as the auth gate: every page under (dashboard) requires an active
- * session. While the session is being resolved we show a slim skeleton;
- * once resolved, if there's no session we redirect to /login.
+ * Collapsible sidebar (AppSidebar) + a slim top bar inside SidebarInset that
+ * holds the mobile sidebar trigger, theme toggle, and account menu.
  *
- * SiteNav lives here (not in the root layout) so auth screens render without
- * the app chrome.
+ * NOTE: Auth gate temporarily disabled. All pages are accessible to anyone.
+ * Re-enable the `useAuth` checks and redirect to `/login` when ready.
  */
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { SiteNav } from '@/components/site-nav';
-import { useAuth } from '@/lib/auth/auth-context';
-import { Skeleton } from '@/components/ui/skeleton';
+import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
+import { Separator } from '@/components/ui/separator';
+import { AppSidebar } from '@/components/app-sidebar';
+import { ThemeToggle } from '@/components/theme-toggle';
+import { UserMenu } from '@/components/user-menu';
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { session, loading } = useAuth();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!loading && !session) {
-      router.replace('/login');
-    }
-  }, [loading, session, router]);
-
-  if (loading || !session) {
-    return (
-      <div className="flex min-h-dvh flex-col">
-        <div className="border-b">
-          <div className="container mx-auto flex h-14 max-w-5xl items-center px-4">
-            <Skeleton className="h-6 w-24" />
-          </div>
-        </div>
-        <main className="flex-1 container mx-auto max-w-5xl px-4 py-8">
-          <Skeleton className="h-8 w-48" />
-        </main>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex min-h-dvh flex-col">
-      <SiteNav />
-      <main className="flex-1">{children}</main>
-    </div>
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+          <SidebarTrigger />
+          <Separator orientation="vertical" className="mr-1 h-5" />
+          <div className="ml-auto flex items-center gap-1">
+            <ThemeToggle />
+            <UserMenu />
+          </div>
+        </header>
+        <main className="flex-1">{children}</main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

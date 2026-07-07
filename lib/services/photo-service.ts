@@ -362,6 +362,44 @@ export class PhotoService implements IPhotoService {
   }
 
   /**
+   * Retrieves photos across all patients, newest first.
+   * Optional filters by date range (capturedAt), body part, and a limit.
+   */
+  async getAllPhotos(
+    options: { from?: Date; to?: Date; bodyPart?: BodyPart; includeDeleted?: boolean; limit?: number } = {}
+  ): Promise<PhotoRecord[]> {
+    const { from, to, bodyPart, includeDeleted = false, limit } = options;
+
+    const db = await getDB();
+    const binds: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (!includeDeleted) clauses.push('is_deleted = 0');
+    if (bodyPart) {
+      binds.push(bodyPart);
+      clauses.push(`body_part = $${binds.length}`);
+    }
+    if (from) {
+      binds.push(from.getTime());
+      clauses.push(`captured_at >= $${binds.length}`);
+    }
+    if (to) {
+      binds.push(to.getTime());
+      clauses.push(`captured_at <= $${binds.length}`);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    let sql = `SELECT * FROM photos ${where} ORDER BY captured_at DESC`;
+    if (limit && limit > 0) {
+      binds.push(limit);
+      sql += ` LIMIT $${binds.length}`;
+    }
+
+    const rows = await db.select<Record<string, unknown>[]>(sql, binds);
+    return rows.map(rowToPhoto);
+  }
+
+  /**
    * Gets photos for comparison (2-4 photos, returned in requested order).
    */
   async getPhotosForComparison(photoIds: string[]): Promise<PhotoRecord[]> {

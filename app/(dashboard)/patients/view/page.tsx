@@ -1,22 +1,24 @@
 /**
  * Patient Timeline Page
  *
- * Displays a chronological timeline of photos for a specific patient.
- * Supports body part filtering and photo selection for comparison.
+ * Bento timeline of photos for a single patient, plus a back affordance.
+ * Photo clicks open an in-place detail dialog (view / edit / delete).
  *
- * Static-export friendly: reads patient id from ?id= query param
- * (no dynamic [id] segment).
+ * Static-export friendly: reads patient id from ?id= query param.
  */
 
 'use client';
 
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useState, useCallback, useEffect, Suspense } from 'react';
-import { ArrowLeft, AlertCircle } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Camera } from 'lucide-react';
+import Link from 'next/link';
 import type { Patient } from '@/types/patient';
 import type { PhotoRecord } from '@/types/photo';
 import { PhotoTimeline } from '@/components/photo/photo-timeline';
+import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
 import { EmptyState } from '@/components/empty-state';
+import { PageHeader } from '@/components/page-header';
 import { usePhotos } from '@/lib/hooks/use-photos';
 import { patientService } from '@/lib/services/patient-service';
 import { Button } from '@/components/ui/button';
@@ -30,14 +32,13 @@ function PatientTimelineView() {
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [isLoadingPatient, setIsLoadingPatient] = useState(true);
-  const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<string>>(new Set());
-  const [isComparisonMode, setIsComparisonMode] = useState(false);
+  const [activePhoto, setActivePhoto] = useState<PhotoRecord | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
-  const { photos, isLoading: isLoadingPhotos, error } = usePhotos({
+  const { photos, isLoading: isLoadingPhotos, error, refresh } = usePhotos({
     patientId,
   });
 
-  // Load patient data
   useEffect(() => {
     if (!patientId) {
       toast.error('No patient selected');
@@ -65,74 +66,53 @@ function PatientTimelineView() {
     loadPatient();
   }, [patientId, router]);
 
-  const handlePhotoClick = useCallback(
-    (photo: PhotoRecord) => {
-      // If not in comparison mode, open photo detail view (to be implemented)
-      if (!isComparisonMode) {
-        // TODO: Navigate to photo detail view
-        console.log('Open photo detail:', photo.id);
-      }
-    },
-    [isComparisonMode]
-  );
-
-  const handleSelectionChange = useCallback((photoId: string, selected: boolean) => {
-    setSelectedPhotoIds((prev) => {
-      const newSet = new Set(prev);
-      if (selected) {
-        if (newSet.size < 4) {
-          newSet.add(photoId);
-        } else {
-          toast.error('Maximum 4 photos can be selected for comparison');
-        }
-      } else {
-        newSet.delete(photoId);
-      }
-      return newSet;
-    });
+  const handlePhotoClick = useCallback((photo: PhotoRecord) => {
+    setActivePhoto(photo);
+    setDialogOpen(true);
   }, []);
-
-  const handleCompare = useCallback(() => {
-    if (selectedPhotoIds.size < 2) {
-      toast.error('Select at least 2 photos to compare');
-      return;
-    }
-    if (selectedPhotoIds.size > 4) {
-      toast.error('Maximum 4 photos can be selected for comparison');
-      return;
-    }
-
-    const photoIdsArray = Array.from(selectedPhotoIds);
-    // ponytail: compare route does not exist yet; link is a placeholder
-    router.push(`/patients/compare?id=${patientId}&photos=${photoIdsArray.join(',')}`);
-  }, [selectedPhotoIds, patientId, router]);
 
   const handleBackClick = useCallback(() => {
     router.push('/patients');
   }, [router]);
 
-  const toggleComparisonMode = useCallback(() => {
-    setIsComparisonMode((prev) => !prev);
-    if (isComparisonMode) {
-      setSelectedPhotoIds(new Set());
+  const handleDialogChanged = useCallback(() => {
+    refresh();
+    // Keep the patient card stats in sync (photo count, last photo time).
+    if (patientId) {
+      patientService
+        .getPatientById(patientId)
+        .then(setPatient)
+        .catch(() => {});
     }
-  }, [isComparisonMode]);
+  }, [refresh, patientId]);
 
-  // Loading state
+  const handleDialogDeleted = useCallback(() => {
+    refresh();
+    if (patientId) {
+      patientService
+        .getPatientById(patientId)
+        .then(setPatient)
+        .catch(() => {});
+    }
+  }, [refresh, patientId]);
+
   if (isLoadingPatient || isLoadingPhotos) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <Skeleton className="h-8 w-48 mb-2" />
-        <Skeleton className="h-4 w-64 mb-8" />
-        <Skeleton className="h-96 w-full" />
+      <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="mt-2 h-4 w-64" />
+        <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="aspect-square w-full rounded-xl" />
+          ))}
+        </div>
       </div>
     );
   }
 
-  // Error state
   if (error) {
     return (
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
         <EmptyState
           icon={AlertCircle}
           tone="destructive"
@@ -144,56 +124,47 @@ function PatientTimelineView() {
     );
   }
 
-  if (!patient) {
-    return null;
-  }
+  if (!patient) return null;
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <Button
-          variant="ghost"
-          onClick={handleBackClick}
-          className="mb-4"
-        >
-          <ArrowLeft className="size-4" />
-          Back to Patients
-        </Button>
+    <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
+      <Button variant="ghost" onClick={handleBackClick} className="mb-4 -ml-2">
+        <ArrowLeft className="size-4" />
+        Back to Patients
+      </Button>
 
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">{patient.name}</h1>
-            <p className="text-muted-foreground">
-              {patient.photoCount} {patient.photoCount === 1 ? 'photo' : 'photos'}
-            </p>
-          </div>
-
-          <div className="flex gap-2">
-            <Button
-              variant={isComparisonMode ? 'default' : 'outline'}
-              onClick={toggleComparisonMode}
+      <PageHeader
+        title={patient.name}
+        description={
+          <>
+            {patient.photoCount} {patient.photoCount === 1 ? 'photo' : 'photos'}
+            {' · '}
+            <Link
+              href={`/capture?patient=${encodeURIComponent(patient.name)}`}
+              className="text-primary underline-offset-4 hover:underline"
             >
-              {isComparisonMode ? 'Cancel Selection' : 'Select Photos to Compare'}
-            </Button>
+              Add another
+            </Link>
+          </>
+        }
+        actions={
+          <Button asChild>
+            <Link href={`/capture?patient=${encodeURIComponent(patient.name)}`}>
+              <Camera className="size-4" />
+              Capture
+            </Link>
+          </Button>
+        }
+      />
 
-            {isComparisonMode && selectedPhotoIds.size >= 2 && (
-              <Button onClick={handleCompare}>
-                Compare {selectedPhotoIds.size} Photos
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
+      <PhotoTimeline photos={photos} onPhotoClick={handlePhotoClick} showFilter />
 
-      {/* Timeline */}
-      <PhotoTimeline
-        photos={photos}
-        onPhotoClick={handlePhotoClick}
-        showFilter={true}
-        showSelection={isComparisonMode}
-        selectedPhotoIds={selectedPhotoIds}
-        onSelectionChange={handleSelectionChange}
+      <PhotoDetailDialog
+        photo={activePhoto}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onChanged={handleDialogChanged}
+        onDeleted={handleDialogDeleted}
       />
     </div>
   );
@@ -201,13 +172,19 @@ function PatientTimelineView() {
 
 export default function PatientTimelinePage() {
   return (
-    <Suspense fallback={
-      <div className="container mx-auto px-4 py-8">
-        <Skeleton className="h-8 w-48 mb-2" />
-        <Skeleton className="h-4 w-64 mb-8" />
-        <Skeleton className="h-96 w-full" />
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="mt-2 h-4 w-64" />
+          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="aspect-square w-full rounded-xl" />
+            ))}
+          </div>
+        </div>
+      }
+    >
       <PatientTimelineView />
     </Suspense>
   );

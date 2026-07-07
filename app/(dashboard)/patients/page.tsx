@@ -1,14 +1,14 @@
 /**
  * Patients List Page
  *
- * Displays all patients with search functionality.
- * Entry point for User Story 2: View Patient Timeline
+ * Searchable grid of patients. Entry point for User Story 2.
  */
 
 'use client';
 
 import { useState, useCallback } from 'react';
 import { PatientList } from '@/components/patient/patient-list';
+import { PageHeader } from '@/components/page-header';
 import { usePatients } from '@/lib/hooks/use-patients';
 
 export default function PatientsPage() {
@@ -26,13 +26,11 @@ export default function PatientsPage() {
   );
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Patients</h1>
-        <p className="text-muted-foreground">
-          View and search patient records
-        </p>
-      </div>
+    <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
+      <PageHeader
+        title="Patients"
+        description="Search and review patient photo timelines."
+      />
 
       <PatientList
         patients={patients}

@@ -10,9 +10,17 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Loader2 } from 'lucide-react';
+import { format } from 'date-fns';
+import { CalendarIcon, Loader2 } from 'lucide-react';
 import { BodyPart, BodyPartLabels } from '@/types/body-part';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import {
   Form,
   FormControl,
@@ -55,6 +63,8 @@ const photoMetadataFormSchema = z.object({
     .max(2000, 'Clinical notes must be 2000 characters or less')
     .optional()
     .or(z.literal('')),
+  /** Optional override of the capture date (for importing older photos). */
+  capturedAt: z.date().optional(),
 });
 
 export type PhotoMetadataFormValues = z.infer<typeof photoMetadataFormSchema>;
@@ -188,6 +198,52 @@ export function PhotoMetadataForm({
               </FormControl>
               <FormDescription>
                 {field.value?.length || 0}/2000 characters
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* Capture Date (optional override) */}
+        <FormField
+          control={form.control}
+          name="capturedAt"
+          render={({ field }) => (
+            <FormItem className="flex flex-col">
+              <FormLabel>Capture Date (Optional)</FormLabel>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <FormControl>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      disabled={isSubmitting}
+                      className={cn(
+                        'w-full justify-between text-left font-normal',
+                        !field.value && 'text-muted-foreground',
+                      )}
+                    >
+                      {field.value ? (
+                        format(field.value, 'd MMM yyyy')
+                      ) : (
+                        'Use actual capture time'
+                      )}
+                      <CalendarIcon className="size-4 opacity-50" />
+                    </Button>
+                  </FormControl>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={field.value}
+                    onSelect={field.onChange}
+                    disabled={(date) => date > new Date() || date < new Date('1900-01-01')}
+                  />
+                </PopoverContent>
+              </Popover>
+              <FormDescription>
+                Back-date this photo, e.g. when importing an older capture.
               </FormDescription>
               <FormMessage />
             </FormItem>

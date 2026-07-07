@@ -45,6 +45,7 @@ export default function LoginPage() {
   const router = useRouter();
   const { refresh } = useAuth();
   const [userCount, setUserCount] = useState<number | null>(null);
+  const [countError, setCountError] = useState<string | null>(null);
   const [seeding, setSeeding] = useState(false);
 
   const isDev = process.env.NODE_ENV === 'development';
@@ -53,8 +54,14 @@ export default function LoginPage() {
     if (!isDev) return;
     void authService
       .countUsers()
-      .then(setUserCount)
-      .catch(() => setUserCount(null));
+      .then((n) => {
+        setUserCount(n);
+        setCountError(null);
+      })
+      .catch((err) => {
+        setUserCount(null);
+        setCountError(err instanceof Error ? err.message : String(err));
+      });
   }, [isDev]);
 
   const form = useForm<ClinicianLogin>({
@@ -93,7 +100,10 @@ export default function LoginPage() {
     }
   }
 
-  const showSeed = isDev && userCount === 0;
+  // In dev, show the seed button whenever we don't know there are users
+  // (count failed or returned 0). This avoids locking the developer out when
+  // the DB hasn't been opened yet or the migration hasn't run.
+  const showSeed = isDev && userCount !== 0;
 
   return (
     <Card>
@@ -145,7 +155,16 @@ export default function LoginPage() {
 
         {showSeed && (
           <div className="mt-4 rounded-md border border-dashed bg-muted/30 p-3 text-sm">
-            <p className="mb-2 font-medium">No users found (dev mode)</p>
+            <p className="mb-2 font-medium">
+              {userCount === null
+                ? 'User count unavailable (dev mode)'
+                : 'No users found (dev mode)'}
+            </p>
+            {countError && (
+              <p className="mb-2 font-mono text-xs text-destructive">
+                {countError}
+              </p>
+            )}
             <p className="mb-3 text-muted-foreground">
               Seed an admin for testing. You will be asked to change the passcode on first use.
             </p>

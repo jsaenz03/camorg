@@ -146,13 +146,35 @@ export interface IPhotoService {
   exportPhotoAsDataUrl(id: string, useThumbnail?: boolean): Promise<string>;
 
   /**
+   * Retrieves photos across all patients, newest first.
+   *
+   * Optional filters by date range and body part. Used by the dashboard
+   * charts/calendar and the global Photos browser.
+   *
+   * @param options.from - Inclusive start (compared against capturedAt)
+   * @param options.to - Inclusive end (compared against capturedAt)
+   * @param options.bodyPart - Filter by body part
+   * @param options.includeDeleted - Include soft-deleted photos (default: false)
+   * @param options.limit - Cap the result count (default: unlimited)
+   * @returns Promise resolving to array of PhotoRecords, sorted by capturedAt DESC
+   * @throws Error if SQLite query fails
+   */
+  getAllPhotos(options?: {
+    from?: Date;
+    to?: Date;
+    bodyPart?: BodyPart;
+    includeDeleted?: boolean;
+    limit?: number;
+  }): Promise<PhotoRecord[]>;
+
+  /**
    * Gets photos for comparison (validates selection constraints)
    *
    * @param photoIds - Array of photo UUIDs (2-4 items)
    * @returns Promise resolving to array of PhotoRecords in requested order
    * @throws ValidationError if photoIds length not 2-4
    * @throws NotFoundError if any photo does not exist
-   * @throws Error if IndexedDB query fails
+   * @throws Error if query fails
    *
    * Note: No constraint that photos must be from same patient or body part
    * (clinician may want to compare different patients/sites)
