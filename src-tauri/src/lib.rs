@@ -19,6 +19,12 @@ pub fn run() {
       sql: include_str!("../migrations/002_auth.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 3,
+      description: "access control: patient owner, org-share, doctor grants",
+      sql: include_str!("../migrations/003_access_control.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   tauri::Builder::default()

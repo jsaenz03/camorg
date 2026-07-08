@@ -11,7 +11,7 @@
 
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useState, useCallback, useEffect, Suspense } from 'react';
-import { ArrowLeft, AlertCircle, Camera } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Camera, Globe, Lock } from 'lucide-react';
 import Link from 'next/link';
 import type { Patient } from '@/types/patient';
 import type { PhotoRecord } from '@/types/photo';
@@ -22,6 +22,7 @@ import { PageHeader } from '@/components/page-header';
 import { usePhotos } from '@/lib/hooks/use-photos';
 import { patientService } from '@/lib/services/patient-service';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 
@@ -138,6 +139,7 @@ function PatientTimelineView() {
         description={
           <>
             {patient.photoCount} {patient.photoCount === 1 ? 'photo' : 'photos'}
+            {patient.ownerName && <> · Owner: {patient.ownerName}</>}
             {' · '}
             <Link
               href={`/capture?patient=${encodeURIComponent(patient.name)}`}
@@ -148,12 +150,25 @@ function PatientTimelineView() {
           </>
         }
         actions={
-          <Button asChild>
-            <Link href={`/capture?patient=${encodeURIComponent(patient.name)}`}>
-              <Camera className="size-4" />
-              Capture
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="gap-1">
+              {patient.isOrgShared ? (
+                <>
+                  <Globe className="size-3" /> Org-wide
+                </>
+              ) : (
+                <>
+                  <Lock className="size-3" /> Private
+                </>
+              )}
+            </Badge>
+            <Button asChild>
+              <Link href={`/capture?patient=${encodeURIComponent(patient.name)}`}>
+                <Camera className="size-4" />
+                Capture
+              </Link>
+            </Button>
+          </div>
         }
       />
 

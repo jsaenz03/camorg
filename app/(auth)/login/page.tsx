@@ -100,10 +100,29 @@ export default function LoginPage() {
     }
   }
 
-  // In dev, show the seed button whenever we don't know there are users
-  // (count failed or returned 0). This avoids locking the developer out when
-  // the DB hasn't been opened yet or the migration hasn't run.
-  const showSeed = isDev && userCount !== 0;
+  async function handleResetAndSeed() {
+    setSeeding(true);
+    try {
+      await authService.resetApp('DELETE ALL DATA');
+      await authService.seedDevAdmin();
+      toast.success('Reset complete. Dev admin recreated. Username: admin · Passcode: devpass123');
+      form.setValue('username', 'admin');
+      form.setValue('passcode', 'devpass123');
+      setUserCount(1);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Reset failed');
+    } finally {
+      setSeeding(false);
+    }
+  }
+
+  // Show the seed button only when seeding can actually succeed: count is 0
+  // (no users) or null (unknown — DB not yet open / migration not run). When
+  // users already exist, surface a reset+reseed path instead so the dev isn't
+  // locked out of a stale admin account.
+  const noUsers = userCount === 0 || userCount === null;
+  const showSeed = isDev && noUsers;
+  const showReset = isDev && userCount !== null && userCount > 0;
 
   return (
     <Card>
@@ -177,6 +196,32 @@ export default function LoginPage() {
             >
               {seeding && <Loader2 className="mr-2 size-4 animate-spin" />}
               Seed dev admin
+            </Button>
+          </div>
+        )}
+
+        {showReset && (
+          <div className="mt-4 rounded-md border border-dashed border-destructive/40 bg-destructive/5 p-3 text-sm">
+            <p className="mb-1 font-medium">
+              {userCount} user{userCount === 1 ? '' : 's'} exist (dev mode)
+            </p>
+            <p className="mb-3 text-muted-foreground">
+              Seeding is refused while users exist. To start fresh, wipe all local data
+              (patients, photos, users) and reseed the dev admin.
+            </p>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                if (window.confirm('This deletes ALL local data and recreates the dev admin. Continue?')) {
+                  handleResetAndSeed();
+                }
+              }}
+              disabled={seeding}
+            >
+              {seeding && <Loader2 className="mr-2 size-4 animate-spin" />}
+              Reset &amp; reseed
             </Button>
           </div>
         )}

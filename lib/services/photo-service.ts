@@ -19,11 +19,13 @@ import { join } from '@tauri-apps/api/path';
 import { compressImage, generateThumbnail } from '@/lib/utils/image-processing';
 import { patientService } from '@/lib/services/patient-service';
 import { subpartService } from '@/lib/services/subpart-service';
+import { accessService } from '@/lib/services/access-service';
 import { writeFile, readFile } from '@tauri-apps/plugin-fs';
 import {
   NotFoundError,
   ValidationError,
   StorageQuotaError,
+  PermissionDeniedError,
 } from '@/lib/validators/errors';
 
 // ponytail: empty Blob placeholder — PhotoRecord.imageBlob stays on the type
@@ -75,6 +77,10 @@ export class PhotoService implements IPhotoService {
    */
   async createPhoto(data: PhotoRecordCreate): Promise<PhotoRecord> {
     const validated = photoRecordCreateSchema.parse(data);
+
+    // Enforce by-doctor access: a clinician may only attach photos to a patient
+    // they own (or are an admin). Throws PermissionDeniedError otherwise.
+    await accessService.assertCanManagePatient(validated.patientId);
 
     try {
       const compressedBlob = await compressImage(validated.imageBlob, 1920, 0.85);
@@ -168,7 +174,9 @@ export class PhotoService implements IPhotoService {
   }
 
   /**
-   * Retrieves a single photo by ID.
+   * Retrieves a single photo by ID. Returns null if the photo does not exist
+   * OR the current clinician cannot access its parent patient (treat
+   * inaccessible as not-found to avoid leaking existence).
    */
   async getPhotoById(id: string): Promise<PhotoRecord | null> {
     const db = await getDB();
@@ -176,17 +184,24 @@ export class PhotoService implements IPhotoService {
       'SELECT * FROM photos WHERE id = $1',
       [id]
     );
-    return rows.length ? rowToPhoto(rows[0]) : null;
+    if (!rows.length) return null;
+    const photo = rowToPhoto(rows[0]);
+    if (!(await accessService.canAccessPatient(photo.patientId))) return null;
+    return photo;
   }
 
   /**
    * Retrieves all photos for a specific patient, newest first.
+   * Returns an empty list if the clinician lacks access to the patient.
    */
   async getPhotosByPatient(
     patientId: string,
     options: { includeDeleted?: boolean; bodyPart?: BodyPart } = {}
   ): Promise<PhotoRecord[]> {
     const { includeDeleted = false, bodyPart } = options;
+
+    // Defense-in-depth: invisible patients yield no photos.
+    if (!(await accessService.canAccessPatient(patientId))) return [];
 
     const db = await getDB();
     let sql = 'SELECT * FROM photos WHERE patient_id = $1';
@@ -220,6 +235,7 @@ export class PhotoService implements IPhotoService {
     );
     if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
     const photo = rowToPhoto(rows[0]);
+    await accessService.assertCanManagePatient(photo.patientId);
 
     const updatedSubpart =
       validated.subpart !== undefined ? validated.subpart : photo.subpart;
@@ -253,6 +269,7 @@ export class PhotoService implements IPhotoService {
     );
     if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
     const photo = rowToPhoto(rows[0]);
+    await accessService.assertCanManagePatient(photo.patientId);
 
     const nowMs = Date.now();
 
@@ -277,6 +294,7 @@ export class PhotoService implements IPhotoService {
     );
     if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
     const photo = rowToPhoto(rows[0]);
+    await accessService.assertCanManagePatient(photo.patientId);
 
     if (!photo.isDeleted) throw new NotFoundError(`Photo is not deleted: ${id}`);
 
@@ -294,7 +312,8 @@ export class PhotoService implements IPhotoService {
   }
 
   /**
-   * Searches photos by clinical notes keyword.
+   * Searches photos by clinical notes keyword. Only returns photos the current
+   * clinician can see (parent patient is owned / shared / org-wide, or admin).
    */
   async searchPhotosByNotes(
     keyword: string,
@@ -321,13 +340,15 @@ export class PhotoService implements IPhotoService {
     sql += ' ORDER BY captured_at DESC';
 
     const rows = await db.select<Record<string, unknown>[]>(sql, binds);
-    return rows.map(rowToPhoto);
+    return this.filterAccessible(rows.map(rowToPhoto));
   }
 
   /**
-   * Gets count of photos for a patient.
+   * Gets count of photos for a patient. Returns 0 if the clinician lacks
+   * access to the patient.
    */
   async getPhotoCount(patientId: string, includeDeleted: boolean = false): Promise<number> {
+    if (!(await accessService.canAccessPatient(patientId))) return 0;
     const db = await getDB();
     let sql = 'SELECT COUNT(*) AS cnt FROM photos WHERE patient_id = $1';
     if (!includeDeleted) sql += ' AND is_deleted = 0';
@@ -339,16 +360,21 @@ export class PhotoService implements IPhotoService {
   /**
    * Exports photo bytes as a base64 data URL.
    * Reads the on-disk JPEG (full or thumbnail) and base64-encodes it.
+   * Throws PermissionDeniedError if the clinician cannot access the patient.
    */
   async exportPhotoAsDataUrl(id: string, useThumbnail: boolean = false): Promise<string> {
     const db = await getDB();
-    const rows = await db.select<{ image_path: string; thumbnail_path: string; mime_type: string }[]>(
-      'SELECT image_path, thumbnail_path, mime_type FROM photos WHERE id = $1',
+    const rows = await db.select<{ patient_id: string; image_path: string; thumbnail_path: string; mime_type: string }[]>(
+      'SELECT patient_id, image_path, thumbnail_path, mime_type FROM photos WHERE id = $1',
       [id]
     );
     if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
 
     const row = rows[0];
+    if (!(await accessService.canAccessPatient(row.patient_id))) {
+      throw new PermissionDeniedError("You don't have access to this photo.");
+    }
+
     // ponytail: image_path/thumbnail_path are stored relative to photos dir
     // (just the filename) so the DB is portable across machines/OSes. Resolve
     // against the live appDataDir at read time.
@@ -362,8 +388,9 @@ export class PhotoService implements IPhotoService {
   }
 
   /**
-   * Retrieves photos across all patients, newest first.
-   * Optional filters by date range (capturedAt), body part, and a limit.
+   * Retrieves photos across all patients, newest first. Restricted to patients
+   * the current clinician can see. Optional filters by date range (capturedAt),
+   * body part, and a limit.
    */
   async getAllPhotos(
     options: { from?: Date; to?: Date; bodyPart?: BodyPart; includeDeleted?: boolean; limit?: number } = {}
@@ -396,7 +423,7 @@ export class PhotoService implements IPhotoService {
     }
 
     const rows = await db.select<Record<string, unknown>[]>(sql, binds);
-    return rows.map(rowToPhoto);
+    return this.filterAccessible(rows.map(rowToPhoto));
   }
 
   /**
@@ -414,12 +441,39 @@ export class PhotoService implements IPhotoService {
       photoIds
     );
 
-    // Preserve requested order.
+    const accessible = await this.filterAccessible(rows.map(rowToPhoto));
+    const accessibleIds = new Set(accessible.map((p) => p.id));
+
+    // Preserve requested order; treat inaccessible photos as not-found.
     return photoIds.map((id) => {
+      if (!accessibleIds.has(id)) throw new NotFoundError(`Photo not found: ${id}`);
       const row = rows.find((r) => r.id === id);
       if (!row) throw new NotFoundError(`Photo not found: ${id}`);
       return rowToPhoto(row);
     });
+  }
+
+  /**
+   * Filters a list of photos down to those whose parent patient the current
+   * clinician can see. Admins pass through unchanged.
+   */
+  private async filterAccessible(photos: PhotoRecord[]): Promise<PhotoRecord[]> {
+    if (photos.length === 0) return photos;
+    const admin = await accessService.isAdmin().catch(() => false);
+    if (admin) return photos;
+
+    // Cache per-patient access decisions to avoid re-querying for repeats.
+    const cache = new Map<string, boolean>();
+    const result: PhotoRecord[] = [];
+    for (const photo of photos) {
+      let ok = cache.get(photo.patientId);
+      if (ok === undefined) {
+        ok = await accessService.canAccessPatient(photo.patientId);
+        cache.set(photo.patientId, ok);
+      }
+      if (ok) result.push(photo);
+    }
+    return result;
   }
 }
 

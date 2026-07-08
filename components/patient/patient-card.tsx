@@ -7,7 +7,7 @@
 
 'use client';
 
-import { Images } from 'lucide-react';
+import { Images, Globe, Lock } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +19,8 @@ interface PatientCardProps {
 }
 
 /**
- * PatientCard displays patient information with photo stats
+ * PatientCard displays patient information with photo stats and an access badge
+ * (Org-wide / Private) so the doctor understands the visibility at a glance.
  */
 export function PatientCard({ patient, onClick }: PatientCardProps) {
   return (
@@ -43,9 +44,20 @@ export function PatientCard({ patient, onClick }: PatientCardProps) {
         </div>
       </CardHeader>
       <CardContent className="p-4 pt-2">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Images className="size-4" />
-          <span>View timeline</span>
+        <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
+          <span className="flex items-center gap-2">
+            <Images className="size-4" />
+            View timeline
+          </span>
+          {patient.isOrgShared ? (
+            <Badge variant="outline" className="gap-1 text-xs">
+              <Globe className="size-3" /> Org-wide
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="gap-1 text-xs">
+              <Lock className="size-3" /> Private
+            </Badge>
+          )}
         </div>
       </CardContent>
     </Card>

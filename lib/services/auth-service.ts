@@ -423,7 +423,8 @@ export class AuthService implements IAuthService {
     }
     writeSession(null);
     const db = await getDB();
-    for (const table of ['photos', 'patients', 'subparts', 'invitations', 'clinicians']) {
+    // patient_shares must come before patients (FK-less, but logically dependent).
+    for (const table of ['patient_shares', 'photos', 'patients', 'subparts', 'invitations', 'clinicians']) {
       await db.execute(`DELETE FROM ${table}`);
     }
     await db.execute(
@@ -652,14 +653,80 @@ export class AuthService implements IAuthService {
     return rows[0]?.count ?? 0;
   }
 
+  /**
+   * Env-driven bootstrap.
+   *
+   * If CAMOG_BOOTSTRAP_ADMIN_USERNAME and CAMOG_BOOTSTRAP_ADMIN_PASSCODE are set
+   * (via a local, gitignored .env), and zero clinicians exist, create the first
+   * admin from those credentials. Idempotent — no-op once any user exists, or
+   * if the env vars aren't set.
+   *
+   * Designed to run on DB open so a fresh install always has a working login
+   * without a UI button. Passcode is hashed with the same PBKDF2 as every other
+   * account; nothing plaintext is stored.
+   */
+  async bootstrapFromEnv(): Promise<void> {
+    const username = process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_USERNAME;
+    const passcode = process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_PASSCODE;
+    if (!username || !passcode) return; // bootstrap disabled — no-op
+
+    const count = await this.countUsers();
+    if (count > 0) return; // already bootstrapped
+
+    const displayName =
+      process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_DISPLAY_NAME || 'Administrator';
+
+    await this.createClinicianRow({
+      username,
+      passcode,
+      displayName,
+      role: 'admin',
+      mustChangePasscode: false,
+    });
+    console.info(`[bootstrap] created admin "${username}" from env`);
+  }
+
+  /**
+   * Dev-only seed. Prefers env credentials (CAMOG_BOOTSTRAP_ADMIN_*) so a team
+   * can share a known dev login; falls back to admin/devpass123. Refuses if any
+   * user already exists. For a fresh start, call resetApp first.
+   */
   async seedDevAdmin(): Promise<void> {
     const count = await this.countUsers();
     if (count > 0) {
       throw new AlreadyExistsError('Users already exist; dev seed refused');
     }
+
+    const username = process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_USERNAME || 'admin';
+    const passcode = process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_PASSCODE || 'devpass123';
+    const displayName =
+      process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_DISPLAY_NAME || 'Dev Admin';
+
+    await this.createClinicianRow({
+      username,
+      passcode,
+      displayName,
+      role: 'admin',
+      // In dev, force a passcode change unless the env explicitly opts out.
+      mustChangePasscode:
+        process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_MUST_CHANGE !== 'false',
+    });
+  }
+
+  /**
+   * Inserts a clinician row with a PBKDF2-hashed passcode. Shared by the env
+   * bootstrap, the dev seed, registration, and invitation acceptance.
+   */
+  private async createClinicianRow(input: {
+    username: string;
+    passcode: string;
+    displayName: string;
+    role: ClinicianRole;
+    mustChangePasscode: boolean;
+  }): Promise<void> {
     const id = uuidv4();
     const nowMs = Date.now();
-    const passcodeHash = await hashPasscode('devpass123');
+    const passcodeHash = await hashPasscode(input.passcode);
     const preferencesJson = JSON.stringify({
       theme: 'system',
       defaultBodyPart: null,
@@ -672,8 +739,17 @@ export class AuthService implements IAuthService {
          (id, username, passcode_hash, display_name, role, is_active,
           must_change_passcode, preferences, created_at, last_login_at,
           session_expires_at, passcode_changed_at)
-       VALUES ($1, 'admin', $2, 'Dev Admin', 'admin', 1, 1, $3, $4, NULL, NULL, NULL)`,
-      [id, passcodeHash, preferencesJson, nowMs],
+       VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, NULL, NULL, NULL)`,
+      [
+        id,
+        input.username,
+        passcodeHash,
+        input.displayName,
+        input.role,
+        input.mustChangePasscode ? 1 : 0,
+        preferencesJson,
+        nowMs,
+      ],
     );
   }
 

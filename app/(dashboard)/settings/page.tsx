@@ -21,6 +21,7 @@ import { ChangePasscodeForm } from '@/components/settings/change-passcode-form';
 import { UsersPanel } from '@/components/settings/users-panel';
 import { InvitationsPanel } from '@/components/settings/invitations-panel';
 import { AppSettingsPanel } from '@/components/settings/app-settings-panel';
+import { PatientAccessPanel } from '@/components/settings/patient-access-panel';
 import { PageHeader } from '@/components/page-header';
 
 import {
@@ -67,6 +68,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           {isAdmin && <TabsTrigger value="users">Users</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="access">Access</TabsTrigger>}
           {isAdmin && <TabsTrigger value="invitations">Invitations</TabsTrigger>}
           {isAdmin && <TabsTrigger value="app">App</TabsTrigger>}
         </TabsList>
@@ -79,6 +81,11 @@ export default function SettingsPage() {
         {isAdmin && (
           <TabsContent value="users" className="mt-6">
             <UsersPanel currentUserId={clinician.id} />
+          </TabsContent>
+        )}
+        {isAdmin && (
+          <TabsContent value="access" className="mt-6">
+            <PatientAccessPanel />
           </TabsContent>
         )}
         {isAdmin && (

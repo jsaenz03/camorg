@@ -36,7 +36,7 @@ import type { PhotoWithPatient } from '@/lib/hooks/use-all-photos';
 
 export default function HomePage() {
   const router = useRouter();
-  const { clinician } = useAuth();
+  const { clinician, session, loading } = useAuth();
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [recentPhotos, setRecentPhotos] = useState<PhotoWithPatient[]>([]);
@@ -45,6 +45,14 @@ export default function HomePage() {
   const [activePhoto, setActivePhoto] = useState<PhotoWithPatient | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+
+  // Auth gate: while the session is resolving, hold; once resolved, require a
+  // session (redirect to /login). The dashboard layout enforces the same, but
+  // the home route sits outside (dashboard) so it must self-gate.
+  useEffect(() => {
+    if (loading) return;
+    if (!session) router.replace('/login');
+  }, [loading, session, router]);
 
   useEffect(() => {
     let mounted = true;
