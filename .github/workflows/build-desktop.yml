@@ -10,9 +10,9 @@ name: Build Desktop Installers
 
 on:
   push:
-    branches: [001-build-an-application]
+    branches: [main]
   pull_request:
-    branches: [001-build-an-application]
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
