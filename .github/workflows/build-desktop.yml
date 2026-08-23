@@ -60,6 +60,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
+          # On a published release, attach the bundles to that release
+          # (empty on push/PR/dispatch, where tauri-action ignores it).
+          releaseId: ${{ github.event_name == 'release' && github.event.release.id || '' }}
 
       - name: Upload installers (build artifact)
         if: github.event_name != 'release'
