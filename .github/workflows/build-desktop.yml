@@ -17,6 +17,11 @@ on:
     types: [published]
   workflow_dispatch:
 
+# tauri-action uploads installers to the release via the API — the default
+# token is read-only, which fails with "Resource not accessible by integration".
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
