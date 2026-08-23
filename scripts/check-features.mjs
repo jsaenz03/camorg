@@ -74,6 +74,38 @@ check('consent: valid with no expiry', derive(now - 1000, null) === 'valid');
 check('consent: expired past expiry', derive(now - 1000, now - 1) === 'expired');
 check('consent: valid before expiry', derive(now - 1000, now + 10_000) === 'valid');
 
+// 6. Offline licence wiring: migration 008 carries the columns, the Rust shell
+//    registers it, the service reads them, a vendor public key is embedded,
+//    and every mutating patient/photo method hits the licence guard.
+const licenceMigration = read('src-tauri/migrations/008_licence.sql');
+for (const needle of [
+  'ALTER TABLE settings ADD COLUMN licence_key',
+  'ALTER TABLE settings ADD COLUMN trial_started_at',
+  'ALTER TABLE settings ADD COLUMN install_id',
+]) {
+  check(`migration 008: ${needle}`, licenceMigration.includes(needle));
+}
+check(
+  'lib.rs registers migration 008',
+  /version:\s*8[\s\S]*?008_licence\.sql/.test(read('src-tauri/src/lib.rs')),
+);
+const licenceServiceSrc = read('lib/services/licence-service.ts');
+for (const col of ['licence_key', 'trial_started_at', 'install_id']) {
+  check(`licence-service selects ${col}`, licenceServiceSrc.includes(col));
+}
+check(
+  'licence public key embedded (64 hex chars)',
+  /'([0-9a-f]{64})'/.test(read('lib/licence/public-key.ts')),
+);
+check(
+  'patient-service guards all 4 mutations',
+  (read('lib/services/patient-service.ts').match(/await ensureWritable/g) || []).length === 4,
+);
+check(
+  'photo-service guards all 5 mutations',
+  (read('lib/services/photo-service.ts').match(/await ensureWritable/g) || []).length === 5,
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

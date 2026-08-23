@@ -53,6 +53,12 @@ pub fn run() {
       sql: include_str!("../migrations/007_consent_audit.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 8,
+      description: "licence: signed key storage, trial stamp, install ID",
+      sql: include_str!("../migrations/008_licence.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory

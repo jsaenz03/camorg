@@ -19,6 +19,7 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { UserMenu } from '@/components/user-menu';
 import { IdleLockOverlay } from '@/components/idle-lock-overlay';
+import { LicenceBanner } from '@/components/licence/licence-banner';
 import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -73,6 +74,7 @@ export default function DashboardLayout({
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
+        <LicenceBanner />
         <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/75">
           <SidebarTrigger />
           <Separator orientation="vertical" className="mr-1 h-5" />

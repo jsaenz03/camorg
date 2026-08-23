@@ -25,6 +25,7 @@ import { PatientAccessPanel } from '@/components/settings/patient-access-panel';
 import { StoragePanel } from '@/components/settings/storage-panel';
 import { BackupPanel } from '@/components/settings/backup-panel';
 import { AuditLogPanel } from '@/components/settings/audit-log-panel';
+import { LicencePanel } from '@/components/settings/licence-panel';
 import { PageHeader } from '@/components/page-header';
 
 import {
@@ -75,6 +76,7 @@ export default function SettingsPage() {
           {isAdmin && <TabsTrigger value="invitations">Invitations</TabsTrigger>}
           {isAdmin && <TabsTrigger value="storage">Storage</TabsTrigger>}
           {isAdmin && <TabsTrigger value="audit">Audit</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="licence">Licence</TabsTrigger>}
           {isAdmin && <TabsTrigger value="app">App</TabsTrigger>}
         </TabsList>
 
@@ -107,6 +109,11 @@ export default function SettingsPage() {
         {isAdmin && (
           <TabsContent value="audit" className="mt-6">
             <AuditLogPanel />
+          </TabsContent>
+        )}
+        {isAdmin && (
+          <TabsContent value="licence" className="mt-6">
+            <LicencePanel />
           </TabsContent>
         )}
         {isAdmin && (

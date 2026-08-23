@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { AuthProvider } from "@/lib/auth/auth-context";
+import { LicenceProvider } from "@/lib/licence/licence-context";
+import { LicenceActivationDialog } from "@/components/licence/licence-activation-dialog";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -34,12 +36,15 @@ export default function RootLayout({
       >
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <ErrorBoundary>
-            <AuthProvider>
-              <TooltipProvider delayDuration={300}>
-                {children}
-                <Toaster richColors />
-              </TooltipProvider>
-            </AuthProvider>
+            <LicenceProvider>
+              <AuthProvider>
+                <TooltipProvider delayDuration={300}>
+                  {children}
+                  <LicenceActivationDialog />
+                  <Toaster richColors />
+                </TooltipProvider>
+              </AuthProvider>
+            </LicenceProvider>
           </ErrorBoundary>
         </ThemeProvider>
       </body>

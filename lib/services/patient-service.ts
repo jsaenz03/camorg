@@ -16,6 +16,7 @@ import { accessService } from '@/lib/services/access-service';
 import { auditService } from '@/lib/services/audit-service';
 import { NotFoundError } from '@/lib/validators/errors';
 import { dobFromMs, dobToMs, parseDobInput } from '@/lib/utils/date-formatting';
+import { ensureWritable } from '@/lib/licence/guard';
 
 // Column list used everywhere we SELECT patients, so the row mapper always
 // gets every field it expects. Aliased as `p` so the access filter's correlated
@@ -57,6 +58,7 @@ const OWNER_JOIN = `LEFT JOIN clinicians owner ON owner.id = p.owner_clinician_i
 
 export class PatientService implements IPatientService {
   async createPatient(data: PatientCreate): Promise<Patient> {
+    await ensureWritable();
     const validated = patientCreateSchema.parse(data);
     const clinician = await accessService.getCurrentClinician();
 
@@ -196,6 +198,7 @@ export class PatientService implements IPatientService {
   }
 
   async updatePatient(id: string, data: PatientUpdate): Promise<Patient> {
+    await ensureWritable();
     await accessService.assertCanManagePatient(id);
     const validated = patientUpdateSchema.parse(data);
 
@@ -272,6 +275,7 @@ export class PatientService implements IPatientService {
   }
 
   async archivePatient(id: string): Promise<void> {
+    await ensureWritable();
     await accessService.assertCanManagePatient(id);
     const db = await getDB();
     const rows = await db.select<Record<string, unknown>[]>(
@@ -289,6 +293,7 @@ export class PatientService implements IPatientService {
   }
 
   async unarchivePatient(id: string): Promise<Patient> {
+    await ensureWritable();
     await accessService.assertCanManagePatient(id);
     const db = await getDB();
     const rows = await db.select<Record<string, unknown>[]>(

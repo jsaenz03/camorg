@@ -78,3 +78,24 @@ export class ConfirmationError extends Error {
     this.name = 'ConfirmationError';
   }
 }
+
+export class LicenceKeyError extends Error {
+  constructor(message: string = 'Licence key is invalid') {
+    super(message);
+    this.name = 'LicenceKeyError';
+  }
+}
+
+export class LicenceExpiredError extends Error {
+  constructor(message: string = 'Licence has expired') {
+    super(message);
+    this.name = 'LicenceExpiredError';
+  }
+}
+
+export class LicenceReadOnlyError extends Error {
+  constructor(message: string = 'Camog is in read-only mode') {
+    super(message);
+    this.name = 'LicenceReadOnlyError';
+  }
+}

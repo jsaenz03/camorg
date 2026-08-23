@@ -87,6 +87,35 @@ Services (`lib/services/*`) are singletons consumed by React hooks; their
 public API is preserved from the prior IndexedDB version, so components and
 hooks are agnostic to the storage backend.
 
+## Licensing
+
+Camog uses offline, per-install licences (see
+`specs/002-offline-licence/spec.md`). No server, no phone-home.
+
+- **Model**: one licence per practice; tier (`solo` / `practice` / `clinic`),
+  seat count, and expiry ride inside an Ed25519-signed payload. The app stores
+  the key in its local SQLite `settings` row and re-verifies the signature on
+  every read.
+- **Trial**: first launch starts a 14-day trial.
+- **After the trial / on expiry**: read-only mode — existing patients and
+  photos stay viewable (records retention), but capturing, editing, and
+  deletion are disabled until a key is activated (banner → Activate).
+
+Issuing keys (vendor side; the private key lives in `.keys/`, gitignored):
+
+```bash
+node scripts/licence-keygen.mjs genkeys   # one-time vendor keypair
+node scripts/licence-keygen.mjs issue --practice "Bay Dermatology" \
+  --tier practice --seats 3 --months 12
+node scripts/licence-keygen.mjs selftest  # format/verification checks
+```
+
+`--days N` replaces `--months` (negative N issues an already-expired key) when
+testing the renewal banner, expiry rejection, and read-only states.
+
+`genkeys` prints the public key to embed in `lib/licence/public-key.ts`; only
+the paired private key can issue keys the app accepts.
+
 ## Scripts
 
 | Script             | Purpose                                  |

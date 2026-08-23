@@ -92,8 +92,10 @@ export default function PhotosPage() {
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         {/* Filter rail */}
         <aside className="space-y-4">
-          <Card>
-            <CardHeader className="pb-3">
+          {/* gap-3: Card's default gap-6 leaves a 36px void between the
+              title and calendar inside this compact rail. */}
+          <Card className="gap-3">
+            <CardHeader className="pb-0">
               <CardTitle className="text-sm">Date</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
@@ -118,8 +120,8 @@ export default function PhotosPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
+          <Card className="gap-3">
+            <CardHeader className="pb-0">
               <CardTitle className="text-sm">Filters</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 pt-0">

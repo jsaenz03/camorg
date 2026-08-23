@@ -15,6 +15,7 @@ import type { BodyPart } from '@/types/body-part';
 import type { IPhotoService } from '@/specs/001-role-you-are/contracts/photo-service';
 import { photoRecordCreateSchema, photoRecordUpdateSchema } from '@/lib/validators/schemas';
 import { getDB, photoPath, getPhotosDir } from '@/lib/db/database';
+import { ensureWritable } from '@/lib/licence/guard';
 import { join } from '@tauri-apps/api/path';
 import { compressImage, generateThumbnail } from '@/lib/utils/image-processing';
 import { patientService } from '@/lib/services/patient-service';
@@ -79,6 +80,7 @@ export class PhotoService implements IPhotoService {
    * patient counts.
    */
   async createPhoto(data: PhotoRecordCreate): Promise<PhotoRecord> {
+    await ensureWritable();
     const validated = photoRecordCreateSchema.parse(data);
 
     // Enforce by-doctor access: a clinician may only attach photos to a patient
@@ -244,6 +246,7 @@ export class PhotoService implements IPhotoService {
    * Updates photo metadata (notes and subpart only).
    */
   async updatePhoto(id: string, data: PhotoRecordUpdate): Promise<PhotoRecord> {
+    await ensureWritable();
     const validated = photoRecordUpdateSchema.parse(data);
 
     const db = await getDB();
@@ -282,6 +285,7 @@ export class PhotoService implements IPhotoService {
    * source photo, regenerates the thumbnail, and bumps patient photo counts.
    */
   async saveAnnotatedImageAsNewPhoto(id: string, annotated: Blob): Promise<PhotoRecord> {
+    await ensureWritable();
     const db = await getDB();
     const rows = await db.select<Record<string, unknown>[]>(
       'SELECT * FROM photos WHERE id = $1',
@@ -351,6 +355,7 @@ export class PhotoService implements IPhotoService {
    * Soft deletes a photo.
    */
   async deletePhoto(id: string): Promise<void> {
+    await ensureWritable();
     const db = await getDB();
     const rows = await db.select<Record<string, unknown>[]>(
       'SELECT * FROM photos WHERE id = $1',
@@ -381,6 +386,7 @@ export class PhotoService implements IPhotoService {
    * Restores a soft-deleted photo.
    */
   async restorePhoto(id: string): Promise<PhotoRecord> {
+    await ensureWritable();
     const db = await getDB();
     const rows = await db.select<Record<string, unknown>[]>(
       'SELECT * FROM photos WHERE id = $1',

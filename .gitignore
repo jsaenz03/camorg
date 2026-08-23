@@ -24,8 +24,14 @@
 .DS_Store
 *.pem
 
+# agent session files
+.zcode/
+
 # local installer build artifacts (CI produces release bundles)
 /installers/
+
+# licence signing keys (never commit; see scripts/licence-keygen.mjs)
+/.keys/
 
 # debug
 npm-debug.log*

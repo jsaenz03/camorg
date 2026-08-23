@@ -12,7 +12,8 @@
 
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Camera } from 'lucide-react';
+import { Camera, CameraOff } from 'lucide-react';
+import { useLicence } from '@/lib/licence/licence-context';
 import { CameraCapture } from '@/components/camera/camera-capture';
 import { PhotoMetadataForm, type PhotoMetadataFormValues } from '@/components/photo/photo-metadata-form';
 import { PageHeader } from '@/components/page-header';
@@ -127,6 +128,37 @@ function CaptureView() {
   const handleRetake = () => {
     setCapturedPhoto(null);
   };
+
+  // Read-only licence gate — the capture flow is the core licensed capability.
+  const { writable, loading: licenceLoading, openActivation } = useLicence();
+  if (!licenceLoading && !writable) {
+    return (
+      <div className="container mx-auto max-w-5xl px-4 py-8 md:px-6 md:py-10">
+        <div className="space-y-6">
+          <PageHeader
+            title="Capture photo"
+            description="Capture a clinical photograph and add patient metadata."
+          />
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CameraOff className="size-5 text-destructive" />
+                Capture unavailable
+              </CardTitle>
+              <CardDescription>
+                Camog is in read-only mode. Existing patients and photos remain
+                viewable, but capturing and editing are disabled until a licence
+                is activated.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={openActivation}>Activate Camog</Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-8 md:px-6 md:py-10">
