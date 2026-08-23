@@ -102,6 +102,10 @@ export const clinicianLoginSchema = z.object({
     .trim()
     .toLowerCase(),
   passcode: z.string().min(1, 'Passcode is required'),
+  /** Keep me signed in: persist the session across app restarts. */
+  rememberMe: z.boolean().optional(),
+  /** Remember sign-in details: prefill username + passcode on this device. */
+  rememberLogin: z.boolean().optional(),
 });
 
 export const changePasscodeSchema = z

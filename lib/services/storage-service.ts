@@ -25,7 +25,11 @@ import {
 } from '@/lib/db/database';
 import { accessService } from '@/lib/services/access-service';
 import { photosDirSchema } from '@/lib/validators/schemas';
-import { PermissionDeniedError, ValidationError } from '@/lib/validators/errors';
+import {
+  PermissionDeniedError,
+  StorageUnavailableError,
+  ValidationError,
+} from '@/lib/validators/errors';
 
 export interface StorageInfo {
   /** Directory photos are currently written to (resolved, exists). */
@@ -41,6 +45,15 @@ export interface ChangePhotosDirResult {
   moved: number;
   /** The newly active photos directory. */
   activeDir: string;
+}
+
+export interface ChangePhotosDirOptions {
+  /**
+   * Proceed when the current folder is unreachable (e.g. a disconnected
+   * network drive): skip copying and just repoint storage. Photos stay on
+   * the unavailable folder and reappear if storage is pointed back at it.
+   */
+  allowMissingSource?: boolean;
 }
 
 export class StorageService {
@@ -63,7 +76,10 @@ export class StorageService {
    * the default app folder (`null`). Copies existing photo files first; the
    * setting is only updated after every copy succeeded.
    */
-  async changePhotosDir(newDir: string | null): Promise<ChangePhotosDirResult> {
+  async changePhotosDir(
+    newDir: string | null,
+    opts?: ChangePhotosDirOptions,
+  ): Promise<ChangePhotosDirResult> {
     if (this.changing) {
       throw new ValidationError('A storage change is already in progress');
     }
@@ -74,7 +90,10 @@ export class StorageService {
 
     const target = newDir !== null ? photosDirSchema.parse(newDir) : null;
     const targetDir = target ?? (await join(await appDataDir(), 'photos'));
-    const oldDir = await getPhotosDir();
+    // The configured dir (not getPhotosDir) — the copy source must not be
+    // created, and must not throw, when it sits on an offline drive.
+    const oldDirOverride = await getPhotosDirOverride();
+    const oldDir = oldDirOverride ?? (await join(await appDataDir(), 'photos'));
 
     this.changing = true;
     try {
@@ -83,10 +102,9 @@ export class StorageService {
       // ponytail: plain string compare — same volume/case quirks on Windows
       // may miss aliases; worst case we copy files onto themselves harmlessly.
       if (oldDir !== targetDir) {
-        if (!(await exists(oldDir))) {
-          throw new ValidationError(
-            `Current photo folder is unavailable: ${oldDir}. Restore it (e.g. reconnect the drive) and try again.`
-          );
+        const sourceAvailable = await exists(oldDir);
+        if (!sourceAvailable && !opts?.allowMissingSource) {
+          throw new StorageUnavailableError(oldDir);
         }
 
         if (target) await grantDirAccess(target);
@@ -94,11 +112,13 @@ export class StorageService {
           await mkdir(targetDir, { recursive: true });
         }
 
-        const entries = await readDir(oldDir);
-        const files = entries.filter((e) => e.isFile);
-        for (const file of files) {
-          await copyFile(await join(oldDir, file.name), await join(targetDir, file.name));
-          moved++;
+        if (sourceAvailable) {
+          const entries = await readDir(oldDir);
+          const files = entries.filter((e) => e.isFile);
+          for (const file of files) {
+            await copyFile(await join(oldDir, file.name), await join(targetDir, file.name));
+            moved++;
+          }
         }
       }
 

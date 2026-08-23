@@ -1,8 +1,10 @@
 /**
  * Auth Service Implementation (Tauri SQLite)
  *
- * PBKDF2-hashed passcodes, sessionStorage-backed sessions, role-based admin
- * methods, and the invitation flow (token + precreated kinds).
+ * PBKDF2-hashed passcodes, web-storage-backed sessions (sessionStorage by
+ * default; localStorage when "Keep me signed in" is ticked so the session
+ * survives app restarts), role-based admin methods, and the invitation flow
+ * (token + precreated kinds).
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -38,11 +40,38 @@ import {
 } from '@/lib/validators/errors';
 
 const SESSION_KEY = 'camog.session';
+/** Remembered sign-in details (username + passcode) for the login form. */
+const REMEMBERED_LOGIN_KEY = 'camog.rememberedLogin';
 const DEFAULT_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+/** Sentinel expiry for the "Never sign me out" preference (~year 287396). */
+const NEVER_EXPIRES = Number.MAX_SAFE_INTEGER;
 
 interface StoredSession {
   clinicianId: string;
   expiresAt: number; // unix ms
+  /** true → localStorage (survives app restarts); false/absent → sessionStorage. */
+  remember?: boolean;
+}
+
+/**
+ * Trust-boundary guard for the personal auto-logout preference: null means
+ * "use the organisation default", 0 means "never sign me out", anything else
+ * must be a finite non-negative integer (ms).
+ */
+function sanitiseAutoLogoutTimeout(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null;
+}
+
+/** Effective auto-logout: the user's own choice, else the org-wide default. */
+function resolveSessionTimeoutMs(userMs: number | null, orgMs: number): number {
+  return userMs ?? orgMs;
+}
+
+/** Absolute expiry timestamp for a timeout (0 = never → far-future sentinel). */
+function expiryFromTimeout(timeoutMs: number, nowMs = Date.now()): number {
+  return timeoutMs === 0 ? NEVER_EXPIRES : nowMs + timeoutMs;
 }
 
 // ----- row mappers (strip hash before returning) -----
@@ -55,6 +84,7 @@ function parsePreferences(json: string): Clinician['preferences'] {
       defaultBodyPart: parsed.defaultBodyPart ?? null,
       autoCompressPhotos: parsed.autoCompressPhotos ?? false,
       showDeletedPhotos: parsed.showDeletedPhotos ?? false,
+      autoLogoutTimeoutMs: sanitiseAutoLogoutTimeout(parsed.autoLogoutTimeoutMs),
     };
   } catch {
     return {
@@ -62,6 +92,7 @@ function parsePreferences(json: string): Clinician['preferences'] {
       defaultBodyPart: null,
       autoCompressPhotos: false,
       showDeletedPhotos: false,
+      autoLogoutTimeoutMs: null,
     };
   }
 }
@@ -157,7 +188,10 @@ function rowToSettings(row: Record<string, unknown>): AppSettings {
 function readSession(): StoredSession | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+    // sessionStorage first (this-run sessions), then a remembered
+    // localStorage session from a previous app run.
+    const raw =
+      sessionStorage.getItem(SESSION_KEY) ?? localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredSession;
     if (!parsed?.clinicianId || typeof parsed.expiresAt !== 'number') return null;
@@ -169,10 +203,63 @@ function readSession(): StoredSession | null {
 
 function writeSession(session: StoredSession | null): void {
   if (typeof window === 'undefined') return;
+  // Always clear both storages so a stale copy in the other one can't
+  // resurrect a session that was replaced or ended.
+  sessionStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(SESSION_KEY);
   if (session) {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  } else {
-    sessionStorage.removeItem(SESSION_KEY);
+    const target = session.remember ? localStorage : sessionStorage;
+    target.setItem(SESSION_KEY, JSON.stringify(session));
+  }
+}
+
+// ----- remembered sign-in details (login-form prefill) -----
+
+interface RememberedLogin {
+  username: string;
+  passcode: string;
+}
+
+/**
+ * SECURITY: this stores the passcode client-side by design — the user
+ * explicitly opted in so the login form prefills. Within this app's
+ * local-device threat model (unencrypted DB at rest, desktop login as the
+ * boundary) it unlocks nothing the device itself doesn't already expose.
+ */
+function readRememberedLogin(): RememberedLogin | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(REMEMBERED_LOGIN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RememberedLogin>;
+    if (typeof parsed?.username !== 'string' || typeof parsed?.passcode !== 'string') {
+      return null;
+    }
+    return { username: parsed.username, passcode: parsed.passcode };
+  } catch {
+    return null;
+  }
+}
+
+function writeRememberedLogin(details: RememberedLogin): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(REMEMBERED_LOGIN_KEY, JSON.stringify(details));
+}
+
+function clearRememberedLogin(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(REMEMBERED_LOGIN_KEY);
+}
+
+/** Drop remembered details that no longer authenticate (e.g. passcode changed). */
+function clearStaleRememberedLogin(attempted: ClinicianLogin): void {
+  const remembered = readRememberedLogin();
+  if (
+    remembered &&
+    remembered.username === attempted.username &&
+    remembered.passcode === attempted.passcode
+  ) {
+    clearRememberedLogin();
   }
 }
 
@@ -365,14 +452,20 @@ export class AuthService implements IAuthService {
     // ponytail: identical error for "no such user" and "wrong passcode" —
     // don't leak which one it is.
     const row = rows[0];
-    if (!row) throw new InvalidCredentialsError('Invalid username or passcode');
+    if (!row) {
+      clearStaleRememberedLogin(validated);
+      throw new InvalidCredentialsError('Invalid username or passcode');
+    }
 
     const clinicianRow = rowToClinicianWithHash(row);
 
     // Verify the passcode before revealing any account state — pending or
     // deactivated shouldn't be confirmable without knowing the credentials.
     const ok = await verifyPasscode(validated.passcode, clinicianRow.passcodeHash);
-    if (!ok) throw new InvalidCredentialsError('Invalid username or passcode');
+    if (!ok) {
+      clearStaleRememberedLogin(validated);
+      throw new InvalidCredentialsError('Invalid username or passcode');
+    }
 
     if (clinicianRow.isPending) {
       throw new PermissionDeniedError(
@@ -380,17 +473,22 @@ export class AuthService implements IAuthService {
       );
     }
     if (!clinicianRow.isActive) {
+      clearStaleRememberedLogin(validated);
       throw new InvalidCredentialsError('This account has been deactivated.');
     }
 
     const settings = await this.getSettings();
     const nowMs = Date.now();
-    const expiresAt = nowMs + settings.sessionTimeoutMs;
+    const timeoutMs = resolveSessionTimeoutMs(
+      parsePreferences(clinicianRow.preferencesJson).autoLogoutTimeoutMs,
+      settings.sessionTimeoutMs,
+    );
+    const expiresAt = expiryFromTimeout(timeoutMs, nowMs);
     await db.execute(
       'UPDATE clinicians SET last_login_at = $1, session_expires_at = $2 WHERE id = $3',
       [nowMs, expiresAt, clinicianRow.id],
     );
-    await this.startSession(clinicianRow.id, settings.sessionTimeoutMs);
+    await this.startSession(clinicianRow.id, timeoutMs, validated.rememberMe ?? false);
 
     const { auditService } = await import('@/lib/services/audit-service');
     void auditService.record('auth.login', {
@@ -398,6 +496,17 @@ export class AuthService implements IAuthService {
       entityId: clinicianRow.id,
       detail: clinicianRow.username,
     });
+
+    // Store or drop the login-form prefill per the tickbox. Written only
+    // after a successful login so a typo never overwrites good details.
+    if (validated.rememberLogin) {
+      writeRememberedLogin({
+        username: validated.username,
+        passcode: validated.passcode,
+      });
+    } else {
+      clearRememberedLogin();
+    }
 
     return {
       clinicianId: clinicianRow.id,
@@ -430,6 +539,11 @@ export class AuthService implements IAuthService {
     }
   }
 
+  /** Login-form prefill for this device ("Remember my sign-in details"). */
+  getRememberedLogin(): RememberedLogin | null {
+    return readRememberedLogin();
+  }
+
   async getCurrentSession(): Promise<SessionInfo | null> {
     try {
       const row = await this.getCurrentRow();
@@ -460,13 +574,19 @@ export class AuthService implements IAuthService {
   async refreshSession(): Promise<Date> {
     const row = await this.requireCurrentRow();
     const settings = await this.getSettings();
-    const expiresAt = Date.now() + settings.sessionTimeoutMs;
+    const timeoutMs = resolveSessionTimeoutMs(
+      parsePreferences(row.preferencesJson).autoLogoutTimeoutMs,
+      settings.sessionTimeoutMs,
+    );
+    const expiresAt = expiryFromTimeout(timeoutMs);
     const db = await getDB();
     await db.execute(
       'UPDATE clinicians SET session_expires_at = $1 WHERE id = $2',
       [expiresAt, row.id],
     );
-    writeSession({ clinicianId: row.id, expiresAt });
+    // Preserve the remember flag so extending can't silently downgrade a
+    // remembered session back to this-run-only storage.
+    writeSession({ clinicianId: row.id, expiresAt, remember: readSession()?.remember });
     return new Date(expiresAt);
   }
 
@@ -491,6 +611,13 @@ export class AuthService implements IAuthService {
        WHERE id = $3`,
       [newHash, nowMs, row.id],
     );
+
+    // Keep the login-form prefill usable after a passcode change instead of
+    // leaving a stale pair that fails next sign-in.
+    const remembered = readRememberedLogin();
+    if (remembered && remembered.username === row.username) {
+      writeRememberedLogin({ username: row.username, passcode: newPasscode });
+    }
   }
 
   /**
@@ -508,6 +635,7 @@ export class AuthService implements IAuthService {
       throw new ConfirmationError('Type "DELETE ALL DATA" to confirm');
     }
     writeSession(null);
+    clearRememberedLogin();
     const db = await getDB();
     // patient_shares must come before patients (FK-less, but logically dependent).
     for (const table of ['patient_shares', 'photos', 'patients', 'subparts', 'invitations', 'clinicians']) {
@@ -530,6 +658,7 @@ export class AuthService implements IAuthService {
     const row = await this.requireCurrentRow();
     // Merge over the stored JSON so sibling preferences survive each save.
     const next = { ...parsePreferences(row.preferencesJson), ...preferences };
+    next.autoLogoutTimeoutMs = sanitiseAutoLogoutTimeout(next.autoLogoutTimeoutMs);
     const db = await getDB();
     const result = await db.execute(
       'UPDATE clinicians SET preferences = $1 WHERE id = $2',
@@ -844,9 +973,13 @@ export class AuthService implements IAuthService {
 
   // ---------- internal helpers ----------
 
-  private async startSession(clinicianId: string, timeoutMs: number): Promise<void> {
-    const expiresAt = Date.now() + timeoutMs;
-    writeSession({ clinicianId, expiresAt });
+  private async startSession(
+    clinicianId: string,
+    timeoutMs: number,
+    remember = false,
+  ): Promise<void> {
+    const expiresAt = expiryFromTimeout(timeoutMs);
+    writeSession({ clinicianId, expiresAt, remember });
     const db = await getDB();
     await db.execute(
       'UPDATE clinicians SET session_expires_at = $1 WHERE id = $2',

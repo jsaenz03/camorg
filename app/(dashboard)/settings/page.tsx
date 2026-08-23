@@ -12,6 +12,7 @@
 import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
 import { toast } from 'sonner';
+import { useEffect, useState } from 'react';
 
 import type { Clinician } from '@/types/clinician';
 import type { BodyPart } from '@/types/body-part';
@@ -46,6 +47,28 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+
+/** Personal auto-logout choices; `__org__` falls back to the admin's org-wide setting. */
+const AUTO_LOGOUT_OPTIONS = [
+  { value: '__org__', label: 'Use organisation default' },
+  { value: String(15 * 60_000), label: '15 minutes' },
+  { value: String(30 * 60_000), label: '30 minutes' },
+  { value: String(60 * 60_000), label: '1 hour' },
+  { value: String(4 * 60 * 60_000), label: '4 hours' },
+  { value: String(8 * 60 * 60_000), label: '8 hours' },
+  { value: String(24 * 60 * 60_000), label: '1 day' },
+  { value: String(7 * 24 * 60 * 60_000), label: '1 week' },
+  { value: '0', label: 'Never' },
+];
+
+function formatDuration(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes} minutes`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  const days = hours / 24;
+  return `${days} ${days === 1 ? 'day' : 'days'}`;
+}
 
 export default function SettingsPage() {
   const { clinician, refresh } = useAuth();
@@ -133,11 +156,41 @@ function ProfileCard({
   clinician: Clinician;
   onchanged: () => void;
 }) {
+  // Org-wide default, shown so "Use organisation default" isn't a mystery box.
+  const [orgDefault, setOrgDefault] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    authService
+      .getSettings()
+      .then((s) => {
+        if (!cancelled) setOrgDefault(s.sessionTimeoutMs);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function updatePrefs(patch: Partial<Clinician['preferences']>) {
     try {
       await authService.updatePreferences(patch);
       await onchanged();
       toast.success('Preference saved');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Save failed');
+    }
+  }
+
+  async function updateAutoLogout(value: string) {
+    const ms = value === '__org__' ? null : Number(value);
+    try {
+      await authService.updatePreferences({ autoLogoutTimeoutMs: ms });
+      // Re-derive the live session's expiry so the new timeout applies now,
+      // not just at the next sign-in.
+      await authService.refreshSession();
+      await onchanged();
+      toast.success('Auto sign-out updated');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Save failed');
     }
@@ -172,6 +225,37 @@ function ProfileCard({
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Sign me out automatically after</label>
+          <Select
+            value={
+              clinician.preferences.autoLogoutTimeoutMs === null
+                ? '__org__'
+                : String(clinician.preferences.autoLogoutTimeoutMs)
+            }
+            onValueChange={updateAutoLogout}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Use organisation default" />
+            </SelectTrigger>
+            <SelectContent>
+              {AUTO_LOGOUT_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Applies while you&rsquo;re away — active use keeps you signed in. Tick
+            &ldquo;Keep me signed in&rdquo; at sign-in to stay signed in after
+            closing the app.
+            {orgDefault !== null && (
+              <> Organisation default: {formatDuration(orgDefault)}.</>
+            )}
+          </p>
         </div>
 
         <PreferenceRow

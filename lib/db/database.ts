@@ -13,6 +13,8 @@ import { appDataDir, join } from '@tauri-apps/api/path';
 import { invoke } from '@tauri-apps/api/core';
 import { mkdir, exists } from '@tauri-apps/plugin-fs';
 
+import { StorageUnavailableError } from '@/lib/validators/errors';
+
 let dbInstance: Database | null = null;
 let photosDirInstance: string | null = null;
 let bootstrapPromise: Promise<void> | null = null;
@@ -100,8 +102,15 @@ export async function getPhotosDir(): Promise<string> {
     await grantDirAccess(override);
   }
 
-  if (!(await exists(photosDir))) {
-    await mkdir(photosDir, { recursive: true });
+  // A disconnected network/cloud drive fails here (mkdir on a dead path) —
+  // surface it as a typed error so capture can point at the fix instead of
+  // showing a raw filesystem message.
+  try {
+    if (!(await exists(photosDir))) {
+      await mkdir(photosDir, { recursive: true });
+    }
+  } catch {
+    throw new StorageUnavailableError(photosDir);
   }
 
   photosDirInstance = photosDir;

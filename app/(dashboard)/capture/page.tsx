@@ -99,7 +99,16 @@ function CaptureView() {
       console.error('Failed to save photo:', error);
 
       if (error instanceof Error) {
-        if (error.name === 'StorageQuotaError') {
+        if (error.name === 'StorageUnavailableError') {
+          toast.error(error.message, {
+            description:
+              'Reconnect the drive (if it’s a network or cloud folder), or an administrator can choose a different folder in Settings → Storage.',
+            action: {
+              label: 'Settings',
+              onClick: () => router.push('/settings'),
+            },
+          });
+        } else if (error.name === 'StorageQuotaError') {
           toast.error('Storage quota exceeded. Delete old photos or free up disk space.');
         } else if (error.name === 'ValidationError') {
           toast.error(`Validation error: ${error.message}`);

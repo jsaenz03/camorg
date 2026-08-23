@@ -78,9 +78,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  // Refresh session on window focus so a timeout in another pane is honoured.
+  // On window focus: extend the session first (activity), then re-read. A
+  // lapsed session is NOT extended — refreshSession's expiry check inside
+  // getCurrentRow refuses it and refresh() then sees the logout. This makes
+  // the auto-logout setting idle-based instead of absolute-from-sign-in, and
+  // honours a timeout enforced in another pane.
   useEffect(() => {
-    const onFocus = () => void refresh();
+    const onFocus = () => {
+      void (async () => {
+        try {
+          await authService.refreshSession();
+        } catch {
+          // not signed in or already expired — refresh() below reports it
+        }
+        await refresh();
+      })();
+    };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [refresh]);

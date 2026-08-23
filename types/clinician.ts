@@ -30,6 +30,8 @@ export interface Clinician {
     defaultBodyPart: BodyPart | null;
     autoCompressPhotos: boolean;
     showDeletedPhotos: boolean;
+    /** Personal auto-logout: null = organisation default, 0 = never. */
+    autoLogoutTimeoutMs: number | null;
   };
 
   // Timestamps

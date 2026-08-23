@@ -23,6 +23,13 @@ export class StorageQuotaError extends Error {
   }
 }
 
+export class StorageUnavailableError extends Error {
+  constructor(dir: string) {
+    super(`Photo folder is unavailable: ${dir}`);
+    this.name = 'StorageUnavailableError';
+  }
+}
+
 export class PermissionDeniedError extends Error {
   constructor(message: string = 'Permission denied') {
     super(message);

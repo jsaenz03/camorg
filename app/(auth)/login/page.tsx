@@ -4,6 +4,8 @@
  * Login screen.
  *
  * - Username + passcode form (react-hook-form + zod).
+ * - "Remember my sign-in details" prefills the form on this device;
+ *   "Keep me signed in" persists the session across app restarts.
  * - On success: refresh the auth context and redirect to /capture.
  * - Fresh install (zero users): shows a link to /signup, where the first
  *   account becomes the organisation administrator.
@@ -43,6 +45,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -71,8 +74,21 @@ export default function LoginPage() {
 
   const form = useForm<ClinicianLogin>({
     resolver: zodResolver(clinicianLoginSchema),
-    defaultValues: { username: '', passcode: '' },
+    defaultValues: { username: '', passcode: '', rememberMe: false, rememberLogin: false },
   });
+
+  // Prefill from remembered details in an effect (not defaultValues) so the
+  // prerendered HTML and the first client render stay in sync.
+  useEffect(() => {
+    const remembered = authService.getRememberedLogin();
+    if (remembered) {
+      form.reset({
+        username: remembered.username,
+        passcode: remembered.passcode,
+        rememberLogin: true,
+      });
+    }
+  }, [form]);
 
   async function onSubmit(values: ClinicianLogin) {
     try {
@@ -160,6 +176,50 @@ export default function LoginPage() {
                     <Input type="password" autoComplete="current-password" {...field} />
                   </FormControl>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="rememberLogin"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start gap-2 space-y-0">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value ?? false}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                      aria-label="Remember my sign-in details on this device"
+                    />
+                  </FormControl>
+                  <div className="leading-none">
+                    <FormLabel>Remember my sign-in details</FormLabel>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Fills in your username and passcode next time. Anyone with
+                      access to this device could sign in as you.
+                    </p>
+                  </div>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="rememberMe"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start gap-2 space-y-0">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value ?? false}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                      aria-label="Keep me signed in on this device"
+                    />
+                  </FormControl>
+                  <div className="leading-none">
+                    <FormLabel>Keep me signed in on this device</FormLabel>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Stays signed in after closing the app. You can set how long
+                      until an automatic sign-out in Settings → Profile.
+                    </p>
+                  </div>
                 </FormItem>
               )}
             />

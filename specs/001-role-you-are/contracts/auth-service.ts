@@ -5,8 +5,11 @@
  * administration, and invitations. Backed by SQLite via Tauri.
  *
  * Passcodes are hashed with PBKDF2-SHA256 (per-user salt, 210k iters).
- * Sessions are client-side only (sessionStorage) — sufficient for the Tauri
- * desktop deployment model.
+ * Sessions are client-side only (sessionStorage; "Keep me signed in" persists
+ * via localStorage so the session survives app restarts) — sufficient for the
+ * Tauri desktop deployment model. Auto-logout timeout = the user's personal
+ * preference (preferences.autoLogoutTimeoutMs, 0 = never) falling back to the
+ * org-wide settings.session_timeout_ms.
  *
  * SECURITY NOTE: This is local-device auth, not network auth. The DB file is
  * not encrypted at rest; for HIPAA-grade deployments, add encryption and
@@ -75,8 +78,12 @@ export interface IAuthService {
    *
    * Side effects:
    * - Updates Clinician.lastLoginAt
-   * - Sets Clinician.sessionExpiresAt to now + `settings.session_timeout_ms`
-   * - Stores session token in sessionStorage
+   * - Sets Clinician.sessionExpiresAt to now + effective timeout (user
+   *   preference, else `settings.session_timeout_ms`; 0 = never expires)
+   * - Stores the session in sessionStorage, or localStorage when
+   *   `rememberMe` is set (survives app restarts)
+   * - Stores/clears the login-form prefill per `rememberLogin`; a stored
+   *   pair that fails authentication is dropped (stale)
    *
    * Security:
    * - Compares PBKDF2 hash of input passcode with stored hash (constant-time)
@@ -119,15 +126,17 @@ export interface IAuthService {
   isAuthenticated(): Promise<boolean>;
 
   /**
-   * Refreshes session expiry (extends by 30 minutes from now)
+   * Refreshes session expiry (extends by the effective timeout from now)
    *
    * @returns Promise resolving to new expiry timestamp
    * @throws NotAuthenticatedError if no active session
    *
    * Side effects:
-   * - Updates Clinician.sessionExpiresAt to now + 30 minutes
+   * - Updates Clinician.sessionExpiresAt to now + effective timeout
+   * - Preserves the remember-me storage choice
    *
-   * Note: Should be called on user activity (click, keypress, etc.) to prevent auto-logout
+   * Note: refuses to extend an already-expired session (logs out instead).
+   * Called on user activity (e.g. window focus) to make auto-logout idle-based.
    */
   refreshSession(): Promise<Date>;
 

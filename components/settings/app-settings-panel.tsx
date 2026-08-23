@@ -143,7 +143,9 @@ export function AppSettingsPanel() {
                     </select>
                   </FormControl>
                   <FormDescription>
-                    Users are signed out after this period of inactivity.
+                    Users are signed out after this period of inactivity. Each
+                    user can choose their own timeout in Settings → Profile;
+                    this is the organisation default.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
