@@ -23,7 +23,7 @@ import {
   settingsUpdateSchema,
 } from '@/lib/validators/schemas';
 import type { IAuthService, SessionInfo } from '@/specs/001-role-you-are/contracts/auth-service';
-import { getDB } from '@/lib/db/database';
+import { getDB, ensureBootstrapped } from '@/lib/db/database';
 import { hashPasscode, verifyPasscode, randomToken } from '@/lib/utils/crypto';
 import {
   NotAuthenticatedError,
@@ -301,6 +301,10 @@ export class AuthService implements IAuthService {
   async login(data: ClinicianLogin): Promise<SessionInfo> {
     const validated = clinicianLoginSchema.parse(data);
     const db = await getDB();
+    // On a fresh install the env bootstrap (first admin) is fired in the
+    // background when the DB opens — the very first login can race it and
+    // falsely report invalid credentials. Wait for it before checking.
+    await ensureBootstrapped();
     const rows = await db.select<Record<string, unknown>[]>(
       'SELECT * FROM clinicians WHERE username = $1',
       [validated.username],
