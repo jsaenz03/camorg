@@ -46,6 +46,21 @@ const dateOfBirthSchema = z
   .refine((d) => d.getTime() >= new Date('1900-01-01').getTime(), 'Date of birth looks too far in the past')
   .nullable();
 
+/** Photo-consent block on patient updates. givenAt null = no consent recorded. */
+export const consentSchema = z.object({
+  givenAt: z.date().nullable(),
+  scope: z.enum(['care', 'education', 'research']).nullable(),
+  expiresAt: z
+    .date()
+    .refine((d) => d.getTime() > Date.now(), 'Consent expiry must be in the future')
+    .nullable(),
+}).refine(
+  (c) => c.givenAt === null || c.scope !== null,
+  { message: 'Choose a consent scope', path: ['scope'] },
+);
+
+export type ConsentInput = z.infer<typeof consentSchema>;
+
 export const patientCreateSchema = z.object({
   name: z.string().min(1, 'Patient name is required').max(100, 'Patient name must be 100 characters or less').trim(),
   dateOfBirth: dateOfBirthSchema.optional(), // optional: DOB is never required
@@ -54,6 +69,7 @@ export const patientCreateSchema = z.object({
 export const patientUpdateSchema = z.object({
   name: z.string().min(1, 'Patient name is required').max(100, 'Patient name must be 100 characters or less').trim(),
   dateOfBirth: dateOfBirthSchema.default(null), // absent → clear the DOB
+  consent: consentSchema,
 });
 
 export type PatientCreate = z.infer<typeof patientCreateSchema>;
@@ -137,6 +153,8 @@ export const settingsUpdateSchema = z.object({
   sessionTimeoutMs: z.number().int().min(60_000).max(86_400_000).optional(),
   allowPublicSignup: z.boolean().optional(),
   orgName: z.string().min(1).max(100).trim().optional(),
+  /** Idle privacy lock: 0 disables, otherwise 1 min – 1 hour. */
+  idleLockTimeoutMs: z.number().int().min(0).max(3_600_000).optional(),
 });
 
 /**

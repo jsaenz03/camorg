@@ -34,4 +34,35 @@ export interface Patient {
   ownerClinicianId: string | null; // Owning doctor (NULL only on unmigrated legacy rows)
   isOrgShared: boolean; // Visible to every clinician in the org
   ownerName: string | null; // Display name of the owner (joined at read time)
+
+  // Photo consent (migration 007). Status is derived, never stored.
+  consentGivenAt: Date | null; // When consent was recorded; null = never
+  consentScope: ConsentScope | null; // What the patient agreed to
+  consentExpiresAt: Date | null; // Optional expiry; null = no expiry
+}
+
+/** What a patient's photo consent covers. */
+export type ConsentScope = 'care' | 'education' | 'research';
+
+export const ConsentScopeLabels: Record<ConsentScope, string> = {
+  care: 'Clinical care',
+  education: 'Education & training',
+  research: 'Research',
+};
+
+export type ConsentStatus = 'none' | 'valid' | 'expired';
+
+/** Derive consent status at read time so expiries take effect without a job. */
+export function consentStatus(patient: {
+  consentGivenAt: Date | null;
+  consentExpiresAt: Date | null;
+}): ConsentStatus {
+  if (!patient.consentGivenAt) return 'none';
+  if (
+    patient.consentExpiresAt &&
+    patient.consentExpiresAt.getTime() < Date.now()
+  ) {
+    return 'expired';
+  }
+  return 'valid';
 }

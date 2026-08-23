@@ -14,6 +14,7 @@ import { format } from 'date-fns';
 import { CalendarIcon, Loader2 } from 'lucide-react';
 import { BodyPart, BodyPartLabels } from '@/types/body-part';
 import { parseDobInput } from '@/lib/utils/date-formatting';
+import { BodyMapPicker } from '@/components/patient/body-map-picker';
 import { DobInput } from '@/components/patient/dob-input';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -166,27 +167,34 @@ export function PhotoMetadataForm({
           name="bodyPart"
           render={({ field }) => (
             <FormItem>
-                <FormLabel>
-                  Body part <span className="text-destructive">*</span>
-                </FormLabel>
-              <Select
-                onValueChange={field.onChange}
-                defaultValue={field.value}
-                disabled={isSubmitting}
-              >
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select body part" />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent>
-                  {Object.values(BodyPart).map((bodyPart) => (
-                    <SelectItem key={bodyPart} value={bodyPart}>
-                      {BodyPartLabels[bodyPart]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FormLabel>
+                Body part <span className="text-destructive">*</span>
+              </FormLabel>
+              <div className="flex gap-2">
+                <Select
+                  onValueChange={field.onChange}
+                  defaultValue={field.value}
+                  disabled={isSubmitting}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select body part" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {Object.values(BodyPart).map((bodyPart) => (
+                      <SelectItem key={bodyPart} value={bodyPart}>
+                        {BodyPartLabels[bodyPart]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <BodyMapPicker
+                  value={field.value}
+                  onSelect={field.onChange}
+                  disabled={isSubmitting}
+                />
+              </div>
               <FormMessage />
             </FormItem>
           )}

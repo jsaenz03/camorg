@@ -122,3 +122,32 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ----- print: patient case report ----- */
+/* The report page marks its printable root with .print-report; everything
+ * else on the page (and the dashboard chrome around it) is hidden when the
+ * browser print dialog renders, so "Save as PDF" produces a clean document. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-report,
+  .print-report * {
+    visibility: visible;
+  }
+  .print-report {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    padding: 0;
+  }
+  .print-report .print-hidden {
+    display: none !important;
+  }
+  .print-report .print-break {
+    break-inside: avoid;
+  }
+  @page {
+    margin: 12mm;
+  }
+}

@@ -66,8 +66,6 @@ export function PhotoDetailDialog({
 }: PhotoDetailDialogProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isLoadingImage, setIsLoadingImage] = useState(true);
-  // Bumped after an annotation is saved so the image reloads from disk.
-  const [imageVersion, setImageVersion] = useState(0);
   const [annotate, setAnnotate] = useState(false);
   const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
 
@@ -102,7 +100,7 @@ export function PhotoDetailDialog({
     return () => {
       mounted = false;
     };
-  }, [photoId, imageVersion]);
+  }, [photoId]);
 
   // Sync form state when the photo changes.
   useEffect(() => {
@@ -134,15 +132,14 @@ export function PhotoDetailDialog({
     );
   }
 
-  /** Flatten the annotation onto the stored image and refresh everything. */
+  /** Save the annotated copy as a new photo; the original stays untouched. */
   async function handleSaveAnnotation(blob: Blob) {
     if (!photo) return;
     setIsSavingAnnotation(true);
     try {
-      await photoService.saveAnnotatedImage(photo.id, blob);
-      toast.success('Annotation saved');
+      await photoService.saveAnnotatedImageAsNewPhoto(photo.id, blob);
+      toast.success('Annotated copy saved as a new photo');
       setAnnotate(false);
-      setImageVersion((v) => v + 1);
       onChanged();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save annotation');

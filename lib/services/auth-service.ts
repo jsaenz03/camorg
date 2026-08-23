@@ -147,6 +147,7 @@ function rowToSettings(row: Record<string, unknown>): AppSettings {
     sessionTimeoutMs: row.session_timeout_ms as number,
     allowPublicSignup: Boolean(row.allow_public_signup),
     orgName: row.org_name as string,
+    idleLockTimeoutMs: (row.idle_lock_timeout_ms as number) ?? 300_000,
     updatedAt: new Date(row.updated_at as number),
   };
 }
@@ -225,6 +226,7 @@ export class AuthService implements IAuthService {
         sessionTimeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
         allowPublicSignup: true,
         orgName: 'Camog',
+        idleLockTimeoutMs: 300_000,
         updatedAt: new Date(),
       };
     }
@@ -239,6 +241,7 @@ export class AuthService implements IAuthService {
       sessionTimeoutMs: validated.sessionTimeoutMs ?? current.sessionTimeoutMs,
       allowPublicSignup: validated.allowPublicSignup ?? current.allowPublicSignup,
       orgName: validated.orgName ?? current.orgName,
+      idleLockTimeoutMs: validated.idleLockTimeoutMs ?? current.idleLockTimeoutMs,
       updatedAt: new Date(),
     };
     const db = await getDB();
@@ -247,12 +250,14 @@ export class AuthService implements IAuthService {
          SET session_timeout_ms = $1,
              allow_public_signup = $2,
              org_name = $3,
-             updated_at = $4
+             idle_lock_timeout_ms = $4,
+             updated_at = $5
        WHERE id = 'app'`,
       [
         next.sessionTimeoutMs,
         next.allowPublicSignup ? 1 : 0,
         next.orgName,
+        next.idleLockTimeoutMs,
         next.updatedAt.getTime(),
       ],
     );
@@ -387,6 +392,13 @@ export class AuthService implements IAuthService {
     );
     await this.startSession(clinicianRow.id, settings.sessionTimeoutMs);
 
+    const { auditService } = await import('@/lib/services/audit-service');
+    void auditService.record('auth.login', {
+      entityType: 'clinician',
+      entityId: clinicianRow.id,
+      detail: clinicianRow.username,
+    });
+
     return {
       clinicianId: clinicianRow.id,
       username: clinicianRow.username,
@@ -402,6 +414,11 @@ export class AuthService implements IAuthService {
     writeSession(null);
     if (session) {
       try {
+        const { auditService } = await import('@/lib/services/audit-service');
+        void auditService.record('auth.logout', {
+          entityType: 'clinician',
+          entityId: session.clinicianId,
+        });
         const db = await getDB();
         await db.execute(
           'UPDATE clinicians SET session_expires_at = NULL WHERE id = $1',
@@ -474,6 +491,16 @@ export class AuthService implements IAuthService {
        WHERE id = $3`,
       [newHash, nowMs, row.id],
     );
+  }
+
+  /**
+   * Check the signed-in clinician's passcode without starting a new session.
+   * Used by the idle privacy lock to re-authenticate in place. Throws
+   * NotAuthenticatedError when nobody is signed in.
+   */
+  async verifyCurrentPasscode(passcode: string): Promise<boolean> {
+    const row = await this.requireCurrentRow();
+    return verifyPasscode(passcode, row.passcodeHash);
   }
 
   async resetApp(confirmationPhrase: string): Promise<void> {

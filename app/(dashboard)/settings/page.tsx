@@ -23,6 +23,8 @@ import { InvitationsPanel } from '@/components/settings/invitations-panel';
 import { AppSettingsPanel } from '@/components/settings/app-settings-panel';
 import { PatientAccessPanel } from '@/components/settings/patient-access-panel';
 import { StoragePanel } from '@/components/settings/storage-panel';
+import { BackupPanel } from '@/components/settings/backup-panel';
+import { AuditLogPanel } from '@/components/settings/audit-log-panel';
 import { PageHeader } from '@/components/page-header';
 
 import {
@@ -72,6 +74,7 @@ export default function SettingsPage() {
           {isAdmin && <TabsTrigger value="access">Access</TabsTrigger>}
           {isAdmin && <TabsTrigger value="invitations">Invitations</TabsTrigger>}
           {isAdmin && <TabsTrigger value="storage">Storage</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="audit">Audit</TabsTrigger>}
           {isAdmin && <TabsTrigger value="app">App</TabsTrigger>}
         </TabsList>
 
@@ -96,8 +99,14 @@ export default function SettingsPage() {
           </TabsContent>
         )}
         {isAdmin && (
-          <TabsContent value="storage" className="mt-6">
+          <TabsContent value="storage" className="mt-6 space-y-4">
             <StoragePanel />
+            <BackupPanel />
+          </TabsContent>
+        )}
+        {isAdmin && (
+          <TabsContent value="audit" className="mt-6">
+            <AuditLogPanel />
           </TabsContent>
         )}
         {isAdmin && (

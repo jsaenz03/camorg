@@ -13,6 +13,7 @@ import type { IPatientService } from '@/specs/001-role-you-are/contracts/patient
 import { patientCreateSchema, patientUpdateSchema } from '@/lib/validators/schemas';
 import { getDB } from '@/lib/db/database';
 import { accessService } from '@/lib/services/access-service';
+import { auditService } from '@/lib/services/audit-service';
 import { NotFoundError } from '@/lib/validators/errors';
 import { dobFromMs, dobToMs, parseDobInput } from '@/lib/utils/date-formatting';
 
@@ -24,6 +25,7 @@ const PATIENT_COLUMNS = `
   p.created_at, p.updated_at, p.last_photo_at, p.clinician_id,
   p.is_archived, p.archived_at,
   p.owner_clinician_id, p.is_org_shared,
+  p.consent_given_at, p.consent_scope, p.consent_expires_at,
   owner.display_name AS owner_name
 `;
 
@@ -44,6 +46,9 @@ function rowToPatient(row: Record<string, unknown>): Patient {
     ownerClinicianId: (row.owner_clinician_id as string) ?? null,
     isOrgShared: Boolean(row.is_org_shared),
     ownerName: (row.owner_name as string) ?? null,
+    consentGivenAt: row.consent_given_at != null ? new Date(row.consent_given_at as number) : null,
+    consentScope: (row.consent_scope as Patient['consentScope']) ?? null,
+    consentExpiresAt: row.consent_expires_at != null ? new Date(row.consent_expires_at as number) : null,
   };
 }
 
@@ -75,6 +80,12 @@ export class PatientService implements IPatientService {
       [id, validated.name, normalizedName, dobMs, nowMs, clinician.id],
     );
 
+    void auditService.record('patient.create', {
+      entityType: 'patient',
+      entityId: id,
+      detail: validated.name,
+    });
+
     return {
       id,
       name: validated.name,
@@ -91,6 +102,9 @@ export class PatientService implements IPatientService {
       ownerClinicianId: clinician.id,
       isOrgShared: false,
       ownerName: clinician.displayName,
+      consentGivenAt: null,
+      consentScope: null,
+      consentExpiresAt: null,
     };
   }
 
@@ -199,20 +213,61 @@ export class PatientService implements IPatientService {
 
     const normalizedName = validated.name.trim().toLowerCase();
     const dobMs = validated.dateOfBirth ? dobToMs(validated.dateOfBirth) : null;
+    const consent = validated.consent;
+    const consentGivenMs = consent.givenAt?.getTime() ?? null;
+    const consentExpiryMs = consent.expiresAt?.getTime() ?? null;
     const nowMs = Date.now();
 
     await db.execute(
-      `UPDATE patients SET name = $1, normalized_name = $2, dob = $3, updated_at = $4 WHERE id = $5`,
-      [validated.name, normalizedName, dobMs, nowMs, id],
+      `UPDATE patients
+         SET name = $1, normalized_name = $2, dob = $3,
+             consent_given_at = $4, consent_scope = $5, consent_expires_at = $6,
+             updated_at = $7
+       WHERE id = $8`,
+      [
+        validated.name,
+        normalizedName,
+        dobMs,
+        consentGivenMs,
+        consent.scope,
+        consentExpiryMs,
+        nowMs,
+        id,
+      ],
     );
 
     const prior = rowToPatient(rows[0]);
+    void auditService.record('patient.update', {
+      entityType: 'patient',
+      entityId: id,
+      detail: validated.name,
+    });
+
+    const consentChanged =
+      consentGivenMs !== (prior.consentGivenAt?.getTime() ?? null) ||
+      consent.scope !== prior.consentScope ||
+      consentExpiryMs !== (prior.consentExpiresAt?.getTime() ?? null);
+    if (consentChanged) {
+      void auditService.record('patient.consent', {
+        entityType: 'patient',
+        entityId: id,
+        detail: consent.givenAt
+          ? `consent recorded (${consent.scope}${
+              consent.expiresAt ? `, expires ${consent.expiresAt.toISOString().slice(0, 10)}` : ''
+            })`
+          : 'consent cleared',
+      });
+    }
+
     return {
       ...prior,
       name: validated.name,
       normalizedName,
       dateOfBirth: validated.dateOfBirth,
       updatedAt: new Date(nowMs),
+      consentGivenAt: consent.givenAt,
+      consentScope: consent.scope,
+      consentExpiresAt: consent.expiresAt,
     };
   }
 
@@ -230,6 +285,7 @@ export class PatientService implements IPatientService {
       `UPDATE patients SET is_archived = 1, archived_at = $1, updated_at = $2 WHERE id = $3`,
       [nowMs, nowMs, id],
     );
+    void auditService.record('patient.archive', { entityType: 'patient', entityId: id });
   }
 
   async unarchivePatient(id: string): Promise<Patient> {
@@ -251,6 +307,7 @@ export class PatientService implements IPatientService {
       `UPDATE patients SET is_archived = 0, archived_at = NULL, updated_at = $1 WHERE id = $2`,
       [nowMs, id],
     );
+    void auditService.record('patient.unarchive', { entityType: 'patient', entityId: id });
 
     return { ...patient, isArchived: false, archivedAt: null, updatedAt: new Date(nowMs) };
   }

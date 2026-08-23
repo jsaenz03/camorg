@@ -20,6 +20,7 @@ import { compressImage, generateThumbnail } from '@/lib/utils/image-processing';
 import { patientService } from '@/lib/services/patient-service';
 import { subpartService } from '@/lib/services/subpart-service';
 import { accessService } from '@/lib/services/access-service';
+import { auditService } from '@/lib/services/audit-service';
 import { writeFile, readFile } from '@tauri-apps/plugin-fs';
 import {
   NotFoundError,
@@ -146,6 +147,13 @@ export class PhotoService implements IPhotoService {
       // Update patient denormalised counts.
       await patientService.updatePhotoCount(validated.patientId, 1, false);
 
+      void auditService.record('photo.create', {
+        entityType: 'photo',
+        entityId: id,
+        patientId: validated.patientId,
+        detail: `${validated.bodyPart}${validated.subpart ? ` · ${validated.subpart}` : ''}`,
+      });
+
       // Record subpart usage if provided.
       if (validated.subpart) {
         await subpartService.recordUsage(validated.bodyPart, validated.subpart);
@@ -269,11 +277,11 @@ export class PhotoService implements IPhotoService {
   }
 
   /**
-   * Replaces a photo's stored image with an annotated (flattened) copy.
-   * Regenerates the thumbnail and updates size/mtime metadata. The annotation
-   * is baked in — the pre-annotation bytes are not retained.
+   * Saves an annotated (flattened) copy as a NEW photo, leaving the original
+   * untouched. Copies patient/body-part/subpart/notes/capture time from the
+   * source photo, regenerates the thumbnail, and bumps patient photo counts.
    */
-  async saveAnnotatedImage(id: string, annotated: Blob): Promise<PhotoRecord> {
+  async saveAnnotatedImageAsNewPhoto(id: string, annotated: Blob): Promise<PhotoRecord> {
     const db = await getDB();
     const rows = await db.select<Record<string, unknown>[]>(
       'SELECT * FROM photos WHERE id = $1',
@@ -286,24 +294,56 @@ export class PhotoService implements IPhotoService {
       throw new PermissionDeniedError('Restore this photo before annotating it.');
     }
 
+    const newId = uuidv4();
     const thumbnailBlob = await generateThumbnail(annotated, 200);
-    const imagePath = await photoPath(`${id}.jpg`);
-    const thumbPath = await photoPath(`${id}.thumb.jpg`);
+    const imagePath = await photoPath(`${newId}.jpg`);
+    const thumbPath = await photoPath(`${newId}.thumb.jpg`);
     await writeFile(imagePath, new Uint8Array(await annotated.arrayBuffer()));
     await writeFile(thumbPath, new Uint8Array(await thumbnailBlob.arrayBuffer()));
 
     const mimeType = annotated.type || 'image/jpeg';
     const nowMs = Date.now();
     await db.execute(
-      `UPDATE photos SET mime_type = $1, file_size_bytes = $2, updated_at = $3 WHERE id = $4`,
-      [mimeType, annotated.size, nowMs, id]
+      `INSERT INTO photos
+         (id, patient_id, image_path, thumbnail_path, original_file_name,
+          mime_type, file_size_bytes, body_part, subpart, clinical_notes,
+          captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, NULL)`,
+      [
+        newId,
+        photo.patientId,
+        `${newId}.jpg`,
+        `${newId}.thumb.jpg`,
+        photo.originalFileName,
+        mimeType,
+        annotated.size,
+        photo.bodyPart,
+        photo.subpart,
+        photo.clinicalNotes,
+        photo.capturedAt.getTime(),
+        nowMs,
+        nowMs,
+        photo.clinicianId,
+      ]
     );
+
+    await patientService.updatePhotoCount(photo.patientId, 1, false);
+    void auditService.record('photo.annotate', {
+      entityType: 'photo',
+      entityId: id,
+      patientId: photo.patientId,
+      detail: `annotated copy ${newId}`,
+    });
 
     return {
       ...photo,
+      id: newId,
       mimeType,
       fileSizeBytes: annotated.size,
+      createdAt: new Date(nowMs),
       updatedAt: new Date(nowMs),
+      isDeleted: false,
+      deletedAt: null,
     };
   }
 
@@ -330,6 +370,11 @@ export class PhotoService implements IPhotoService {
     // Maintain denormalised counts: active -1, deleted +1.
     await patientService.updatePhotoCount(photo.patientId, -1, false);
     await patientService.updatePhotoCount(photo.patientId, 1, true);
+    void auditService.record('photo.delete', {
+      entityType: 'photo',
+      entityId: id,
+      patientId: photo.patientId,
+    });
   }
 
   /**
@@ -356,6 +401,11 @@ export class PhotoService implements IPhotoService {
 
     await patientService.updatePhotoCount(photo.patientId, 1, false);
     await patientService.updatePhotoCount(photo.patientId, -1, true);
+    void auditService.record('photo.restore', {
+      entityType: 'photo',
+      entityId: id,
+      patientId: photo.patientId,
+    });
 
     return { ...photo, isDeleted: false, deletedAt: null, updatedAt: new Date(nowMs) };
   }

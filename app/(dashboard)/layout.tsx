@@ -8,17 +8,40 @@
  *
  * Auth gate: redirects to /login when no session is present. Holds a minimal
  * skeleton while the session is resolving so we never flash protected UI.
+ * Also mounts the idle privacy lock (Settings → App → idle timeout).
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
 import { AppSidebar } from '@/components/app-sidebar';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { UserMenu } from '@/components/user-menu';
+import { IdleLockOverlay } from '@/components/idle-lock-overlay';
 import { useAuth } from '@/lib/auth/auth-context';
+import { authService } from '@/lib/services/auth-service';
 import { Skeleton } from '@/components/ui/skeleton';
+
+function IdleLockGate() {
+  // 5 min fallback while settings load; the real value (0 = off) arrives once.
+  const [timeoutMs, setTimeoutMs] = useState(300_000);
+
+  useEffect(() => {
+    let cancelled = false;
+    authService
+      .getSettings()
+      .then((s) => {
+        if (!cancelled) setTimeoutMs(s.idleLockTimeoutMs);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return <IdleLockOverlay timeoutMs={timeoutMs} />;
+}
 
 export default function DashboardLayout({
   children,
@@ -60,6 +83,7 @@ export default function DashboardLayout({
         </header>
         <main className="flex-1">{children}</main>
       </SidebarInset>
+      <IdleLockGate />
     </SidebarProvider>
   );
 }

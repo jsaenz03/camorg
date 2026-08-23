@@ -20,6 +20,7 @@ import type { CapturedPhoto } from '@/specs/001-role-you-are/contracts/camera-se
 import { photoService } from '@/lib/services/photo-service';
 import { patientService } from '@/lib/services/patient-service';
 import { parseDobInput } from '@/lib/utils/date-formatting';
+import { consentStatus } from '@/types/patient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -59,6 +60,16 @@ function CaptureView() {
 
       if (exactMatch) {
         patientId = exactMatch.id;
+        // Surface missing/expired photo consent without blocking the capture —
+        // record consent via Edit details on the patient's timeline page.
+        if (consentStatus(exactMatch) !== 'valid') {
+          toast.warning(
+            consentStatus(exactMatch) === 'expired'
+              ? 'This patient’s photo consent has expired.'
+              : 'No photo consent on record for this patient.',
+            { description: 'Record consent from the patient’s timeline page (Edit details).' },
+          );
+        }
       } else {
         const newPatient = await patientService.createPatient({
           name: formData.patientName,

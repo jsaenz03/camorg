@@ -47,6 +47,12 @@ pub fn run() {
       sql: include_str!("../migrations/006_patient_dob.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 7,
+      description: "consent tracking, audit log, idle privacy lock",
+      sql: include_str!("../migrations/007_consent_audit.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory

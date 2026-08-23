@@ -27,5 +27,7 @@ export interface AppSettings {
   sessionTimeoutMs: number;
   allowPublicSignup: boolean;
   orgName: string;
+  /** Idle privacy lock: 0 = off. */
+  idleLockTimeoutMs: number;
   updatedAt: Date;
 }

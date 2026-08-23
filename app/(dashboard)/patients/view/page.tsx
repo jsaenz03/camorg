@@ -10,17 +10,19 @@
 'use client';
 
 import { useSearchParams, useRouter } from 'next/navigation';
-import { useState, useCallback, useEffect, Suspense } from 'react';
+import { useState, useCallback, useEffect, useMemo, Suspense } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
-import { ArrowLeft, AlertCircle, Camera, Globe, Loader2, Lock, Pencil } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Camera, FileText, Globe, Loader2, Lock, Pencil, ShieldCheck, ShieldAlert, Columns2 } from 'lucide-react';
 import Link from 'next/link';
-import type { Patient } from '@/types/patient';
+import type { Patient, ConsentScope } from '@/types/patient';
+import { ConsentScopeLabels, consentStatus } from '@/types/patient';
 import type { PhotoRecord } from '@/types/photo';
 import { PhotoTimeline } from '@/components/photo/photo-timeline';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
+import { PhotoCompareDialog } from '@/components/photo/photo-compare-dialog';
 import { PhotoUpload } from '@/components/photo/photo-upload';
 import { EmptyState } from '@/components/empty-state';
 import { PageHeader } from '@/components/page-header';
@@ -49,6 +51,13 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 
@@ -63,6 +72,7 @@ function PatientTimelineView() {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [activePhoto, setActivePhoto] = useState<PhotoRecord | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   const { photos, isLoading: isLoadingPhotos, error, refresh } = usePhotos({
     patientId,
@@ -70,6 +80,13 @@ function PatientTimelineView() {
     // the timeline (badged, restorable from the detail dialog).
     includeDeleted: clinician?.preferences.showDeletedPhotos ?? false,
   });
+
+  // Memoised so the compare dialog's pick-seeding effect doesn't refire on
+  // every parent render.
+  const activePhotos = useMemo(
+    () => photos.filter((p) => !p.isDeleted),
+    [photos],
+  );
 
   useEffect(() => {
     if (!patientId) {
@@ -169,6 +186,8 @@ function PatientTimelineView() {
 
   if (!patient) return null;
 
+  const consent = consentStatus(patient);
+
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
       <Button variant="ghost" onClick={handleBackClick} className="mb-4 -ml-2">
@@ -187,6 +206,21 @@ function PatientTimelineView() {
         }
         actions={
           <div className="flex items-center gap-2">
+            {consent === 'valid' ? (
+              <Badge variant="outline" className="gap-1 border-primary/40 text-primary" title={patient.consentExpiresAt ? `Expires ${format(patient.consentExpiresAt, 'dd/MM/yyyy')}` : 'No expiry set'}>
+                <ShieldCheck className="size-3" />
+                {ConsentScopeLabels[patient.consentScope ?? 'care']}
+              </Badge>
+            ) : (
+              <Badge
+                variant="outline"
+                className="gap-1 border-destructive/40 text-destructive"
+                title={consent === 'expired' ? 'Photo consent has expired — record new consent in Edit details' : 'No photo consent on record — add one in Edit details'}
+              >
+                <ShieldAlert className="size-3" />
+                {consent === 'expired' ? 'Consent expired' : 'No consent'}
+              </Badge>
+            )}
             <Badge variant="outline" className="gap-1">
               {patient.isOrgShared ? (
                 <>
@@ -202,6 +236,21 @@ function PatientTimelineView() {
               <Pencil className="size-4" />
               Edit details
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => setCompareOpen(true)}
+              disabled={patient.photoCount < 2}
+              title={patient.photoCount < 2 ? 'Needs at least two photos' : 'Compare two photos side by side'}
+            >
+              <Columns2 className="size-4" />
+              Compare
+            </Button>
+            <Button variant="outline" asChild>
+              <Link href={`/patients/report?id=${patient.id}`}>
+                <FileText className="size-4" />
+                Report
+              </Link>
+            </Button>
             <PhotoUpload patient={patient} onSaved={handleUploadSaved} />
             <Button asChild>
               <Link href={`/capture?patient=${encodeURIComponent(patient.name)}`}>
@@ -212,6 +261,14 @@ function PatientTimelineView() {
           </div>
         }
       />
+
+      {consent !== 'valid' && (
+        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+          {consent === 'expired'
+            ? 'This patient’s photo consent has expired. Record new consent before capturing further photos.'
+            : 'No photo consent on record for this patient. Consider recording consent via Edit details.'}
+        </div>
+      )}
 
       <PhotoTimeline photos={photos} onPhotoClick={handlePhotoClick} showFilter />
 
@@ -229,6 +286,12 @@ function PatientTimelineView() {
         onOpenChange={setDialogOpen}
         onChanged={handleDialogChanged}
         onDeleted={handleDialogDeleted}
+      />
+
+      <PhotoCompareDialog
+        photos={activePhotos}
+        open={compareOpen}
+        onOpenChange={setCompareOpen}
       />
     </div>
   );
@@ -266,13 +329,22 @@ const editPatientSchema = z.object({
       (v) => !v.trim() || parseDobInput(v) !== null,
       'Enter a valid date, e.g. 4/2/85 or 04/02/1985',
     ),
+  /** '' = no consent; otherwise a ConsentScope. */
+  consentScope: z.enum(['', 'care', 'education', 'research']),
+  /** Optional ISO date (yyyy-mm-dd); '' = no expiry. */
+  consentExpiresAt: z
+    .string()
+    .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), 'Enter a valid date')
+    .refine((v) => !v || new Date(v).getTime() > Date.now(), 'Expiry must be in the future'),
 });
 
 type EditPatientValues = z.infer<typeof editPatientSchema>;
 
 /**
- * Small dialog to edit a patient's name and optional date of birth.
- * Emptying the date of birth field saves null (date not recorded).
+ * Small dialog to edit a patient's name, optional date of birth, and photo
+ * consent. Emptying the date of birth field saves null (date not recorded).
+ * Selecting a scope records consent as of now (or keeps the original date if
+ * the scope is unchanged); clearing the scope removes consent.
  */
 function EditPatientDialog({
   patient,
@@ -291,15 +363,29 @@ function EditPatientDialog({
     defaultValues: {
       name: patient.name,
       dateOfBirth: patient.dateOfBirth ? format(patient.dateOfBirth, 'dd/MM/yyyy') : '',
+      consentScope: patient.consentScope ?? '',
+      consentExpiresAt: patient.consentExpiresAt ? format(patient.consentExpiresAt, 'yyyy-MM-dd') : '',
     },
   });
 
   const handleSubmit = async (values: EditPatientValues) => {
     setIsSaving(true);
     try {
+      const scope = (values.consentScope || null) as ConsentScope | null;
+      const expiresAt = values.consentExpiresAt
+        ? new Date(`${values.consentExpiresAt}T00:00:00`)
+        : null;
+      // Keep the original consent date when the scope is untouched; a new
+      // scope (or re-selecting after expiry) counts as freshly given.
+      const keepDate = scope !== null && scope === patient.consentScope && consentStatus(patient) === 'valid';
       const updated = await patientService.updatePatient(patient.id, {
         name: values.name,
         dateOfBirth: parseDobInput(values.dateOfBirth),
+        consent: {
+          givenAt: scope ? (keepDate ? patient.consentGivenAt : new Date()) : null,
+          scope,
+          expiresAt: scope ? expiresAt : null,
+        },
       });
       toast.success('Patient details updated');
       onSaved(updated);
@@ -359,6 +445,51 @@ function EditPatientDialog({
                   </FormControl>
                   <FormDescription>
                     Optional — type it (e.g. 4/2/85) or use the calendar. Leave blank for none.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="consentScope"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Photo consent</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value} disabled={isSaving}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose a consent scope" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="">No consent on record</SelectItem>
+                      <SelectItem value="care">{ConsentScopeLabels.care}</SelectItem>
+                      <SelectItem value="education">{ConsentScopeLabels.education}</SelectItem>
+                      <SelectItem value="research">{ConsentScopeLabels.research}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    Saving a scope records consent as of today. Changing or clearing it is
+                    written to the audit log.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="consentExpiresAt"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Consent expiry (optional)</FormLabel>
+                  <FormControl>
+                    <Input type="date" {...field} value={field.value ?? ''} disabled={isSaving || !form.watch('consentScope')} />
+                  </FormControl>
+                  <FormDescription>
+                    After this date the patient shows as consent-expired. Leave blank for no expiry.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -43,6 +43,15 @@ const TIMEOUT_OPTIONS = [
   { label: '4 hours', ms: 4 * 60 * 60 * 1000 },
 ];
 
+const IDLE_LOCK_OPTIONS = [
+  { label: 'Off', ms: 0 },
+  { label: '1 minute', ms: 60 * 1000 },
+  { label: '2 minutes', ms: 2 * 60 * 1000 },
+  { label: '5 minutes', ms: 5 * 60 * 1000 },
+  { label: '10 minutes', ms: 10 * 60 * 1000 },
+  { label: '30 minutes', ms: 30 * 60 * 1000 },
+];
+
 export function AppSettingsPanel() {
   const [initial, setInitial] = useState<AppSettings | null>(null);
 
@@ -59,6 +68,7 @@ export function AppSettingsPanel() {
           sessionTimeoutMs: s.sessionTimeoutMs,
           allowPublicSignup: s.allowPublicSignup,
           orgName: s.orgName,
+          idleLockTimeoutMs: s.idleLockTimeoutMs,
         });
       })
       .catch((err) => toast.error(err instanceof Error ? err.message : 'Failed to load settings'));
@@ -73,6 +83,7 @@ export function AppSettingsPanel() {
         sessionTimeoutMs: updated.sessionTimeoutMs,
         allowPublicSignup: updated.allowPublicSignup,
         orgName: updated.orgName,
+        idleLockTimeoutMs: updated.idleLockTimeoutMs,
       });
       toast.success('Settings saved');
     } catch (err) {
@@ -133,6 +144,34 @@ export function AppSettingsPanel() {
                   </FormControl>
                   <FormDescription>
                     Users are signed out after this period of inactivity.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="idleLockTimeoutMs"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Idle privacy lock</FormLabel>
+                  <FormControl>
+                    <select
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      value={field.value ?? initial.idleLockTimeoutMs}
+                      onChange={(e) => field.onChange(Number(e.target.value))}
+                    >
+                      {IDLE_LOCK_OPTIONS.map((o) => (
+                        <option key={o.ms} value={o.ms}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </FormControl>
+                  <FormDescription>
+                    After this period of inactivity the screen blurs and asks for the
+                    passcode again — handy when patient data is visible in a clinic room.
+                    The session itself stays signed in.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
