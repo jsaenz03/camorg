@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { Images, FilterX, Camera } from 'lucide-react';
 import { useAllPhotos } from '@/lib/hooks/use-all-photos';
 import { usePatients } from '@/lib/hooks/use-patients';
+import { useAuth } from '@/lib/auth/auth-context';
 import { BODY_PARTS, BodyPartLabels } from '@/types/body-part';
 import type { BodyPart } from '@/types/body-part';
 import type { PhotoRecord } from '@/types/photo';
@@ -34,6 +35,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function PhotosPage() {
+  const { clinician } = useAuth();
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
   const [bodyPart, setBodyPart] = useState<BodyPart | 'all'>('all');
   const [patientId, setPatientId] = useState<string | 'all'>('all');
@@ -42,7 +44,11 @@ export default function PhotosPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   // Load once (broad), then filter client-side so switching filters is instant.
-  const { photos, isLoading, refresh } = useAllPhotos({ limit: 500 });
+  // The "Show deleted photos" preference reveals soft-deleted captures here.
+  const { photos, isLoading, refresh } = useAllPhotos({
+    limit: 500,
+    includeDeleted: clinician?.preferences.showDeletedPhotos ?? false,
+  });
   const { patients } = usePatients({ includeArchived: false });
 
   const filtered = useMemo(() => {
@@ -91,11 +97,13 @@ export default function PhotosPage() {
               <CardTitle className="text-sm">Date</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
+              {/* Smaller cells so the calendar fits and centres inside the
+                  280px filter rail (default 32px cells overflow the card). */}
               <Calendar
                 mode="single"
                 selected={selectedDate}
                 onSelect={setSelectedDate}
-                className="mx-auto"
+                className="mx-auto [--cell-size:--spacing(7)]"
               />
               {selectedDate && (
                 <Button

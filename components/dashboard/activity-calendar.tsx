@@ -63,7 +63,7 @@ export function ActivityCalendar({
           {capturedDays.length} active {capturedDays.length === 1 ? 'day' : 'days'} · click a day to filter
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex-1">
+      <CardContent className="flex flex-1 flex-col justify-center">
         <Calendar
           mode="single"
           selected={selectedDate ?? undefined}

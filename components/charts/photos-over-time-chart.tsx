@@ -79,7 +79,7 @@ export function PhotosOverTimeChart({ photos }: PhotosOverTimeChartProps) {
         <CardTitle className="text-base">Photos captured</CardTitle>
         <CardDescription>Daily capture activity</CardDescription>
       </CardHeader>
-      <CardContent className="relative flex-1">
+      <CardContent className="relative flex flex-1 flex-col justify-center">
         {/* Range toggle floats over the chart's empty top-right so this
             card's header stays identical to its row siblings — an inline
             header control made the header taller and pushed the chart out

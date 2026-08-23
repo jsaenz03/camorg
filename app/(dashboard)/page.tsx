@@ -46,6 +46,9 @@ export default function HomePage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
+  // Honour the "Show deleted photos" preference alongside the clinician name.
+  const showDeleted = clinician?.preferences.showDeletedPhotos ?? false;
+
   useEffect(() => {
     let mounted = true;
 
@@ -53,7 +56,7 @@ export default function HomePage() {
       try {
         const [all, allPhotos] = await Promise.all([
           patientService.getAllPatients({ includeArchived: false }),
-          photoService.getAllPhotos({ limit: 200 }),
+          photoService.getAllPhotos({ limit: 200, includeDeleted: showDeleted }),
         ]);
         if (!mounted) return;
 
@@ -79,7 +82,7 @@ export default function HomePage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [showDeleted]);
 
   const greeting = useMemo(() => {
     const name = clinician?.displayName?.split(' ')[0];
@@ -105,7 +108,7 @@ export default function HomePage() {
     setIsLoading(true);
     Promise.all([
       patientService.getAllPatients({ includeArchived: false }),
-      photoService.getAllPhotos({ limit: 200 }),
+      photoService.getAllPhotos({ limit: 200, includeDeleted: showDeleted }),
     ])
       .then(([all, allPhotos]) => {
         const nameById = new Map(all.map((p) => [p.id, p.name]));

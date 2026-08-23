@@ -121,6 +121,13 @@ export function PhotoCard({
           />
         )}
 
+        {/* Soft-deleted marker (visible when the preference shows deleted photos) */}
+        {photo.isDeleted && (
+          <span className="absolute left-2 top-2 rounded-md bg-destructive px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+            Deleted
+          </span>
+        )}
+
         {/* Selection checkbox */}
         {showCheckbox && (
           <input

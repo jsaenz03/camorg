@@ -54,7 +54,7 @@ export interface IAuthService {
    * Side effects:
    * - Hashes passcode using PBKDF2-SHA256 (Web Crypto API)
    * - Stores clinician in the `clinicians` table
-   * - Sets default preferences (theme: 'system', autoCompressPhotos: true)
+   * - Sets default preferences (theme: 'system', autoCompressPhotos: false)
    * - Marks the invitation accepted (if a token was supplied)
    * - Creates active session for first-admin / invite modes only
    *

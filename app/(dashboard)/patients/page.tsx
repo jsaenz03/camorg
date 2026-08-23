@@ -6,20 +6,18 @@
 
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import { PatientList } from '@/components/patient/patient-list';
 import { PageHeader } from '@/components/page-header';
 import { usePatients } from '@/lib/hooks/use-patients';
 
 export default function PatientsPage() {
-  const [searchTerm, setSearchTerm] = useState('');
   const { patients, isLoading, error, search } = usePatients({
     includeArchived: false,
   });
 
   const handleSearch = useCallback(
     (term: string) => {
-      setSearchTerm(term);
       search(term);
     },
     [search]

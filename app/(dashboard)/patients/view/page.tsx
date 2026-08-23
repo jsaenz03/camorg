@@ -25,6 +25,7 @@ import { PhotoUpload } from '@/components/photo/photo-upload';
 import { EmptyState } from '@/components/empty-state';
 import { PageHeader } from '@/components/page-header';
 import { usePhotos } from '@/lib/hooks/use-photos';
+import { useAuth } from '@/lib/auth/auth-context';
 import { patientService } from '@/lib/services/patient-service';
 import { formatDateOfBirth, parseDobInput } from '@/lib/utils/date-formatting';
 import { DobInput } from '@/components/patient/dob-input';
@@ -55,6 +56,7 @@ function PatientTimelineView() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const patientId = searchParams.get('id') as string;
+  const { clinician } = useAuth();
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [isLoadingPatient, setIsLoadingPatient] = useState(true);
@@ -64,6 +66,9 @@ function PatientTimelineView() {
 
   const { photos, isLoading: isLoadingPhotos, error, refresh } = usePhotos({
     patientId,
+    // The "Show deleted photos" preference reveals soft-deleted captures in
+    // the timeline (badged, restorable from the detail dialog).
+    includeDeleted: clinician?.preferences.showDeletedPhotos ?? false,
   });
 
   useEffect(() => {

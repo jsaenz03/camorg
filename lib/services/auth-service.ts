@@ -53,14 +53,14 @@ function parsePreferences(json: string): Clinician['preferences'] {
     return {
       theme: parsed.theme ?? 'system',
       defaultBodyPart: parsed.defaultBodyPart ?? null,
-      autoCompressPhotos: parsed.autoCompressPhotos ?? true,
+      autoCompressPhotos: parsed.autoCompressPhotos ?? false,
       showDeletedPhotos: parsed.showDeletedPhotos ?? false,
     };
   } catch {
     return {
       theme: 'system',
       defaultBodyPart: null,
-      autoCompressPhotos: true,
+      autoCompressPhotos: false,
       showDeletedPhotos: false,
     };
   }
@@ -304,7 +304,7 @@ export class AuthService implements IAuthService {
     const preferencesJson = JSON.stringify({
       theme: 'system',
       defaultBodyPart: null,
-      autoCompressPhotos: true,
+      autoCompressPhotos: false,
       showDeletedPhotos: false,
     });
 
@@ -660,7 +660,7 @@ export class AuthService implements IAuthService {
     const preferencesJson = JSON.stringify({
       theme: 'system',
       defaultBodyPart: null,
-      autoCompressPhotos: true,
+      autoCompressPhotos: false,
       showDeletedPhotos: false,
     });
 
@@ -792,7 +792,7 @@ export class AuthService implements IAuthService {
     const preferencesJson = JSON.stringify({
       theme: 'system',
       defaultBodyPart: null,
-      autoCompressPhotos: true,
+      autoCompressPhotos: false,
       showDeletedPhotos: false,
     });
     const db = await getDB();

@@ -134,14 +134,16 @@ export class PatientService implements IPatientService {
     const normalizedSearch = searchTerm.trim().toLowerCase();
     // A term that parses as a calendar date (e.g. 4/2/85, 04/02/1985,
     // 1985-02-04) also matches date of birth; otherwise it is a plain name
-    // search.
+    // search. LIKE wildcards in the term are escaped so % and _ match
+    // literally instead of broadening the search.
     const dobTerm = parseDobInput(searchTerm);
     const dobMs = dobTerm ? dobToMs(dobTerm) : null;
+    const likePattern = `%${normalizedSearch.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
     // Binds before the access filter, so the filter must start after them.
     const leadingBinds = dobMs != null
-      ? [`%${normalizedSearch}%`, dobMs]
-      : [`%${normalizedSearch}%`];
+      ? [likePattern, dobMs]
+      : [likePattern];
     const filter = await accessService.getAccessiblePatientFilter(leadingBinds.length + 1);
     const db = await getDB();
 
@@ -151,7 +153,7 @@ export class PatientService implements IPatientService {
       `SELECT ${PATIENT_COLUMNS}
          FROM patients p
          ${OWNER_JOIN}
-        WHERE (p.normalized_name LIKE $1 ${dobClause}) ${archiveClause} ${filter.sql}`,
+        WHERE (p.normalized_name LIKE $1 ESCAPE '\\' ${dobClause}) ${archiveClause} ${filter.sql}`,
       [...leadingBinds, ...filter.binds],
     );
     const patients = rows.map(rowToPatient);

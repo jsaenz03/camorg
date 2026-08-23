@@ -53,7 +53,6 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
       value={searchTerm}
       onChange={handleSearchChange}
       className="max-w-md"
-      disabled={isLoading && patients.length === 0}
     />
   );
 

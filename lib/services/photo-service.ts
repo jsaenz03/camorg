@@ -72,8 +72,10 @@ function uint8ToBase64(bytes: Uint8Array): string {
 export class PhotoService implements IPhotoService {
   /**
    * Creates a new photo record with metadata.
-   * Compresses the source blob, generates a thumbnail, writes both JPEGs to
-   * disk, then inserts the row and updates denormalised patient counts.
+   * Compresses the source blob when the clinician's auto-compress preference
+   * is on (otherwise stores original bytes), generates a thumbnail, writes
+   * the images to disk, then inserts the row and updates denormalised
+   * patient counts.
    */
   async createPhoto(data: PhotoRecordCreate): Promise<PhotoRecord> {
     const validated = photoRecordCreateSchema.parse(data);
@@ -83,8 +85,16 @@ export class PhotoService implements IPhotoService {
     await accessService.assertCanManagePatient(validated.patientId);
 
     try {
-      const compressedBlob = await compressImage(validated.imageBlob, 1920, 0.85);
-      const thumbnailBlob = await generateThumbnail(compressedBlob, 200);
+      // Honour the clinician's auto-compress preference: off stores the
+      // original bytes untouched (local storage, full quality); on downscales
+      // to a 1920px JPEG. A thumbnail is always generated for grid rendering —
+      // it never affects the stored full-size image.
+      const clinician = await accessService.getCurrentClinician();
+      const compress = clinician.preferences.autoCompressPhotos;
+      const storedBlob = compress
+        ? await compressImage(validated.imageBlob, 1920, 0.85)
+        : validated.imageBlob;
+      const thumbnailBlob = await generateThumbnail(storedBlob, 200);
 
       const id = uuidv4();
       // ponytail: store only the filename in DB so paths are portable across
@@ -95,7 +105,7 @@ export class PhotoService implements IPhotoService {
       const thumbPath = await photoPath(thumbFilename);
 
       // Write JPEGs to disk (binary-safe via Uint8Array).
-      await writeFile(imagePath, new Uint8Array(await compressedBlob.arrayBuffer()));
+      await writeFile(imagePath, new Uint8Array(await storedBlob.arrayBuffer()));
       await writeFile(thumbPath, new Uint8Array(await thumbnailBlob.arrayBuffer()));
 
       const now = new Date();
@@ -122,7 +132,7 @@ export class PhotoService implements IPhotoService {
           thumbFilename,
           '', // originalFileName: not in the create DTO
           validated.mimeType,
-          compressedBlob.size,
+          storedBlob.size,
           validated.bodyPart,
           validated.subpart ?? null,
           validated.clinicalNotes ?? null,
@@ -148,7 +158,7 @@ export class PhotoService implements IPhotoService {
         imageThumbnail: PLACEHOLDER_BLOB,
         originalFileName: '',
         mimeType: validated.mimeType,
-        fileSizeBytes: compressedBlob.size,
+        fileSizeBytes: storedBlob.size,
         bodyPart: validated.bodyPart,
         subpart: validated.subpart || null,
         clinicalNotes: validated.clinicalNotes || null,
@@ -256,6 +266,45 @@ export class PhotoService implements IPhotoService {
     }
 
     return { ...photo, subpart: updatedSubpart, clinicalNotes: updatedNotes, updatedAt: new Date(nowMs) };
+  }
+
+  /**
+   * Replaces a photo's stored image with an annotated (flattened) copy.
+   * Regenerates the thumbnail and updates size/mtime metadata. The annotation
+   * is baked in — the pre-annotation bytes are not retained.
+   */
+  async saveAnnotatedImage(id: string, annotated: Blob): Promise<PhotoRecord> {
+    const db = await getDB();
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM photos WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
+    const photo = rowToPhoto(rows[0]);
+    await accessService.assertCanManagePatient(photo.patientId);
+    if (photo.isDeleted) {
+      throw new PermissionDeniedError('Restore this photo before annotating it.');
+    }
+
+    const thumbnailBlob = await generateThumbnail(annotated, 200);
+    const imagePath = await photoPath(`${id}.jpg`);
+    const thumbPath = await photoPath(`${id}.thumb.jpg`);
+    await writeFile(imagePath, new Uint8Array(await annotated.arrayBuffer()));
+    await writeFile(thumbPath, new Uint8Array(await thumbnailBlob.arrayBuffer()));
+
+    const mimeType = annotated.type || 'image/jpeg';
+    const nowMs = Date.now();
+    await db.execute(
+      `UPDATE photos SET mime_type = $1, file_size_bytes = $2, updated_at = $3 WHERE id = $4`,
+      [mimeType, annotated.size, nowMs, id]
+    );
+
+    return {
+      ...photo,
+      mimeType,
+      fileSizeBytes: annotated.size,
+      updatedAt: new Date(nowMs),
+    };
   }
 
   /**

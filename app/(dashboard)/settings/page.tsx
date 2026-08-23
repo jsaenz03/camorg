@@ -167,7 +167,7 @@ function ProfileCard({
 
         <PreferenceRow
           title="Auto-compress photos"
-          description="Downscale large captures before storing."
+          description="On: downscale captures to a 1920px JPEG before saving. Off: store full-quality originals (larger files)."
           checked={clinician.preferences.autoCompressPhotos}
           onCheckedChange={(v) => updatePrefs({ autoCompressPhotos: v })}
         />

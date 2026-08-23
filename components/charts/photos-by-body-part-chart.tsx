@@ -71,7 +71,7 @@ export function PhotosByBodyPartChart({ photos }: PhotosByBodyPartChartProps) {
         <CardTitle className="text-base">By body part</CardTitle>
         <CardDescription>Distribution across capture sites</CardDescription>
       </CardHeader>
-      <CardContent className="flex-1">
+      <CardContent className="flex flex-1 flex-col justify-center">
         {isEmpty ? (
           <div className="flex h-[220px] items-center justify-center">
             <EmptyState
