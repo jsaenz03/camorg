@@ -14,12 +14,13 @@ import { patientCreateSchema, patientUpdateSchema } from '@/lib/validators/schem
 import { getDB } from '@/lib/db/database';
 import { accessService } from '@/lib/services/access-service';
 import { NotFoundError } from '@/lib/validators/errors';
+import { dobToMs, parseDobSearchTerm } from '@/lib/utils/date-formatting';
 
 // Column list used everywhere we SELECT patients, so the row mapper always
 // gets every field it expects. Aliased as `p` so the access filter's correlated
 // subqueries (which reference `p.`) resolve correctly.
 const PATIENT_COLUMNS = `
-  p.id, p.name, p.normalized_name, p.photo_count, p.deleted_photo_count,
+  p.id, p.name, p.normalized_name, p.dob, p.photo_count, p.deleted_photo_count,
   p.created_at, p.updated_at, p.last_photo_at, p.clinician_id,
   p.is_archived, p.archived_at,
   p.owner_clinician_id, p.is_org_shared,
@@ -31,6 +32,7 @@ function rowToPatient(row: Record<string, unknown>): Patient {
     id: row.id as string,
     name: row.name as string,
     normalizedName: row.normalized_name as string,
+    dateOfBirth: row.dob != null ? new Date(row.dob as number) : null,
     photoCount: row.photo_count as number,
     deletedPhotoCount: row.deleted_photo_count as number,
     createdAt: new Date(row.created_at as number),
@@ -61,21 +63,23 @@ export class PatientService implements IPatientService {
     const id = uuidv4();
     const nowMs = Date.now();
     const normalizedName = validated.name.trim().toLowerCase();
+    const dobMs = validated.dateOfBirth ? dobToMs(validated.dateOfBirth) : null;
 
     const db = await getDB();
     await db.execute(
       `INSERT INTO patients
-         (id, name, normalized_name, photo_count, deleted_photo_count,
+         (id, name, normalized_name, dob, photo_count, deleted_photo_count,
           created_at, updated_at, last_photo_at, clinician_id,
           is_archived, archived_at, owner_clinician_id, is_org_shared)
-       VALUES ($1, $2, $3, 0, 0, $4, $4, NULL, $5, 0, NULL, $5, 0)`,
-      [id, validated.name, normalizedName, nowMs, clinician.id],
+       VALUES ($1, $2, $3, $4, 0, 0, $5, $5, NULL, $6, 0, NULL, $6, 0)`,
+      [id, validated.name, normalizedName, dobMs, nowMs, clinician.id],
     );
 
     return {
       id,
       name: validated.name,
       normalizedName,
+      dateOfBirth: validated.dateOfBirth ?? null,
       photoCount: 0,
       deletedPhotoCount: 0,
       createdAt: new Date(nowMs),
@@ -128,17 +132,26 @@ export class PatientService implements IPatientService {
   ): Promise<Patient[]> {
     const { includeArchived = false } = options;
     const normalizedSearch = searchTerm.trim().toLowerCase();
-    // The search term is bound at $1, so the filter must start at $2.
-    const filter = await accessService.getAccessiblePatientFilter(2);
+    // A term that parses as a calendar date (yyyy-MM-dd or d/M/yyyy) also
+    // matches date of birth; otherwise it is a plain name search.
+    const dobTerm = parseDobSearchTerm(searchTerm);
+    const dobMs = dobTerm ? dobToMs(dobTerm) : null;
+
+    // Binds before the access filter, so the filter must start after them.
+    const leadingBinds = dobMs != null
+      ? [`%${normalizedSearch}%`, dobMs]
+      : [`%${normalizedSearch}%`];
+    const filter = await accessService.getAccessiblePatientFilter(leadingBinds.length + 1);
     const db = await getDB();
 
     const archiveClause = includeArchived ? '' : 'AND p.is_archived = 0';
+    const dobClause = dobMs != null ? 'OR p.dob = $2' : '';
     const rows = await db.select<Record<string, unknown>[]>(
       `SELECT ${PATIENT_COLUMNS}
          FROM patients p
          ${OWNER_JOIN}
-        WHERE p.normalized_name LIKE $1 ${archiveClause} ${filter.sql}`,
-      [`%${normalizedSearch}%`, ...filter.binds],
+        WHERE (p.normalized_name LIKE $1 ${dobClause}) ${archiveClause} ${filter.sql}`,
+      [...leadingBinds, ...filter.binds],
     );
     const patients = rows.map(rowToPatient);
 
@@ -182,15 +195,22 @@ export class PatientService implements IPatientService {
     }
 
     const normalizedName = validated.name.trim().toLowerCase();
+    const dobMs = validated.dateOfBirth ? dobToMs(validated.dateOfBirth) : null;
     const nowMs = Date.now();
 
     await db.execute(
-      `UPDATE patients SET name = $1, normalized_name = $2, updated_at = $3 WHERE id = $4`,
-      [validated.name, normalizedName, nowMs, id],
+      `UPDATE patients SET name = $1, normalized_name = $2, dob = $3, updated_at = $4 WHERE id = $5`,
+      [validated.name, normalizedName, dobMs, nowMs, id],
     );
 
     const prior = rowToPatient(rows[0]);
-    return { ...prior, name: validated.name, normalizedName, updatedAt: new Date(nowMs) };
+    return {
+      ...prior,
+      name: validated.name,
+      normalizedName,
+      dateOfBirth: validated.dateOfBirth,
+      updatedAt: new Date(nowMs),
+    };
   }
 
   async archivePatient(id: string): Promise<void> {

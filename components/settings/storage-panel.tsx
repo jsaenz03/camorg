@@ -13,6 +13,7 @@ import { FolderOpen, HardDrive, Loader2, RotateCcw } from 'lucide-react';
 
 import type { StorageInfo } from '@/lib/services/storage-service';
 import { storageService } from '@/lib/services/storage-service';
+import { toErrorMessage } from '@/lib/utils/error-message';
 
 import {
   Card,
@@ -32,7 +33,7 @@ export function StoragePanel() {
     try {
       setInfo(await storageService.getStorageInfo());
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to load storage settings');
+      toast.error(toErrorMessage(err, 'Failed to load storage settings'));
     }
   }, []);
 
@@ -61,7 +62,7 @@ export function StoragePanel() {
           : 'Photo storage updated'
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not change photo storage');
+      toast.error(toErrorMessage(err, 'Could not change photo storage'));
     } finally {
       setBusy(false);
     }
@@ -84,7 +85,7 @@ export function StoragePanel() {
           : 'Photo storage updated'
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not change photo storage');
+      toast.error(toErrorMessage(err, 'Could not change photo storage'));
     } finally {
       setBusy(false);
     }

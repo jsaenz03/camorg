@@ -26,3 +26,6 @@ tauri-plugin-log = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
+tiny_http = "0.12"
+base64 = "0.22"
+rand = "0.8"

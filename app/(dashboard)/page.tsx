@@ -5,8 +5,8 @@
  *
  * Stats overview → charts (photos over time, by body part, patient growth) →
  * capture activity calendar → recent patients bento → latest photos bento.
- * The dashboard layout gates on session; this route sits outside it, so it
- * self-gates the same way and surfaces the clinician name from useAuth.
+ * Sits inside the dashboard layout, so the sidebar and session gate come for
+ * free; useAuth only supplies the clinician name for the greeting.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -36,7 +36,7 @@ import type { PhotoWithPatient } from '@/lib/hooks/use-all-photos';
 
 export default function HomePage() {
   const router = useRouter();
-  const { clinician, session, loading } = useAuth();
+  const { clinician } = useAuth();
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [recentPhotos, setRecentPhotos] = useState<PhotoWithPatient[]>([]);
@@ -45,14 +45,6 @@ export default function HomePage() {
   const [activePhoto, setActivePhoto] = useState<PhotoWithPatient | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-
-  // Auth gate: while the session is resolving, hold; once resolved, require a
-  // session (redirect to /login). The dashboard layout enforces the same, but
-  // the home route sits outside (dashboard) so it must self-gate.
-  useEffect(() => {
-    if (loading) return;
-    if (!session) router.replace('/login');
-  }, [loading, session, router]);
 
   useEffect(() => {
     let mounted = true;

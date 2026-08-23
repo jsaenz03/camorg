@@ -55,20 +55,25 @@ export class CameraService implements ICameraService {
       throw new NotSupportedError('Camera not supported on this device');
     }
 
-    const defaultConstraints: MediaStreamConstraints = {
-      video: {
-        facingMode,
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-      },
-      audio: false,
-    };
-
-    const finalConstraints = constraints || defaultConstraints;
-
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(finalConstraints);
-      return stream;
+      // Desktop WebKit (macOS) ignores facingMode and may pick an iPhone
+      // Continuity Camera that never delivers frames — black preview, capture
+      // fails with "Video element is not ready". Pick a real camera by
+      // deviceId instead.
+      if (!constraints && navigator.maxTouchPoints === 0) {
+        return await this.openDesktopCamera();
+      }
+
+      const defaultConstraints: MediaStreamConstraints = {
+        video: {
+          facingMode,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      };
+
+      return await navigator.mediaDevices.getUserMedia(constraints || defaultConstraints);
     } catch (error) {
       if (error instanceof Error) {
         if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
@@ -100,6 +105,42 @@ export class CameraService implements ICameraService {
   }
 
   /**
+   * Opens the built-in camera on a desktop. WebKit's default pick can be a
+   * virtual device (e.g. an iPhone Continuity Camera named after the user's
+   * phone) that never delivers frames — black preview, camera LED off.
+   * Probe the default device, then prefer a FaceTime/built-in camera by
+   * exact deviceId.
+   */
+  private async openDesktopCamera(): Promise<MediaStream> {
+    const video = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+    const probe = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+
+    const track = probe.getVideoTracks()[0];
+    if (track && /facetime|built-?in/i.test(track.label)) {
+      return probe;
+    }
+
+    const cameras = (await navigator.mediaDevices.enumerateDevices()).filter(
+      (d) => d.kind === 'videoinput'
+    );
+    // ponytail: positive match on macOS built-in labels; a headless Mac with
+    // only USB webcams has no such label and keeps WebKit's default pick.
+    const probeDeviceId = track?.getSettings().deviceId;
+    const builtin =
+      cameras.find((c) => /facetime|built-?in/i.test(c.label)) ??
+      cameras.find((c) => c.deviceId !== probeDeviceId && !/iphone|continuity/i.test(c.label));
+    if (!builtin) {
+      return probe;
+    }
+
+    this.stopCamera(probe);
+    return await navigator.mediaDevices.getUserMedia({
+      video: { ...video, deviceId: { exact: builtin.deviceId } },
+      audio: false,
+    });
+  }
+
+  /**
    * Stops the active camera stream and releases hardware
    */
   stopCamera(stream: MediaStream): void {
@@ -128,8 +169,17 @@ export class CameraService implements ICameraService {
   ): Promise<CapturedPhoto> {
     const { quality = 0.92, mimeType = 'image/jpeg' } = options;
 
-    if (!videoElement.videoWidth || !videoElement.videoHeight) {
-      throw new Error('Video element is not ready');
+    // Slow camera start (cold Continuity Camera, first open after permission)
+    // can leave the element frameless; wait briefly before giving up.
+    if (!videoElement.videoWidth && !videoElement.videoHeight) {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline && !videoElement.videoWidth) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (!videoElement.videoWidth) {
+        const label = (videoElement.srcObject as MediaStream | null)?.getVideoTracks()[0]?.label;
+        throw new Error(`No frames from camera: ${label || 'unknown device'}`);
+      }
     }
 
     // Create offscreen canvas

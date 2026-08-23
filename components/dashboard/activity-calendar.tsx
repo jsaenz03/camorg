@@ -10,7 +10,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Calendar } from '@/components/ui/calendar';
+import { Calendar, CalendarDayButton } from '@/components/ui/calendar';
 import {
   Card,
   CardContent,
@@ -71,22 +71,25 @@ export function ActivityCalendar({
           modifiers={{ captured: capturedDays }}
           className="mx-auto"
           classNames={{
-            day: cn(
+            // The dot must live on the day button (where data-captured is set);
+            // react-day-picker passes day_button classes into DayButton props.
+            day_button: cn(
               'relative',
               '[&[data-captured=true]::after]:absolute [&[data-captured=true]::after]:bottom-1 [&[data-captured=true]::after]:left-1/2 [&[data-captured=true]::after]:size-1 [&[data-captured=true]::after]:-translate-x-1/2 [&[data-captured=true]::after]:rounded-full [&[data-captured=true]::after]:bg-primary',
             ),
           }}
           components={{
+            // Reuse the styled shadcn day button (square, full-width) and only
+            // add the capture count marker on top.
             DayButton: ({ day, ...props }) => {
               const count = dayCount.get(day.date.toDateString());
               return (
-                <button
+                <CalendarDayButton
                   {...props}
+                  day={day}
                   data-captured={count ? 'true' : undefined}
                   title={count ? `${count} ${count === 1 ? 'photo' : 'photos'}` : undefined}
-                >
-                  {day.date.getDate()}
-                </button>
+                />
               );
             },
           }}

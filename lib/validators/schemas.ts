@@ -40,12 +40,20 @@ export type PhotoRecordUpdate = z.infer<typeof photoRecordUpdateSchema>;
 /**
  * Patient validation schemas
  */
+const dateOfBirthSchema = z
+  .date('Enter a valid date of birth')
+  .refine((d) => d.getTime() <= Date.now(), 'Date of birth cannot be in the future')
+  .refine((d) => d.getTime() >= new Date('1900-01-01').getTime(), 'Date of birth looks too far in the past')
+  .nullable();
+
 export const patientCreateSchema = z.object({
   name: z.string().min(1, 'Patient name is required').max(100, 'Patient name must be 100 characters or less').trim(),
+  dateOfBirth: dateOfBirthSchema.optional(), // optional: DOB is never required
 });
 
 export const patientUpdateSchema = z.object({
   name: z.string().min(1, 'Patient name is required').max(100, 'Patient name must be 100 characters or less').trim(),
+  dateOfBirth: dateOfBirthSchema.default(null), // absent → clear the DOB
 });
 
 export type PatientCreate = z.infer<typeof patientCreateSchema>;

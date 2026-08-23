@@ -50,6 +50,11 @@ const photoMetadataFormSchema = z.object({
     .min(1, 'Patient name is required')
     .max(100, 'Patient name must be 100 characters or less')
     .trim(),
+  /** Optional date of birth for a newly created patient. */
+  patientDob: z
+    .date()
+    .optional()
+    .refine((d) => !d || d.getTime() <= Date.now(), 'Date of birth cannot be in the future'),
   bodyPart: z.nativeEnum(BodyPart, {
     message: 'Please select a body part',
   }),
@@ -86,6 +91,7 @@ export function PhotoMetadataForm({
     resolver: zodResolver(photoMetadataFormSchema),
     defaultValues: {
       patientName: defaultValues?.patientName || '',
+      patientDob: defaultValues?.patientDob,
       bodyPart: defaultValues?.bodyPart || undefined,
       subpart: defaultValues?.subpart || '',
       clinicalNotes: defaultValues?.clinicalNotes || '',
@@ -122,6 +128,52 @@ export function PhotoMetadataForm({
                   autoFocus
                 />
               </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* Patient Date of Birth (optional, used when creating the patient) */}
+        <FormField
+          control={form.control}
+          name="patientDob"
+          render={({ field }) => (
+            <FormItem className="flex flex-col">
+              <FormLabel>Date of birth</FormLabel>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <FormControl>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      disabled={isSubmitting}
+                      className={cn(
+                        'w-full justify-between text-left font-normal',
+                        !field.value && 'text-muted-foreground',
+                      )}
+                    >
+                      {field.value ? (
+                        format(field.value, 'd MMM yyyy')
+                      ) : (
+                        'Not recorded'
+                      )}
+                      <CalendarIcon className="size-4 opacity-50" />
+                    </Button>
+                  </FormControl>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={field.value}
+                    onSelect={(d) => field.onChange(d ?? undefined)}
+                    disabled={(date) => date > new Date() || date < new Date('1900-01-01')}
+                  />
+                </PopoverContent>
+              </Popover>
+              <FormDescription>
+                Optional — helps identify the patient and enables search by date of birth.
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}

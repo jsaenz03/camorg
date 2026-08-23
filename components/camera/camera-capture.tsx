@@ -8,11 +8,12 @@
 'use client';
 
 import { useRef, useEffect, useState } from 'react';
-import { Aperture, SwitchCamera, Loader2 } from 'lucide-react';
+import { Aperture, Camera, Smartphone, SwitchCamera, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCamera } from '@/lib/hooks/use-camera';
 import type { CapturedPhoto, CameraFacingMode } from '@/specs/001-role-you-are/contracts/camera-service';
 import { cameraService } from '@/lib/services/camera-service';
+import { PhoneCameraPanel } from '@/components/camera/phone-camera-panel';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
@@ -29,6 +30,7 @@ export function CameraCapture({
   const { stream, error, permission, isLoading, start, stop, switchCamera } = useCamera();
   const [currentFacingMode, setCurrentFacingMode] = useState<CameraFacingMode>(initialFacingMode);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [phoneMode, setPhoneMode] = useState(false);
 
   /**
    * Start camera on mount
@@ -45,6 +47,8 @@ export function CameraCapture({
   useEffect(() => {
     if (stream && videoRef.current) {
       videoRef.current.srcObject = stream;
+      // WKWebView sometimes needs an explicit play() nudge despite autoPlay.
+      void videoRef.current.play().catch(() => {});
     }
   }, [stream]);
 
@@ -90,6 +94,40 @@ export function CameraCapture({
   };
 
   /**
+   * Switch capture to a tethered phone: release the built-in camera and let
+   * PhoneCameraPanel own the capture until switched back or unmounted.
+   */
+  const handleUsePhoneCamera = () => {
+    stop();
+    setPhoneMode(true);
+  };
+
+  const handleUseBuiltInCamera = () => {
+    setPhoneMode(false);
+    start(currentFacingMode);
+  };
+
+  /**
+   * Render phone-camera pairing (takes precedence over local camera states)
+   */
+  if (phoneMode) {
+    return (
+      <Card className="p-6">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-lg font-semibold">Phone camera</h3>
+            <Button variant="ghost" size="sm" onClick={handleUseBuiltInCamera}>
+              <Camera className="size-4" />
+              Use built-in camera
+            </Button>
+          </div>
+          <PhoneCameraPanel onPhotoCaptured={onPhotoCaptured} />
+        </div>
+      </Card>
+    );
+  }
+
+  /**
    * Render permission denied state
    */
   if (permission === 'denied' || (error && error.name === 'PermissionDeniedError')) {
@@ -123,8 +161,15 @@ export function CameraCapture({
         <div className="text-center space-y-4">
           <h3 className="text-lg font-semibold text-destructive">Camera unavailable</h3>
           <p className="text-sm text-muted-foreground">
-            No usable camera was found on this device. Connect a camera and reload.
+            No usable camera was found on this device. Connect a camera, reload, or tether your phone.
           </p>
+          <div className="flex justify-center gap-2">
+            <Button variant="outline" onClick={() => window.location.reload()}>Retry</Button>
+            <Button variant="secondary" onClick={handleUsePhoneCamera}>
+              <Smartphone className="size-4" />
+              Use phone camera
+            </Button>
+          </div>
         </div>
       </Card>
     );
@@ -198,6 +243,15 @@ export function CameraCapture({
               Capture photo
             </>
           )}
+        </Button>
+        <Button
+          onClick={handleUsePhoneCamera}
+          variant="outline"
+          size="lg"
+          className="min-w-32"
+        >
+          <Smartphone className="size-5" />
+          Use phone camera
         </Button>
       </div>
     </Card>

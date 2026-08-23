@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
 import type { Patient } from '@/types/patient';
-import { formatRelativeTime } from '@/lib/utils/date-formatting';
+import { formatDateOfBirth, formatRelativeTime } from '@/lib/utils/date-formatting';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -80,6 +80,7 @@ export function PatientsDataTable({ patients, className }: PatientsDataTableProp
         <TableHeader>
           <TableRow>
             <SortHeader label="Patient" sortKey="name" current={sortKey} dir={sortDir} onSort={toggleSort} />
+            <TableHead className="w-32">DOB</TableHead>
             <SortHeader label="Photos" sortKey="photoCount" current={sortKey} dir={sortDir} onSort={toggleSort} className="w-24 text-right" />
             <SortHeader label="Last capture" sortKey="lastPhotoAt" current={sortKey} dir={sortDir} onSort={toggleSort} className="w-40" />
             <SortHeader label="Registered" sortKey="createdAt" current={sortKey} dir={sortDir} onSort={toggleSort} className="w-40" />
@@ -93,6 +94,9 @@ export function PatientsDataTable({ patients, className }: PatientsDataTableProp
               className="cursor-pointer"
             >
               <TableCell className="font-medium">{patient.name}</TableCell>
+              <TableCell className="text-muted-foreground">
+                {formatDateOfBirth(patient.dateOfBirth) ?? '—'}
+              </TableCell>
               <TableCell className="text-right">
                 <Badge variant="secondary">{patient.photoCount}</Badge>
               </TableCell>

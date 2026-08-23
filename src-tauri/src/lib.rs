@@ -1,5 +1,8 @@
 // Camog Tauri shell. Storage is delegated to tauri-plugin-sql (SQLite) and
-// tauri-plugin-fs (photo files). No app-level Rust commands.
+// tauri-plugin-fs (photo files). App-level Rust commands: photo-directory
+// scope grants and the phone-camera tether server.
+
+mod remote_camera;
 
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 use tauri_plugin_fs::FsExt;
@@ -38,6 +41,12 @@ pub fn run() {
       sql: include_str!("../migrations/005_signup_approval.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 6,
+      description: "patients: optional date of birth",
+      sql: include_str!("../migrations/006_patient_dob.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory
@@ -68,7 +77,11 @@ pub fn run() {
         .build(),
     )
     .plugin(tauri_plugin_fs::init())
-    .invoke_handler(tauri::generate_handler![grant_directory_access])
+    .invoke_handler(tauri::generate_handler![
+      grant_directory_access,
+      remote_camera::start_remote_camera,
+      remote_camera::stop_remote_camera
+    ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

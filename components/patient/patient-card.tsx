@@ -11,7 +11,7 @@ import { Images, Globe, Lock } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { formatLastPhotoTime } from '@/lib/utils/date-formatting';
+import { formatDateOfBirth, formatLastPhotoTime } from '@/lib/utils/date-formatting';
 
 interface PatientCardProps {
   patient: Patient;
@@ -37,6 +37,11 @@ export function PatientCard({ patient, onClick }: PatientCardProps) {
             <p className="text-sm text-muted-foreground mt-1">
               {formatLastPhotoTime(patient.lastPhotoAt)}
             </p>
+            {patient.dateOfBirth && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                DOB {formatDateOfBirth(patient.dateOfBirth)}
+              </p>
+            )}
           </div>
           <Badge variant="secondary" className="shrink-0">
             {patient.photoCount} {patient.photoCount === 1 ? 'photo' : 'photos'}

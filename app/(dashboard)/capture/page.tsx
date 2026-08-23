@@ -61,6 +61,7 @@ function CaptureView() {
       } else {
         const newPatient = await patientService.createPatient({
           name: formData.patientName,
+          dateOfBirth: formData.patientDob ?? null,
         });
         patientId = newPatient.id;
         toast.info(`Created new patient: ${formData.patientName}`);

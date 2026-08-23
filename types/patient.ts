@@ -14,6 +14,7 @@ export interface Patient {
   id: string; // UUID v4, primary key
   name: string; // Display name (as entered)
   normalizedName: string; // Lowercase, trimmed for case-insensitive search
+  dateOfBirth: Date | null; // Optional DOB, stored as UTC-midnight unix ms
 
   // Metadata
   photoCount: number; // Denormalized count of active photos

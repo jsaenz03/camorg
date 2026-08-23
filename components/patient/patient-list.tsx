@@ -49,7 +49,7 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
   const SearchInput = (
     <Input
       type="search"
-      placeholder="Search patients by name..."
+      placeholder="Search by name or date of birth (e.g. 24/01/1990)…"
       value={searchTerm}
       onChange={handleSearchChange}
       className="max-w-md"

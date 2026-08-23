@@ -29,6 +29,31 @@ export interface CapturedPhoto {
   capturedAt: Date;        // Timestamp of capture
 }
 
+/**
+ * Phone-camera tether
+ *
+ * A phone on the same Wi-Fi opens the pairing URL served by the desktop's
+ * Rust shell, snaps the photo with its native camera app, and POSTs it back;
+ * the shell relays it to the webview as Tauri events. The phone page uses
+ * <input capture> because getUserMedia requires a secure context, which
+ * plain LAN http cannot provide.
+ */
+
+/** Result of the `start_remote_camera` Tauri command. */
+export interface RemoteCameraInfo {
+  url: string;             // Pairing URL to open on the phone (QR-encoded)
+}
+
+/** Payload of the `remote-camera-photo` Tauri event. */
+export interface RemoteCameraPhotoEvent {
+  data: string;            // Base64-encoded JPEG sent by the phone
+}
+
+/** Payload of the `remote-camera-status` Tauri event. */
+export interface RemoteCameraStatusEvent {
+  connected: boolean;      // True once the phone has loaded the pairing page
+}
+
 export interface ICameraService {
   /**
    * Checks if MediaDevices API is supported in current browser

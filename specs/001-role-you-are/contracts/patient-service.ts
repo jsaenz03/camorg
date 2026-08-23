@@ -22,6 +22,7 @@ export interface IPatientService {
    * - Auto-generates normalizedName from name
    * - Sets photoCount = 0, deletedPhotoCount = 0
    * - Sets isArchived = false
+   * - Stores optional dateOfBirth as UTC-midnight unix ms (NULL when omitted)
    */
   createPatient(data: PatientCreate): Promise<Patient>;
 
@@ -56,10 +57,10 @@ export interface IPatientService {
   searchPatients(searchTerm: string, options?: { includeArchived?: boolean }): Promise<Patient[]>;
 
   /**
-   * Updates patient name
+   * Updates patient name and optional date of birth
    *
    * @param id - Patient UUID
-   * @param data - Update data (validated via Zod schema)
+   * @param data - Update data (validated via Zod schema; absent dateOfBirth clears it)
    * @returns Promise resolving to updated Patient
    * @throws NotFoundError if patient does not exist
    * @throws ValidationError if data fails schema validation
@@ -69,6 +70,7 @@ export interface IPatientService {
    * Side effects:
    * - Updates Patient.updatedAt
    * - Regenerates Patient.normalizedName from new name
+   * - Rewrites Patient.dateOfBirth (null clears it)
    */
   updatePatient(id: string, data: PatientUpdate): Promise<Patient>;
 
