@@ -111,9 +111,9 @@ export function PhotoMetadataForm({
           name="patientName"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>
-                Patient Name <span className="text-destructive">*</span>
-              </FormLabel>
+                <FormLabel>
+                  Patient name <span className="text-destructive">*</span>
+                </FormLabel>
               <FormControl>
                 <Input
                   placeholder="Enter patient name"
@@ -133,9 +133,9 @@ export function PhotoMetadataForm({
           name="bodyPart"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>
-                Body Part <span className="text-destructive">*</span>
-              </FormLabel>
+                <FormLabel>
+                  Body part <span className="text-destructive">*</span>
+                </FormLabel>
               <Select
                 onValueChange={field.onChange}
                 defaultValue={field.value}
@@ -165,7 +165,7 @@ export function PhotoMetadataForm({
           name="subpart"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Subpart (Optional)</FormLabel>
+              <FormLabel>Subpart</FormLabel>
               <FormControl>
                 <Input
                   placeholder="e.g., left anterior, medial aspect"
@@ -187,10 +187,10 @@ export function PhotoMetadataForm({
           name="clinicalNotes"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Clinical Notes (Optional)</FormLabel>
+              <FormLabel>Clinical notes</FormLabel>
               <FormControl>
                 <Textarea
-                  placeholder="Enter clinical observations, findings, or context..."
+                  placeholder="Enter clinical observations, findings, or context…"
                   className="resize-none min-h-32"
                   {...field}
                   disabled={isSubmitting}
@@ -210,7 +210,7 @@ export function PhotoMetadataForm({
           name="capturedAt"
           render={({ field }) => (
             <FormItem className="flex flex-col">
-              <FormLabel>Capture Date (Optional)</FormLabel>
+              <FormLabel>Capture date</FormLabel>
               <Popover>
                 <PopoverTrigger asChild>
                   <FormControl>
@@ -261,10 +261,10 @@ export function PhotoMetadataForm({
             {isSubmitting ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
-                Saving...
+                Saving…
               </>
             ) : (
-              'Save Photo'
+              'Save photo'
             )}
           </Button>
         </div>

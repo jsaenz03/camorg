@@ -97,7 +97,7 @@ export function PatientsDataTable({ patients, className }: PatientsDataTableProp
                 <Badge variant="secondary">{patient.photoCount}</Badge>
               </TableCell>
               <TableCell className="text-muted-foreground">
-                {patient.lastPhotoAt ? formatRelativeTime(patient.lastPhotoAt) : '—'}
+                {patient.lastPhotoAt ? formatRelativeTime(patient.lastPhotoAt) : 'Never'}
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {format(patient.createdAt, 'd MMM yyyy')}

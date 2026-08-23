@@ -4,6 +4,7 @@ import { ThemeProvider } from "next-themes";
 import { AuthProvider } from "@/lib/auth/auth-context";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ErrorBoundary } from "@/components/error-boundary";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -32,12 +33,14 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <AuthProvider>
-            <TooltipProvider delayDuration={300}>
-              {children}
-              <Toaster richColors />
-            </TooltipProvider>
-          </AuthProvider>
+          <ErrorBoundary>
+            <AuthProvider>
+              <TooltipProvider delayDuration={300}>
+                {children}
+                <Toaster richColors />
+              </TooltipProvider>
+            </AuthProvider>
+          </ErrorBoundary>
         </ThemeProvider>
       </body>
     </html>

@@ -149,7 +149,7 @@ export function PatientAccessPanel() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{p.name}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      Owner: {p.ownerName ?? '—'}
+                      Owner: {p.ownerName ?? 'Unknown'}
                     </p>
                   </div>
                   <SharingBadge patient={p} />
@@ -163,9 +163,9 @@ export function PatientAccessPanel() {
       <Dialog open={!!editing} onOpenChange={(o) => !o && (setEditing(null), setSharing(null))}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Access — {editing?.name}</DialogTitle>
+            <DialogTitle>Access: {editing?.name}</DialogTitle>
             <DialogDescription>
-              Owner: {editing?.ownerName ?? '—'}. Choose one sharing mode.
+              Owner: {editing?.ownerName ?? 'Unknown'}. Choose one sharing mode.
             </DialogDescription>
           </DialogHeader>
 

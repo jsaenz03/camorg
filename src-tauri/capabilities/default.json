@@ -9,6 +9,7 @@
     "core:default",
     "sql:default",
     "fs:default",
+    "dialog:default",
     {
       "identifier": "fs:scope",
       "allow": [

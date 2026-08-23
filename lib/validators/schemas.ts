@@ -131,6 +131,20 @@ export const settingsUpdateSchema = z.object({
   orgName: z.string().min(1).max(100).trim().optional(),
 });
 
+/**
+ * Absolute filesystem path for the photos storage directory (local or a
+ * cloud-synced folder). Drive-letter or POSIX root required — relative paths
+ * would resolve differently per working directory.
+ */
+export const photosDirSchema = z
+  .string()
+  .min(1, 'Choose a folder for photo storage')
+  .max(1024)
+  .refine(
+    (p) => p.startsWith('/') || p.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(p),
+    'Enter an absolute folder path'
+  );
+
 export const setUserRoleSchema = z.object({
   role: z.enum(['admin', 'clinician'] as const satisfies ClinicianRole[]),
 });

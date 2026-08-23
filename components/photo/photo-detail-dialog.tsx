@@ -160,7 +160,7 @@ export function PhotoDetailDialog({
             ) : imageUrl ? (
               <img
                 src={imageUrl}
-                alt={`Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? ` — ${photo.subpart}` : ''}`}
+                alt={`Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? `, ${photo.subpart}` : ''}`}
                 className="max-h-[60vh] w-auto max-w-full rounded-md object-contain"
               />
             ) : (
@@ -197,7 +197,7 @@ export function PhotoDetailDialog({
                 id="photo-notes"
                 value={clinicalNotes}
                 onChange={(e) => setClinicalNotes(e.target.value)}
-                placeholder="Enter clinical observations, findings, or context..."
+                placeholder="Enter clinical observations, findings, or context…"
                 className="min-h-32 resize-none"
                 maxLength={2000}
                 disabled={isSaving || isDeleting}

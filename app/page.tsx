@@ -5,8 +5,8 @@
  *
  * Stats overview → charts (photos over time, by body part, patient growth) →
  * capture activity calendar → recent patients bento → latest photos bento.
- * Auth is intentionally bypassed (see DashboardLayout); we still surface the
- * clinician name from useAuth when present.
+ * The dashboard layout gates on session; this route sits outside it, so it
+ * self-gates the same way and surfaces the clinician name from useAuth.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -300,8 +300,9 @@ function PatientBentoTile({
         <Badge variant="secondary">
           {patient.photoCount} {patient.photoCount === 1 ? 'photo' : 'photos'}
         </Badge>
-        <span className="text-xs text-muted-foreground transition-colors group-hover:text-foreground">
-          View →
+        <span className="flex items-center gap-0.5 text-xs text-muted-foreground transition-colors group-hover:text-foreground">
+          View
+          <ArrowRight className="size-3" />
         </span>
       </div>
     </button>

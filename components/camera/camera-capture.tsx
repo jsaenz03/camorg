@@ -9,6 +9,7 @@
 
 import { useRef, useEffect, useState } from 'react';
 import { Aperture, SwitchCamera, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useCamera } from '@/lib/hooks/use-camera';
 import type { CapturedPhoto, CameraFacingMode } from '@/specs/001-role-you-are/contracts/camera-service';
 import { cameraService } from '@/lib/services/camera-service';
@@ -62,6 +63,11 @@ export function CameraCapture({
       onPhotoCaptured(photo);
     } catch (error) {
       console.error('Failed to capture photo:', error);
+      toast.error(
+        error instanceof Error && error.message
+          ? `Could not capture photo: ${error.message}`
+          : 'Could not capture photo. Please try again.'
+      );
     } finally {
       setIsCapturing(false);
     }
@@ -79,6 +85,7 @@ export function CameraCapture({
       setCurrentFacingMode(newFacingMode);
     } catch (error) {
       console.error('Failed to switch camera:', error);
+      toast.error('Could not switch camera.');
     }
   };
 
@@ -89,16 +96,15 @@ export function CameraCapture({
     return (
       <Card className="p-6">
         <div className="text-center space-y-4">
-          <h3 className="text-lg font-semibold text-destructive">Camera Permission Denied</h3>
+          <h3 className="text-lg font-semibold text-destructive">Camera access denied</h3>
           <p className="text-sm text-muted-foreground">
-            Please enable camera access in your browser settings to capture photos.
+            Camog needs permission to use your camera.
           </p>
           <div className="bg-muted p-4 rounded-md text-left text-sm space-y-2">
-            <p className="font-medium">Instructions:</p>
+            <p className="font-medium">To enable it:</p>
             <ol className="list-decimal list-inside space-y-1">
-              <li>Click the lock icon in your browser&apos;s address bar</li>
-              <li>Find &quot;Camera&quot; in the permissions list</li>
-              <li>Change setting to &quot;Allow&quot;</li>
+              <li>Open your system privacy settings (Windows: Settings → Privacy &amp; security → Camera; macOS: System Settings → Privacy &amp; Security → Camera)</li>
+              <li>Allow camera access for Camog</li>
               <li>Reload this page</li>
             </ol>
           </div>
@@ -115,13 +121,9 @@ export function CameraCapture({
     return (
       <Card className="p-6">
         <div className="text-center space-y-4">
-          <h3 className="text-lg font-semibold text-destructive">Camera Not Available</h3>
+          <h3 className="text-lg font-semibold text-destructive">Camera unavailable</h3>
           <p className="text-sm text-muted-foreground">
-            Your device or browser does not support camera access.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Please use a modern browser (Chrome 90+, Safari 14+, Firefox 88+, Edge 90+) on a device
-            with a camera.
+            No usable camera was found on this device. Connect a camera and reload.
           </p>
         </div>
       </Card>
@@ -135,12 +137,12 @@ export function CameraCapture({
     return (
       <Card className="p-6">
         <div className="text-center space-y-4">
-          <h3 className="text-lg font-semibold">Initializing Camera...</h3>
+          <h3 className="text-lg font-semibold">Starting camera…</h3>
           <div className="flex justify-center">
             <Loader2 className="size-12 animate-spin text-muted-foreground" />
           </div>
           <p className="text-sm text-muted-foreground">
-            Please allow camera access when prompted
+            Allow camera access if your system asks
           </p>
         </div>
       </Card>
@@ -188,12 +190,12 @@ export function CameraCapture({
           {isCapturing ? (
             <>
               <Loader2 className="size-4 animate-spin" />
-              Capturing...
+              Capturing…
             </>
           ) : (
             <>
               <Aperture className="size-5" />
-              Capture Photo
+              Capture photo
             </>
           )}
         </Button>

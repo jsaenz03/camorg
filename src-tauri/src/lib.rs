@@ -2,6 +2,7 @@
 // tauri-plugin-fs (photo files). No app-level Rust commands.
 
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
+use tauri_plugin_fs::FsExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -25,7 +26,23 @@ pub fn run() {
       sql: include_str!("../migrations/003_access_control.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 4,
+      description: "storage: configurable photos directory",
+      sql: include_str!("../migrations/004_storage.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
+
+  // Grants the fs plugin runtime access to a user-chosen photo directory
+  // (e.g. a cloud-synced folder outside the app data dir). Capability scopes
+  // are static, so a persisted custom dir must be re-granted on every launch.
+  #[tauri::command]
+  fn grant_directory_access(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    app.fs_scope()
+      .allow_directory(&path, true)
+      .map_err(|e| e.to_string())
+  }
 
   tauri::Builder::default()
     .setup(|app| {
@@ -38,12 +55,14 @@ pub fn run() {
       }
       Ok(())
     })
+    .plugin(tauri_plugin_dialog::init())
     .plugin(
       SqlBuilder::default()
         .add_migrations("sqlite:camog.db", migrations)
         .build(),
     )
     .plugin(tauri_plugin_fs::init())
+    .invoke_handler(tauri::generate_handler![grant_directory_access])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

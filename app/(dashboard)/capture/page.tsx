@@ -31,12 +31,9 @@ function CaptureView() {
   const [capturedPhoto, setCapturedPhoto] = useState<CapturedPhoto | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  /**
-   * Handle photo capture from camera
-   */
   const handlePhotoCaptured = (photo: CapturedPhoto) => {
     setCapturedPhoto(photo);
-    toast.success('Photo captured successfully');
+    toast.success('Photo captured');
   };
 
   /**
@@ -80,7 +77,7 @@ function CaptureView() {
         capturedAt: formData.capturedAt ?? capturedPhoto.capturedAt,
       });
 
-      toast.success('Photo saved successfully');
+      toast.success('Photo saved');
 
       // 3. Navigate to patient timeline
       router.push(`/patients/view?id=${patientId}`);
@@ -89,7 +86,7 @@ function CaptureView() {
 
       if (error instanceof Error) {
         if (error.name === 'StorageQuotaError') {
-          toast.error('Storage quota exceeded. Please delete old photos or clear browser data.');
+          toast.error('Storage quota exceeded. Delete old photos or free up disk space.');
         } else if (error.name === 'ValidationError') {
           toast.error(`Validation error: ${error.message}`);
         } else {
@@ -122,7 +119,7 @@ function CaptureView() {
     <div className="container mx-auto max-w-5xl px-4 py-8 md:px-6 md:py-10">
       <div className="space-y-6">
         <PageHeader
-          title="Capture Photo"
+          title="Capture photo"
           description="Capture a clinical photograph and add patient metadata."
         />
 
@@ -134,7 +131,7 @@ function CaptureView() {
             ) : (
               <Card>
                 <CardHeader>
-                  <CardTitle>Captured Photo</CardTitle>
+                  <CardTitle>Captured photo</CardTitle>
                   <CardDescription>Review and add metadata to save</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -152,7 +149,7 @@ function CaptureView() {
                       className="flex-1"
                       disabled={isSubmitting}
                     >
-                      Retake Photo
+                      Retake
                     </Button>
                   </div>
                   <div className="text-xs text-muted-foreground space-y-1">
@@ -171,7 +168,7 @@ function CaptureView() {
           <div>
             <Card>
               <CardHeader>
-                <CardTitle>Photo Metadata</CardTitle>
+                <CardTitle>Photo metadata</CardTitle>
                 <CardDescription>
                   {capturedPhoto
                     ? 'Complete the form to save the photo'

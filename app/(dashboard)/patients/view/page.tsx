@@ -119,7 +119,7 @@ function PatientTimelineView() {
           tone="destructive"
           title="Error loading timeline"
           description={error.message}
-          action={<Button onClick={handleBackClick}>Back to Patients</Button>}
+          action={<Button onClick={handleBackClick}>Back to patients</Button>}
         />
       </div>
     );
@@ -131,7 +131,7 @@ function PatientTimelineView() {
     <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
       <Button variant="ghost" onClick={handleBackClick} className="mb-4 -ml-2">
         <ArrowLeft className="size-4" />
-        Back to Patients
+        Back to patients
       </Button>
 
       <PageHeader
@@ -140,13 +140,6 @@ function PatientTimelineView() {
           <>
             {patient.photoCount} {patient.photoCount === 1 ? 'photo' : 'photos'}
             {patient.ownerName && <> · Owner: {patient.ownerName}</>}
-            {' · '}
-            <Link
-              href={`/capture?patient=${encodeURIComponent(patient.name)}`}
-              className="text-primary underline-offset-4 hover:underline"
-            >
-              Add another
-            </Link>
           </>
         }
         actions={

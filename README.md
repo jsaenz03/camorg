@@ -56,6 +56,20 @@ The app uses Tauri's `appDataDir`:
 - `photos/<photoId>.jpg` — full-size JPEG (compressed to ≤1920px, quality 0.85).
 - `photos/<photoId>.thumb.jpg` — 200×200 thumbnail.
 
+### Photo storage location (local or cloud)
+
+By default photo files live in the app data folder above. An admin can point
+them anywhere else via **Settings → Storage**, including a cloud-synced folder
+(OneDrive, Dropbox, iCloud Drive) — Camog writes JPEGs directly into that
+folder. Changing the location copies existing photos across first (originals
+are kept); the setting only flips after every copy succeeds. The database
+always stays in the app data folder.
+
+Photo rows in the DB store just the filename, so the library is portable: on
+another machine, set the storage location to the same (synced) folder and the
+photos resolve. Removing the custom folder (or deleting photos from it outside
+Camog) makes those photos unreadable in the app — the DB metadata survives.
+
 To reset everything: quit the app and delete the directory above.
 
 ## Architecture
