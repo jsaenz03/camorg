@@ -3,15 +3,17 @@
 /**
  * Signup screen.
  *
- * Three modes:
- *  1. `?token=XXXX` — invite-token flow: resolve the invitation, prefill
+ * Modes:
+ *  1. First run (zero users) — organisation setup: the first account created
+ *     becomes the organisation admin. This is the production bootstrap path;
+ *     no invite can exist because no admin exists to issue one.
+ *  2. `?token=XXXX` — invite-token flow: resolve the invitation, prefill
  *     username/displayName, set a fresh passcode, accept the invitation.
- *  2. No token + `allow_public_signup` — open registration.
- *  3. No token + invite-only — show an inline code field; on submit, resolve
- *     the invitation and switch to mode 1.
- *
- * On success: refresh the auth context and redirect to /capture (or /settings
- * if `mustChangePasscode` is true, which is rare for token invites).
+ *  3. No token + `allow_public_signup` — open registration. The account is
+ *     created pending; an admin approves it in Settings → Users before it can
+ *     sign in.
+ *  4. No token + invite-only — inline code field; on submit, resolve the
+ *     invitation and switch to mode 2.
  */
 
 import { Suspense, useEffect, useState } from 'react';
@@ -20,7 +22,7 @@ import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
-import { Loader2, ArrowLeft } from 'lucide-react';
+import { Loader2, ArrowLeft, CheckCircle2 } from 'lucide-react';
 
 import {
   clinicianRegisterSchema,
@@ -29,8 +31,10 @@ import {
   type InvitationAccept,
 } from '@/lib/validators/schemas';
 import { authService } from '@/lib/services/auth-service';
+import { ensureBootstrapped } from '@/lib/db/database';
 import { useAuth } from '@/lib/auth/auth-context';
-import { AlreadyExistsError, NotFoundError } from '@/lib/validators/errors';
+import { toErrorMessage } from '@/lib/utils/error-message';
+import { NotFoundError } from '@/lib/validators/errors';
 import type { Invitation } from '@/types/invitation';
 
 import {
@@ -53,22 +57,40 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
+interface BootState {
+  userCount: number; // -1 = unknown (DB unavailable) → treat as not first-run
+  publicSignup: boolean;
+}
+
 function SignupInner() {
   const router = useRouter();
   const { refresh } = useAuth();
   const params = useSearchParams();
   const tokenParam = params.get('token')?.trim() ?? '';
 
-  const [publicSignup, setPublicSignup] = useState<boolean | null>(null);
+  const [boot, setBoot] = useState<BootState | null>(null);
   const [invitation, setInvitation] = useState<Invitation | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState('');
+  const [orgName, setOrgName] = useState('');
+  const [pendingSubmitted, setPendingSubmitted] = useState(false);
 
   useEffect(() => {
-    void authService
-      .getSettings()
-      .then((s) => setPublicSignup(s.allowPublicSignup))
-      .catch(() => setPublicSignup(false));
+    void (async () => {
+      try {
+        // Let any env-driven admin bootstrap settle first so the user count
+        // reflects reality (dev convenience; production relies on first-run
+        // setup below).
+        await ensureBootstrapped();
+        const [settings, count] = await Promise.all([
+          authService.getSettings(),
+          authService.countUsers(),
+        ]);
+        setBoot({ userCount: count, publicSignup: settings.allowPublicSignup });
+      } catch {
+        setBoot({ userCount: -1, publicSignup: false });
+      }
+    })();
   }, []);
 
   // Resolve the token from the URL on mount.
@@ -109,34 +131,57 @@ function SignupInner() {
       toast.success('Account created');
       router.replace('/capture');
     } catch (err) {
-      const message =
-        err instanceof AlreadyExistsError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Sign up failed';
-      toast.error(message);
+      console.error('[signup] invite accept failed:', err);
+      toast.error(toErrorMessage(err, 'Sign up failed'));
     }
   }
 
-  // ----- open-signup form (allow_public_signup=true, no token) -----
+  // ----- shared form: first-run setup (admin) and open signup (pending) -----
   const registerForm = useForm<ClinicianRegister>({
     resolver: zodResolver(clinicianRegisterSchema),
     defaultValues: { username: '', displayName: '', passcode: '' },
   });
 
+  async function onSetupFirstAdmin(values: ClinicianRegister) {
+    try {
+      const admin = await authService.register(values);
+      // Register auto-logs the first admin in, so the settings call is
+      // authorised. Best-effort — editable later in Settings.
+      const name = orgName.trim();
+      if (name) {
+        try {
+          await authService.updateSettings({ orgName: name });
+        } catch {
+          // non-fatal
+        }
+      }
+      await refresh();
+      toast.success(`Organisation ready — welcome, ${admin.displayName}`);
+      router.replace('/capture');
+    } catch (err) {
+      console.error('[signup] organisation setup failed:', err);
+      toast.error(toErrorMessage(err, 'Set up failed'));
+    }
+  }
+
   async function onRegister(values: ClinicianRegister) {
     try {
-      await authService.register(values);
+      const created = await authService.register(values);
+      if (created.isPending) {
+        setPendingSubmitted(true);
+        return;
+      }
       await refresh();
       toast.success('Account created');
       router.replace('/capture');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Sign up failed');
+      console.error('[signup] registration failed:', err);
+      toast.error(toErrorMessage(err, 'Sign up failed'));
     }
   }
 
   // ----- render -----
+
   if (tokenParam && resolveError) {
     return (
       <Card>
@@ -240,8 +285,8 @@ function SignupInner() {
     );
   }
 
-  // No token. Either open signup, or invite-only prompt.
-  if (publicSignup === null) {
+  // No token. Await the boot state (settings + user count).
+  if (!boot) {
     return (
       <Card>
         <CardContent className="flex items-center gap-2 pt-6 text-sm text-muted-foreground">
@@ -252,50 +297,187 @@ function SignupInner() {
     );
   }
 
-  if (!publicSignup) {
-    const lookup = async () => {
-      const code = codeInput.trim();
-      if (!code) {
-        toast.error('Enter an invite code');
-        return;
-      }
-      try {
-        const inv = await authService.resolveInvitation(code);
-        router.replace(`/signup?token=${encodeURIComponent(inv.token)}`);
-      } catch (err) {
-        const message =
-          err instanceof NotFoundError
-            ? 'Invite code not found'
-            : err instanceof Error
-              ? err.message
-              : 'Could not resolve invite';
-        toast.error(message);
-      }
-    };
-
+  // ----- first run: organisation setup -----
+  if (boot.userCount === 0) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Sign up</CardTitle>
+          <CardTitle>Set up your organisation</CardTitle>
           <CardDescription>
-            Sign up is invite-only. Enter the code your administrator gave you.
+            No accounts exist yet. The first account you create becomes the
+            organisation administrator, who can then invite or approve other
+            members.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <Input
-            placeholder="e.g. ABCD1234"
-            value={codeInput}
-            onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void lookup();
-              }
-            }}
-          />
-          <Button className="w-full" onClick={lookup}>
-            Continue
-          </Button>
+        <CardContent>
+          <Form {...registerForm}>
+            <form
+              onSubmit={registerForm.handleSubmit(onSetupFirstAdmin)}
+              className="space-y-4"
+            >
+              <div>
+                <label
+                  htmlFor="org-name"
+                  className="mb-2 block text-sm font-medium leading-none"
+                >
+                  Organisation name <span className="text-muted-foreground">(optional)</span>
+                </label>
+                <Input
+                  id="org-name"
+                  placeholder="e.g. Brisbane Skin Clinic"
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                />
+              </div>
+              <FormField
+                control={registerForm.control}
+                name="displayName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Your name</FormLabel>
+                    <FormControl>
+                      <Input {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="username"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Username</FormLabel>
+                    <FormControl>
+                      <Input autoComplete="username" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="passcode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Passcode</FormLabel>
+                    <FormControl>
+                      <Input type="password" autoComplete="new-password" {...field} />
+                    </FormControl>
+                    <FormDescription>
+                      At least 8 characters with a letter and a number.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={registerForm.formState.isSubmitting}
+              >
+                {registerForm.formState.isSubmitting && (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                )}
+                Create admin account
+              </Button>
+            </form>
+          </Form>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // ----- open signup (pending approval) -----
+  if (boot.publicSignup) {
+    if (pendingSubmitted) {
+      return (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CheckCircle2 className="size-5 text-primary" />
+              Account created
+            </CardTitle>
+            <CardDescription>
+              Your account is pending. An administrator needs to approve it
+              before you can sign in — ask them to check Settings → Users.
+            </CardDescription>
+          </CardHeader>
+          <CardFooter>
+            <Button variant="ghost" size="sm" asChild className="w-full">
+              <Link href="/login">
+                <ArrowLeft className="mr-2 size-4" /> Back to sign in
+              </Link>
+            </Button>
+          </CardFooter>
+        </Card>
+      );
+    }
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Create account</CardTitle>
+          <CardDescription>
+            New accounts are pending until an administrator approves them.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Form {...registerForm}>
+            <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
+              <FormField
+                control={registerForm.control}
+                name="displayName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Display name</FormLabel>
+                    <FormControl>
+                      <Input {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="username"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Username</FormLabel>
+                    <FormControl>
+                      <Input autoComplete="username" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="passcode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Passcode</FormLabel>
+                    <FormControl>
+                      <Input type="password" autoComplete="new-password" {...field} />
+                    </FormControl>
+                    <FormDescription>
+                      At least 8 characters with a letter and a number.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={registerForm.formState.isSubmitting}
+              >
+                {registerForm.formState.isSubmitting && (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                )}
+                Request access
+              </Button>
+            </form>
+          </Form>
         </CardContent>
         <CardFooter>
           <Button variant="ghost" size="sm" asChild className="w-full">
@@ -308,70 +490,50 @@ function SignupInner() {
     );
   }
 
-  // Open signup
+  // ----- invite-only -----
+  const lookup = async () => {
+    const code = codeInput.trim();
+    if (!code) {
+      toast.error('Enter an invite code');
+      return;
+    }
+    try {
+      const inv = await authService.resolveInvitation(code);
+      router.replace(`/signup?token=${encodeURIComponent(inv.token)}`);
+    } catch (err) {
+      const message =
+        err instanceof NotFoundError
+          ? 'Invite code not found'
+          : err instanceof Error
+            ? err.message
+            : 'Could not resolve invite';
+      toast.error(message);
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Create account</CardTitle>
-        <CardDescription>Open registration is enabled</CardDescription>
+        <CardTitle>Sign up</CardTitle>
+        <CardDescription>
+          Sign up is invite-only. Enter the code your administrator gave you.
+        </CardDescription>
       </CardHeader>
-      <CardContent>
-        <Form {...registerForm}>
-          <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
-            <FormField
-              control={registerForm.control}
-              name="displayName"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Display name</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={registerForm.control}
-              name="username"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Username</FormLabel>
-                  <FormControl>
-                    <Input autoComplete="username" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={registerForm.control}
-              name="passcode"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Passcode</FormLabel>
-                  <FormControl>
-                    <Input type="password" autoComplete="new-password" {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    At least 8 characters with a letter and a number.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={registerForm.formState.isSubmitting}
-            >
-              {registerForm.formState.isSubmitting && (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              )}
-              Create account
-            </Button>
-          </form>
-        </Form>
+      <CardContent className="space-y-3">
+        <Input
+          placeholder="e.g. ABCD1234"
+          value={codeInput}
+          onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void lookup();
+            }
+          }}
+        />
+        <Button className="w-full" onClick={lookup}>
+          Continue
+        </Button>
       </CardContent>
       <CardFooter>
         <Button variant="ghost" size="sm" asChild className="w-full">

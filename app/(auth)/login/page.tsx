@@ -5,8 +5,9 @@
  *
  * - Username + passcode form (react-hook-form + zod).
  * - On success: refresh the auth context and redirect to /capture.
+ * - Fresh install (zero users): shows a link to /signup, where the first
+ *   account becomes the organisation administrator.
  * - Dev seed button: visible only when NODE_ENV=development AND zero users.
- * - Link to /signup (which itself enforces the invite-only setting).
  */
 
 import { useEffect, useState } from 'react';
@@ -19,7 +20,9 @@ import { Loader2, UserPlus } from 'lucide-react';
 
 import { clinicianLoginSchema, type ClinicianLogin } from '@/lib/validators/schemas';
 import { authService } from '@/lib/services/auth-service';
+import { ensureBootstrapped } from '@/lib/db/database';
 import { useAuth } from '@/lib/auth/auth-context';
+import { toErrorMessage } from '@/lib/utils/error-message';
 import { InvalidCredentialsError } from '@/lib/validators/errors';
 
 import {
@@ -51,18 +54,20 @@ export default function LoginPage() {
   const isDev = process.env.NODE_ENV === 'development';
 
   useEffect(() => {
-    if (!isDev) return;
-    void authService
-      .countUsers()
-      .then((n) => {
+    void (async () => {
+      try {
+        // Wait for any env-driven bootstrap so a fresh dev install that is
+        // about to create the admin doesn't flash the "no users" UI.
+        await ensureBootstrapped();
+        const n = await authService.countUsers();
         setUserCount(n);
         setCountError(null);
-      })
-      .catch((err) => {
+      } catch (err) {
         setUserCount(null);
         setCountError(err instanceof Error ? err.message : String(err));
-      });
-  }, [isDev]);
+      }
+    })();
+  }, []);
 
   const form = useForm<ClinicianLogin>({
     resolver: zodResolver(clinicianLoginSchema),
@@ -75,13 +80,12 @@ export default function LoginPage() {
       await refresh();
       router.replace('/capture');
     } catch (err) {
-      const message =
+      console.error('[login] failed:', err);
+      toast.error(
         err instanceof InvalidCredentialsError
           ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Login failed';
-      toast.error(message);
+          : toErrorMessage(err, 'Login failed'),
+      );
     }
   }
 
@@ -172,6 +176,21 @@ export default function LoginPage() {
           </form>
         </Form>
 
+        {/* Fresh install: no accounts exist — route to organisation setup,
+            where the first account becomes the admin. */}
+        {userCount === 0 && (
+          <div className="mt-4 rounded-md border p-3 text-sm">
+            <p className="mb-1 font-medium">No accounts yet</p>
+            <p className="mb-3 text-muted-foreground">
+              Set up your organisation — the first account you create becomes
+              the administrator.
+            </p>
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/signup">Set up your organisation</Link>
+            </Button>
+          </div>
+        )}
+
         {showSeed && (
           <div className="mt-4 rounded-md border border-dashed bg-muted/30 p-3 text-sm">
             <p className="mb-2 font-medium">
@@ -230,7 +249,7 @@ export default function LoginPage() {
         <Button variant="ghost" size="sm" asChild>
           <Link href="/signup" className="flex items-center justify-center gap-2">
             <UserPlus className="size-4" />
-            Sign up with invite
+            Sign up
           </Link>
         </Button>
       </CardFooter>

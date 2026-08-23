@@ -58,11 +58,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Bootstrap admin baked into the bundle (PBKDF2-hashed at first run).
-          NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_USERNAME: admin
-          NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_PASSCODE: Clinic2026!
-          NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_DISPLAY_NAME: Administrator
-          NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_MUST_CHANGE: "false"
         with:
           args: ${{ matrix.args }}
 

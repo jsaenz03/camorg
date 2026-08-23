@@ -42,7 +42,12 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
     try {
       const updated = await authService.setUserActive(u.id, !u.isActive);
       setUsers((prev) => prev?.map((p) => (p.id === u.id ? updated : p)) ?? null);
-      toast.success(`${updated.displayName} ${updated.isActive ? 'activated' : 'deactivated'}`);
+      const action = u.isPending && !u.isActive
+        ? 'approved'
+        : updated.isActive
+          ? 'activated'
+          : 'deactivated';
+      toast.success(`${updated.displayName} ${action}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Update failed');
     }
@@ -62,7 +67,9 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
     <Card>
       <CardHeader>
         <CardTitle>Users</CardTitle>
-        <CardDescription>Manage who can sign in and their role.</CardDescription>
+        <CardDescription>
+          Approve pending sign ups, set roles, and manage who can sign in.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {users === null ? (
@@ -72,7 +79,15 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
         ) : users.length === 0 ? (
           <p className="text-sm text-muted-foreground">No users yet.</p>
         ) : (
-          <ul className="divide-y">
+          <>
+            {users.some((u) => u.isPending && !u.isActive) && (
+              <div className="mb-4 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
+                {users.filter((u) => u.isPending && !u.isActive).length} sign
+                up{users.filter((u) => u.isPending && !u.isActive).length === 1 ? '' : 's'}{' '}
+                awaiting your approval. These accounts cannot sign in until approved.
+              </div>
+            )}
+            <ul className="divide-y">
             {users.map((u) => {
               const isSelf = u.id === currentUserId;
               return (
@@ -96,8 +111,10 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
                       <p className="truncate text-xs text-muted-foreground">{u.username}</p>
                     </div>
                   </div>
-                  <Badge variant={u.isActive ? 'default' : 'secondary'}>
-                    {u.isActive ? 'active' : 'disabled'}
+                  <Badge
+                    variant={u.isActive ? 'default' : u.isPending ? 'outline' : 'secondary'}
+                  >
+                    {u.isActive ? 'active' : u.isPending ? 'pending approval' : 'disabled'}
                   </Badge>
                   <Select
                     value={u.role}
@@ -118,12 +135,13 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
                     onClick={() => toggleActive(u)}
                     disabled={isSelf}
                   >
-                    {u.isActive ? 'Deactivate' : 'Activate'}
+                    {u.isPending ? 'Approve' : u.isActive ? 'Deactivate' : 'Activate'}
                   </Button>
                 </li>
               );
             })}
-          </ul>
+            </ul>
+          </>
         )}
       </CardContent>
     </Card>

@@ -146,7 +146,9 @@ export function AppSettingsPanel() {
                   <div>
                     <FormLabel>Allow public sign up</FormLabel>
                     <FormDescription>
-                      When off, new users can only join via an admin invite.
+                      When on, anyone can request access; accounts stay pending
+                      until approved in Users. When off, new users can only join
+                      via an admin invite.
                     </FormDescription>
                   </div>
                   <FormControl>

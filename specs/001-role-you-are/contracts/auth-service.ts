@@ -36,21 +36,27 @@ export interface IAuthService {
   /**
    * Registers a new clinician.
    *
-   * Public signup requires `settings.allow_public_signup === true`. Otherwise
-   * an `inviteToken` MUST be supplied and validated against the invitations table.
+   * Mode is decided by lib/services/registration-policy.ts:
+   * - Zero clinicians exist → FIRST ADMIN (organisation setup; the account is
+   *   an active admin and is auto-logged-in).
+   * - `inviteToken` supplied → INVITE (role from the invitation; active and
+   *   auto-logged-in; invitation marked accepted).
+   * - `allow_public_signup` on → PUBLIC-PENDING (clinician role, is_active=0,
+   *   is_pending=1; NO session — an admin must approve in Settings → Users).
+   * - Otherwise → PermissionDeniedError (invite-only).
    *
    * @param data - Registration data (validated via Zod schema)
    * @returns Promise resolving to created Clinician (passcodeHash excluded)
    * @throws ValidationError if data fails schema validation
    * @throws AlreadyExistsError if username already taken
-   * @throws PermissionDeniedError if public signup is disabled and no valid token
+   * @throws PermissionDeniedError if signup is invite-only and no valid token
    *
    * Side effects:
    * - Hashes passcode using PBKDF2-SHA256 (Web Crypto API)
    * - Stores clinician in the `clinicians` table
    * - Sets default preferences (theme: 'system', autoCompressPhotos: true)
    * - Marks the invitation accepted (if a token was supplied)
-   * - Creates active session (auto-login after registration)
+   * - Creates active session for first-admin / invite modes only
    *
    * Security:
    * - Passcode must be 8+ characters with letters and numbers

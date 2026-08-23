@@ -1,171 +1,153 @@
 # Camog macOS User Guide
 
-Simple guide for using Camog on macOS, including installation, file locations, editing, and maintenance.
+Installing and using Camog on macOS — for everyone. Developer instructions are
+at the bottom and are **not** needed to install or run the app.
 
-## Installation
+## Install Camog (end users)
+
+The Camog installer is self-contained. The app, its interface, and the
+database engine are all bundled — you do **not** need Node.js, Rust, or any
+other tools on the machine.
+
+1. Download the latest installer from
+   [github.com/jsaenz03/camorg/releases](https://github.com/jsaenz03/camorg/releases):
+   - `Camog_*_aarch64.dmg` — Macs with Apple Silicon (M1/M2/M3/M4)
+   - `Camog_*_x64.dmg` — Intel Macs
+   - (Windows machines: use the `.msi` — its setup wizard also installs the
+     WebView2 component automatically if the machine is missing it)
+2. Open the `.dmg` and drag **Camog** into **Applications**
+3. Launch Camog from Applications
+   - On first launch, macOS may warn that the app is from an unidentified
+     developer (the app is not yet code-signed). Right-click Camog →
+     **Open** → **Open** in the dialog. This is only needed once.
+4. The first-run wizard appears: name your organisation and create the first
+   account — it becomes the organisation administrator
+5. Sign in with the account you just created
+
+That's the entire setup. To add more members, the administrator invites or
+approves them under **Settings → Users** (see below).
+
+### Adding people (administrator)
+
+- **Invitations** (Settings → Invitations): generate a code, hand it to the
+  new member, they sign up with it and choose their own passcode
+- **Public sign up**: if enabled (Settings → App settings), anyone can
+  request access from the sign-in screen; their account stays **pending**
+  until an administrator approves it in Settings → Users
+- Administrators set each member's role (admin / clinician) and can
+  deactivate accounts at any time
+
+## Data Locations
+
+All data stays on this Mac:
+
+**Main directory:** `~/Library/Application Support/com.camog.app/`
+
+- `camog.db` — SQLite database (patients, photos metadata, users)
+- `photos/` — full-size JPEGs and thumbnails (unless relocated via
+  Settings → Storage)
+
+## Maintenance
+
+### Backup
+
+```bash
+cp -r ~/Library/Application\ Support/com.camog.app/ ~/camog-backup/
+```
+
+(Settings → Storage can also point photos at a cloud-synced folder.)
+
+### Reset (deletes ALL data)
+
+```bash
+rm -rf ~/Library/Application\ Support/com.camog.app/
+```
+
+The next launch shows the first-run wizard again.
+
+### Update
+
+Download the newer `.dmg` from
+[Releases](https://github.com/jsaenz03/camorg/releases) and drag it over the
+existing app in Applications. Your data is untouched.
+
+## Troubleshooting
+
+### Cannot sign in
+1. Fresh install with no accounts: the sign-in screen links to **Sign up** —
+   the first account created becomes the administrator
+2. "Awaiting administrator approval": a new sign-up needs approval in
+   Settings → Users first
+3. "This account has been deactivated": an administrator must re-enable it
+4. Verify the database exists at
+   `~/Library/Application Support/com.camog.app/camog.db`
+
+### Camera not working
+- Ensure camera permission is granted to Camog in System Settings → Privacy
+  & Security → Camera
+- Check the camera is not in use by another application
+
+### App won't start
+1. Confirm macOS 10.15 (Catalina) or newer
+2. If Gatekeeper blocks launch, right-click → Open (see install step 3)
+3. If the database is corrupted, reset it (see Maintenance) — this deletes
+   all data
+
+## Security notes
+
+- Passcodes are stored as PBKDF2 hashes (210k iterations, per-user salt) —
+  never plaintext
+- Local SQLite storage only; nothing is transmitted off the device
+- Production installs have no default credentials — the first account is
+  created by whoever sets up the organisation
+
+---
+
+## Developer setup (only for building from source)
+
+Skip everything here if you installed from a `.dmg`/`.msi`.
 
 ### Prerequisites
-1. **Node.js 18+** - Download from [nodejs.org](https://nodejs.org/)
-2. **Rust toolchain** - Install via terminal:
+1. **Node.js 18+** — [nodejs.org](https://nodejs.org/)
+2. **Rust toolchain:**
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
-3. **Xcode Command Line Tools** - Run in terminal:
+3. **Xcode Command Line Tools:**
    ```bash
    xcode-select --install
    ```
 
-### Install Camog
-1. Open terminal and navigate to the camog directory
-2. Install dependencies:
-   ```bash
-   cd /Users/jsaenz-macbook/apps/camog
-   npm install
-   ```
-
-### Running the App
+### Run in dev mode
 ```bash
-npm run desktop
-```
-
-This opens the Camog desktop application window.
-
-## Default Login
-
-On first launch, Camog creates a default admin account automatically:
-
-- **Username:** `admin`
-- **Passcode:** `devpass123`
-- **Display Name:** Administrator
-
-> **Important:** Change these credentials after first login for security.
-
-## File Locations
-
-### Application Files
-- **Project Directory:** `/Users/jsaenz-macbook/apps/camog/`
-- **Source Code:** `app/`, `components/`, `lib/`
-- **Configuration:** `.env`, `src-tauri/tauri.conf.json`
-
-### Data Files
-Camog stores all data in your Application Support folder:
-
-**Main Directory:** `~/Library/Application Support/com.camog.app/`
-
-Inside this directory you'll find:
-- `camog.db` - SQLite database (patients, photos metadata, clinicians)
-- `photos/<photoId>.jpg` - Full-size JPEG photos (compressed to ≤1920px)
-- `photos/<photoId>.thumb.jpg` - 200×200 thumbnail images
-
-### Build Output
-When building installers, output goes to:
-- `src-tauri/target/release/bundle/` - macOS .dmg and .app files
-- `installers/` - Additional installer directories
-
-## Editing Configuration
-
-### Environment Variables
-Edit the `.env` file in the project root:
-
-```bash
-nano /Users/jsaenz-macbook/apps/camog/.env
-```
-
-**Available settings:**
-```bash
-NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_USERNAME=admin
-NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_PASSCODE=devpass123
-NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_DISPLAY_NAME=Administrator
-NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_MUST_CHANGE=false
-```
-
-### Changing Default Credentials
-1. Edit the `.env` file with new credentials
-2. Delete existing database: `rm ~/Library/Application Support/com.camog.app/camog.db`
-3. Restart app - new admin account will be created with updated credentials
-
-### App Configuration
-Edit `src-tauri/tauri.conf.json` to change:
-- Window size and title
-- App icon
-- Security settings
-- Build targets
-
-## Maintenance
-
-### Reset Database
-To completely reset Camog (delete all data):
-
-```bash
-rm -rf ~/Library/Application Support/com.camog.app/
-```
-
-### Backup Data
-Backup the entire application data directory:
-
-```bash
-cp -r ~/Library/Application Support/com.camog.app/ ~/camog-backup/
-```
-
-### Update Application
-```bash
-cd /Users/jsaenz-macbook/apps/camog
-git pull origin main
+cd /path/to/camog
 npm install
 npm run desktop
 ```
 
-### Build Installer
+On a fresh database, dev mode also creates a default admin from `.env` (copy
+`.env.example`; defaults `admin` / `devpass123`). Production builds never
+read `.env` — packaged apps use the first-run wizard instead.
+
+### Build the installers locally
 ```bash
 npm run desktop:build
 ```
 
-Creates macOS installer in `src-tauri/target/release/bundle/`
+Output lands in `src-tauri/target/release/bundle/`. CI (GitHub Actions)
+builds and attaches the signed-off macOS DMGs and Windows MSI to each
+[Release](https://github.com/jsaenz03/camorg/releases) automatically.
 
-## Troubleshooting
+> **Warning:** a local `.env` with bootstrap credentials gets baked into a
+> locally built installer (Next inlines `NEXT_PUBLIC_*` values at build
+> time). Move `.env` aside before building installers you intend to
+> distribute — CI builds are always clean.
 
-### Cannot Login
-1. Check `.env` file has correct bootstrap credentials
-2. Reset database and restart app to recreate admin account
-3. Verify database file exists at `~/Library/Application Support/com.camog.app/camog.db`
+### Configuration
+- `.env` — dev-only bootstrap admin credentials
+- `src-tauri/tauri.conf.json` — window, security, and bundle settings
 
-### Camera Not Working
-- Ensure camera permissions are granted to Camog in System Preferences
-- Check Camera is not in use by another application
-
-### App Won't Start
-1. Check Node.js and Rust are properly installed
-2. Verify all dependencies: `npm install`
-3. Check terminal for error messages when running `npm run desktop`
-
-### Database Issues
-- Location: `~/Library/Application Support/com.camog.app/camog.db`
-- If corrupted, delete the entire `com.camog.app` directory and restart
-
-## Development vs Production
-
-### Development Mode (`npm run desktop`)
-- Hot reload enabled
-- More verbose error messages
-- Database in dev location
-
-### Production Build
-- Optimized performance
-- Error messages simplified
-- Database in production location
-- Run via installed .app or .dmg
-
-## Security Notes
-
-- Passcodes stored as PBKDF2 hash (210k iterations, per-user salt)
-- No plaintext passwords stored
-- Local SQLite database only (no cloud transmission)
-- Change default admin credentials after installation
-
-## Support
-
-For issues or questions:
-1. Check this guide first
-2. Review error messages in terminal when running `npm run desktop`
-3. Check database and file permissions
-4. Verify environment configuration in `.env` file
+### Dev vs production
+- Dev: hot reload, verbose errors, `.env` bootstrap admin
+- Production: optimised build, first-run organisation wizard, no default
+  credentials

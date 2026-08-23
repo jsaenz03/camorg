@@ -20,6 +20,8 @@ export interface Clinician {
 
   // Status
   isActive: boolean;
+  /** Signed up via public signup; cannot log in until an admin approves. */
+  isPending: boolean;
   mustChangePasscode: boolean;
 
   // Preferences

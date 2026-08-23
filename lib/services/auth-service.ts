@@ -24,6 +24,7 @@ import {
 } from '@/lib/validators/schemas';
 import type { IAuthService, SessionInfo } from '@/specs/001-role-you-are/contracts/auth-service';
 import { getDB, ensureBootstrapped } from '@/lib/db/database';
+import { resolveRegistrationMode } from '@/lib/services/registration-policy';
 import { hashPasscode, verifyPasscode, randomToken } from '@/lib/utils/crypto';
 import {
   NotAuthenticatedError,
@@ -73,6 +74,7 @@ function rowToClinician(row: Record<string, unknown> | ClinicianRow): Clinician 
     displayName: r.display_name as string,
     role: (r.role as ClinicianRole) ?? 'clinician',
     isActive: Boolean(r.is_active ?? 1),
+    isPending: Boolean(r.is_pending ?? 0),
     mustChangePasscode: Boolean(r.must_change_passcode ?? 0),
     preferences: parsePreferences((r.preferences as string) || '{}'),
     createdAt: new Date(r.created_at as number),
@@ -197,7 +199,7 @@ export class AuthService implements IAuthService {
     if (!rows.length) {
       return {
         sessionTimeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
-        allowPublicSignup: false,
+        allowPublicSignup: true,
         orgName: 'Camog',
         updatedAt: new Date(),
       };
@@ -237,21 +239,37 @@ export class AuthService implements IAuthService {
 
   async register(data: ClinicianRegister, inviteToken?: string): Promise<Clinician> {
     const validated = clinicianRegisterSchema.parse(data);
+    // Fresh install: the env bootstrap may still be inserting the first admin.
+    // Wait for it so the mode decision below sees the final user count.
+    await ensureBootstrapped();
+
     const settings = await this.getSettings();
+    const mode = resolveRegistrationMode({
+      userCount: await this.countUsers(),
+      allowPublicSignup: settings.allowPublicSignup,
+      inviteToken,
+    });
 
     let role: ClinicianRole = 'clinician';
     let mustChangePasscode = false;
+    // first-admin and invite accounts are usable immediately; public signups
+    // stay pending until an admin approves them (Settings → Users).
+    let isActive = true;
+    let isPending = false;
+    let invitation: Invitation | null = null;
 
-    if (!settings.allowPublicSignup) {
-      if (!inviteToken) {
-        throw new PermissionDeniedError('Sign up is invite-only. Provide an invite code.');
-      }
-      const invitation = await this.resolveInvitation(inviteToken);
+    if (mode === 'first-admin') {
+      role = 'admin';
+    } else if (mode === 'invite') {
+      invitation = await this.resolveInvitation(inviteToken!);
       if (invitation.acceptedAt) {
         throw new AlreadyExistsError('This invite code has already been used.');
       }
       role = invitation.role;
       mustChangePasscode = invitation.mustChangePasscode;
+    } else {
+      isActive = false;
+      isPending = true;
     }
 
     await this.assertUsernameAvailable(validated.username);
@@ -270,27 +288,32 @@ export class AuthService implements IAuthService {
     await db.execute(
       `INSERT INTO clinicians
          (id, username, passcode_hash, display_name, role, is_active,
-          must_change_passcode, preferences, created_at, last_login_at,
-          session_expires_at, passcode_changed_at)
-       VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $8, $9, NULL)`,
+          is_pending, must_change_passcode, preferences, created_at,
+          last_login_at, session_expires_at, passcode_changed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL)`,
       [
         id,
         validated.username,
         passcodeHash,
         validated.displayName,
         role,
+        isActive ? 1 : 0,
+        isPending ? 1 : 0,
         mustChangePasscode ? 1 : 0,
         preferencesJson,
         nowMs,
-        nowMs + settings.sessionTimeoutMs,
+        isActive ? nowMs : null, // last_login_at only once they can actually log in
+        isActive ? nowMs + settings.sessionTimeoutMs : null,
       ],
     );
 
-    if (inviteToken) {
-      await this.markInvitationAccepted(inviteToken, id);
+    if (invitation) {
+      await this.markInvitationAccepted(invitation.token, id);
     }
 
-    await this.startSession(id, settings.sessionTimeoutMs);
+    if (isActive) {
+      await this.startSession(id, settings.sessionTimeoutMs);
+    }
 
     const created = await this.getClinicianById(id);
     return created!;
@@ -316,12 +339,20 @@ export class AuthService implements IAuthService {
     if (!row) throw new InvalidCredentialsError('Invalid username or passcode');
 
     const clinicianRow = rowToClinicianWithHash(row);
+
+    // Verify the passcode before revealing any account state — pending or
+    // deactivated shouldn't be confirmable without knowing the credentials.
+    const ok = await verifyPasscode(validated.passcode, clinicianRow.passcodeHash);
+    if (!ok) throw new InvalidCredentialsError('Invalid username or passcode');
+
+    if (clinicianRow.isPending) {
+      throw new PermissionDeniedError(
+        'Your account is awaiting administrator approval.',
+      );
+    }
     if (!clinicianRow.isActive) {
       throw new InvalidCredentialsError('This account has been deactivated.');
     }
-
-    const ok = await verifyPasscode(validated.passcode, clinicianRow.passcodeHash);
-    if (!ok) throw new InvalidCredentialsError('Invalid username or passcode');
 
     const settings = await this.getSettings();
     const nowMs = Date.now();
@@ -432,7 +463,7 @@ export class AuthService implements IAuthService {
       await db.execute(`DELETE FROM ${table}`);
     }
     await db.execute(
-      "UPDATE settings SET allow_public_signup = 0, org_name = 'Camog', updated_at = $1 WHERE id = 'app'",
+      "UPDATE settings SET allow_public_signup = 1, org_name = 'Camog', updated_at = $1 WHERE id = 'app'",
       [Date.now()],
     );
   }
@@ -480,8 +511,10 @@ export class AuthService implements IAuthService {
       [id],
     );
     if (!rows.length) throw new NotFoundError(`User not found: ${id}`);
+    // Activating (approving) or deactivating both clear the pending flag:
+    // the admin has made a decision either way.
     await db.execute(
-      'UPDATE clinicians SET is_active = $1 WHERE id = $2',
+      'UPDATE clinicians SET is_active = $1, is_pending = 0 WHERE id = $2',
       [active ? 1 : 0, id],
     );
     return rowToClinician((await this.getClinicianRow(id))!);

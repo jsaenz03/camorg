@@ -32,6 +32,12 @@ pub fn run() {
       sql: include_str!("../migrations/004_storage.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 5,
+      description: "signup approval: pending accounts, public signup on",
+      sql: include_str!("../migrations/005_signup_approval.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory
