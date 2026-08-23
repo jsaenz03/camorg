@@ -81,6 +81,10 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
     let _ = request.respond(
       Response::from_string(PAGE_HTML).with_header(content_type("text/html; charset=utf-8")),
     );
+  } else if method == Method::Get && url == format!("{prefix}logo.png") {
+    let _ = request.respond(
+      Response::from_data(LOGO_PNG.to_vec()).with_header(content_type("image/png")),
+    );
   } else if method == Method::Get && url == format!("{prefix}hello") {
     // Phone page pings on load so the desktop knows pairing succeeded.
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: true });
@@ -175,40 +179,81 @@ pub async fn stop_remote_camera() {
   }
 }
 
-const PAGE_HTML: &str = r#"<!doctype html>
+// 256px copy of the app logo (public/logo.png) so the phone page carries the
+// brand mark without shipping the 1024px original over the LAN.
+const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
+
+const PAGE_HTML: &str = r##"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0a">
 <title>Camog &middot; Phone camera</title>
 <style>
-  :root { color-scheme: dark; }
+  /* Camog dark theme — mirrors app/globals.css .dark tokens. */
+  :root {
+    color-scheme: dark;
+    --bg: #0a0a0a;
+    --card: #171717;
+    --fg: #fafafa;
+    --muted: #a1a1aa;
+    --border: rgba(255, 255, 255, 0.1);
+    --primary: #00aeb5;    /* oklch(0.68 0.12 200) */
+    --primary-fg: #001011; /* oklch(0.16 0.02 200) */
+    --success: #4ade80;
+    --error: #f87171;
+    --radius: 10px;        /* 0.625rem */
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0; padding: 24px 16px; min-height: 100dvh;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    background: #0a0a0a; color: #fafafa;
+    background: radial-gradient(70% 40% at 50% 0, rgba(0, 174, 181, 0.08), transparent 70%) var(--bg);
+    color: var(--fg);
   }
+  header { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  header img {
+    width: 56px; height: 56px; padding: 6px;
+    border-radius: 14px; border: 1px solid var(--border);
+    background: var(--card); object-fit: contain;
+  }
+  .wordmark { font-size: 20px; font-weight: 600; line-height: 1.2; text-align: center; }
+  .tagline { font-size: 13px; color: var(--muted); text-align: center; }
   h1 { font-size: 20px; margin: 0; text-align: center; }
-  p { font-size: 15px; line-height: 1.5; color: #a3a3a3; margin: 0; text-align: center; max-width: 36ch; }
-  .emoji { font-size: 44px; line-height: 1; }
+  p { font-size: 15px; line-height: 1.5; color: var(--muted); margin: 0; text-align: center; max-width: 36ch; }
+  .check {
+    width: 64px; height: 64px; border-radius: 999px; color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 174, 181, 0.12);
+  }
+  .check svg { width: 30px; height: 30px; }
   .btn {
-    display: block; width: 100%; max-width: 340px; padding: 16px; border: 0; border-radius: 12px;
+    display: block; width: 100%; max-width: 340px; padding: 15px; border: 0; border-radius: var(--radius);
     font-size: 17px; font-weight: 600; text-align: center; cursor: pointer;
     -webkit-user-select: none; user-select: none;
   }
-  .btn:active { opacity: 0.8; }
-  .btn-primary { background: #fafafa; color: #0a0a0a; }
-  .btn-secondary { background: #262626; color: #fafafa; }
-  #preview { max-width: 100%; max-height: 50dvh; border-radius: 12px; object-fit: contain; }
-  #error { color: #f87171; white-space: pre-line; }
+  .btn:active { opacity: 0.85; }
+  .btn-primary { background: var(--primary); color: var(--primary-fg); }
+  .btn-secondary { background: #27272a; color: var(--fg); }
+  #screen-start, #screen-review, #screen-sent {
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+  }
+  #screen-start[hidden], #screen-review[hidden], #screen-sent[hidden] { display: none; }
+  #preview { max-width: 100%; max-height: 50dvh; border-radius: 12px; object-fit: contain; border: 1px solid var(--border); }
+  #error { color: var(--error); white-space: pre-line; }
 </style>
 </head>
 <body>
+  <header>
+    <img src="logo.png" alt="Camog">
+    <div>
+      <div class="wordmark">Camog</div>
+      <div class="tagline">Clinical Photos</div>
+    </div>
+  </header>
   <div id="screen-start">
-    <div class="emoji">&#128248;</div>
-    <h1>Camog phone camera</h1>
     <p id="conn">Connecting to Camog&hellip;</p>
     <label class="btn btn-primary" for="photo">Take photo</label>
     <input id="photo" type="file" accept="image/*" capture="environment" hidden>
@@ -220,7 +265,9 @@ const PAGE_HTML: &str = r#"<!doctype html>
     <button type="button" class="btn btn-secondary" id="retake">Retake</button>
   </div>
   <div id="screen-sent" hidden>
-    <div class="emoji">&#9989;</div>
+    <div class="check" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    </div>
     <h1>Photo sent</h1>
     <p>Check Camog on your computer to add details and save it.</p>
     <button type="button" class="btn btn-primary" id="another">Take another photo</button>
@@ -314,4 +361,20 @@ const PAGE_HTML: &str = r#"<!doctype html>
 </script>
 </body>
 </html>
-"#;
+"##;
+
+#[cfg(test)]
+mod tests {
+  use super::PAGE_HTML;
+
+  // Guards the branded phone page: the logo route, wordmark, theme tokens,
+  // and the [hidden] override that keeps flex screens toggleable.
+  #[test]
+  fn phone_page_carries_branding() {
+    assert!(PAGE_HTML.contains(r#"src="logo.png""#));
+    assert!(PAGE_HTML.contains(">Clinical Photos<"));
+    assert!(PAGE_HTML.contains("--primary: #00aeb5"));
+    assert!(PAGE_HTML.contains("[hidden] { display: none; }"));
+    assert!(PAGE_HTML.trim_end().ends_with("</html>"));
+  }
+}
