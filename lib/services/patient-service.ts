@@ -14,7 +14,7 @@ import { patientCreateSchema, patientUpdateSchema } from '@/lib/validators/schem
 import { getDB } from '@/lib/db/database';
 import { accessService } from '@/lib/services/access-service';
 import { NotFoundError } from '@/lib/validators/errors';
-import { dobToMs, parseDobSearchTerm } from '@/lib/utils/date-formatting';
+import { dobFromMs, dobToMs, parseDobInput } from '@/lib/utils/date-formatting';
 
 // Column list used everywhere we SELECT patients, so the row mapper always
 // gets every field it expects. Aliased as `p` so the access filter's correlated
@@ -32,7 +32,7 @@ function rowToPatient(row: Record<string, unknown>): Patient {
     id: row.id as string,
     name: row.name as string,
     normalizedName: row.normalized_name as string,
-    dateOfBirth: row.dob != null ? new Date(row.dob as number) : null,
+    dateOfBirth: row.dob != null ? dobFromMs(row.dob as number) : null,
     photoCount: row.photo_count as number,
     deletedPhotoCount: row.deleted_photo_count as number,
     createdAt: new Date(row.created_at as number),
@@ -132,9 +132,10 @@ export class PatientService implements IPatientService {
   ): Promise<Patient[]> {
     const { includeArchived = false } = options;
     const normalizedSearch = searchTerm.trim().toLowerCase();
-    // A term that parses as a calendar date (yyyy-MM-dd or d/M/yyyy) also
-    // matches date of birth; otherwise it is a plain name search.
-    const dobTerm = parseDobSearchTerm(searchTerm);
+    // A term that parses as a calendar date (e.g. 4/2/85, 04/02/1985,
+    // 1985-02-04) also matches date of birth; otherwise it is a plain name
+    // search.
+    const dobTerm = parseDobInput(searchTerm);
     const dobMs = dobTerm ? dobToMs(dobTerm) : null;
 
     // Binds before the access filter, so the filter must start after them.

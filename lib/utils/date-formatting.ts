@@ -4,7 +4,7 @@
  * Provides consistent date formatting across the application.
  */
 
-import { format, formatDistanceToNow, isValid, parse } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 
 /**
  * Formats a capture date for display in photo cards and timelines
@@ -57,30 +57,65 @@ export function formatDateOfBirth(date: Date | null): string | null {
 
 /**
  * Normalises a date of birth to unix ms at UTC midnight of its calendar date,
- * the canonical storage form of the patients.dob column. Both entry (calendar
- * picker, local midnight) and search parsing funnel through here so equality
+ * the canonical storage form of the patients.dob column. Both entry (manual
+ * text, calendar picker) and search parsing funnel through here so equality
  * matching survives timezone shifts.
- * ponytail: matches whole days only; partial-date search (month/year) would
- * need a range query in patient-service.
+ * ponytail: matches whole days only; partial-date search (month/year alone)
+ * would need a range query in patient-service.
  */
 export function dobToMs(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
 /**
- * Parses a patient-search term as a date of birth. Accepts ISO (yyyy-MM-dd)
- * and Australian (d/M/yyyy) formats; returns null when the term is not a
- * well-formed, real calendar date (e.g. 31/02/1990).
+ * Rebuilds a local-midnight Date from a stored dob value so the calendar date
+ * survives display in any timezone (a bare new Date(ms) shifts a day in zones
+ * behind UTC, which would then fail to match its own stored value on search).
  */
-export function parseDobSearchTerm(term: string): Date | null {
-  const t = term.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
-    const d = parse(t, 'yyyy-MM-dd', new Date());
-    return isValid(d) ? d : null;
+export function dobFromMs(ms: number): Date {
+  const utc = new Date(ms);
+  return new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
+}
+
+/**
+ * Expands a two-digit year to the most plausible four-digit one: 69–99 →
+ * 1900s, 00–68 → 2000s (POSIX strptime pivot), then pulled back a century
+ * when it would land in the future — a date of birth can't be.
+ */
+function expandTwoDigitYear(twoDigits: number): number {
+  const year = twoDigits > 68 ? 1900 + twoDigits : 2000 + twoDigits;
+  return year > new Date().getFullYear() ? year - 100 : year;
+}
+
+function buildDob(year: number, month: number, day: number): Date | null {
+  const d = new Date(year, month - 1, day);
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
+    return null; // rolled over (e.g. 31/02/1990) or out of range
   }
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(t)) {
-    const d = parse(t, 'd/M/yyyy', new Date());
-    return isValid(d) ? d : null;
+  if (d.getTime() > Date.now()) return null; // not born yet
+  if (d.getTime() < new Date(1900, 0, 1).getTime()) return null;
+  return d;
+}
+
+/**
+ * Parses a date of birth typed by a user, in a search box or a manual entry
+ * field. Accepts Australian day-first dates with `/`, `-` or `.` separators
+ * and two- or four-digit years (4/2/85 → 4 Feb 1985), plus year-first ISO
+ * (1985-02-04). Returns null when the text is not a real, plausible date of
+ * birth.
+ */
+export function parseDobInput(input: string): Date | null {
+  const t = input.trim().replace(/[.\-]/g, '/');
+  if (!t) return null;
+
+  let m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(t);
+  if (m) return buildDob(+m[1], +m[2], +m[3]);
+
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(t);
+  if (m) {
+    const rawYear = m[3];
+    const year = rawYear.length === 2 ? expandTwoDigitYear(+rawYear) : +rawYear;
+    return buildDob(year, +m[2], +m[1]);
   }
   return null;
 }

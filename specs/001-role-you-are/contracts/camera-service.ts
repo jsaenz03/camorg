@@ -92,6 +92,17 @@ export interface ICameraService {
   ): Promise<MediaStream>;
 
   /**
+   * Lists available video input devices
+   *
+   * @returns Promise resolving to videoinput MediaDeviceInfo records
+   *
+   * Note: Labels are only populated once camera permission has been
+   * granted. Used to let the user pick a specific camera — e.g. a phone
+   * tethered as a USB webcam (Continuity Camera, Camo, Iriun).
+   */
+  listCameras(): Promise<MediaDeviceInfo[]>;
+
+  /**
    * Stops the active camera stream and releases hardware
    *
    * @param stream - MediaStream to stop

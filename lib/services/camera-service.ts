@@ -141,6 +141,16 @@ export class CameraService implements ICameraService {
   }
 
   /**
+   * Lists available video input devices (e.g. built-in webcam, USB phone
+   * webcams such as Continuity Camera / Camo / Iriun). Labels are only
+   * populated once camera permission has been granted.
+   */
+  async listCameras(): Promise<MediaDeviceInfo[]> {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter((d) => d.kind === 'videoinput');
+  }
+
+  /**
    * Stops the active camera stream and releases hardware
    */
   stopCamera(stream: MediaStream): void {

@@ -88,9 +88,12 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild tooltip="Camog">
               <Link href="/">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                  <Aperture className="size-5" />
-                </div>
+                {/* eslint-disable-next-line @next/next/no-img-element -- static export; brand mark */}
+                <img
+                  src="/logo.png"
+                  alt="Camog"
+                  className="aspect-square size-8 rounded-lg object-contain"
+                />
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold">Camog</span>
                   <span className="truncate text-xs text-muted-foreground">

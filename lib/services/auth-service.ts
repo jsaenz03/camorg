@@ -100,6 +100,30 @@ function rowToClinicianWithHash(row: Record<string, unknown>): ClinicianRow {
   };
 }
 
+/**
+ * Maps an already-mapped ClinicianRow back to the public Clinician shape.
+ * Passing a ClinicianRow through rowToClinician instead would feed
+ * parsePreferences an object (its JSON.parse throws) and silently fall back
+ * to default preferences — the bug that made saved settings toggles never
+ * appear to change.
+ */
+function clinicianRowToPublic(row: ClinicianRow): Clinician {
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.displayName,
+    role: row.role,
+    isActive: row.isActive,
+    isPending: row.isPending,
+    mustChangePasscode: row.mustChangePasscode,
+    preferences: parsePreferences(row.preferencesJson),
+    createdAt: row.createdAt,
+    lastLoginAt: row.lastLoginAt,
+    passcodeChangedAt: row.passcodeChangedAt,
+    sessionExpiresAt: row.sessionExpiresAt,
+  };
+}
+
 function rowToInvitation(row: Record<string, unknown>): Invitation {
   return {
     id: row.id as string,
@@ -470,23 +494,24 @@ export class AuthService implements IAuthService {
 
   async getCurrentClinician(): Promise<Clinician> {
     const row = await this.requireCurrentRow();
-    // rowToClinician reads only known columns; hash/json are ignored.
-    return rowToClinician(row);
+    return clinicianRowToPublic(row);
   }
 
   async updatePreferences(
     preferences: Partial<Clinician['preferences']>,
   ): Promise<Clinician> {
     const row = await this.requireCurrentRow();
-    const current = rowToClinician(row);
-    const next = { ...current.preferences, ...preferences };
-    const json = JSON.stringify(next);
+    // Merge over the stored JSON so sibling preferences survive each save.
+    const next = { ...parsePreferences(row.preferencesJson), ...preferences };
     const db = await getDB();
-    await db.execute(
+    const result = await db.execute(
       'UPDATE clinicians SET preferences = $1 WHERE id = $2',
-      [json, row.id],
+      [JSON.stringify(next), row.id],
     );
-    return { ...current, preferences: next };
+    if (result.rowsAffected === 0) {
+      throw new Error('Failed to save preference: clinician row not found');
+    }
+    return { ...clinicianRowToPublic(row), preferences: next };
   }
 
   // ---------- user administration (admin) ----------

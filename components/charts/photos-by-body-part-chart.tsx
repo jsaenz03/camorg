@@ -81,7 +81,7 @@ export function PhotosByBodyPartChart({ photos }: PhotosByBodyPartChartProps) {
             />
           </div>
         ) : (
-          <ChartContainer config={config} className="mx-auto h-[220px]">
+          <ChartContainer config={config} className="h-[220px] w-full">
             <PieChart>
               <ChartTooltip content={<ChartTooltipContent nameKey="bodyPart" hideLabel />} />
               <Pie

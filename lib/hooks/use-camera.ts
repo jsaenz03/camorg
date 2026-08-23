@@ -16,7 +16,7 @@ interface UseCameraReturn {
   error: Error | null;
   permission: CameraPermissionState;
   isLoading: boolean;
-  start: (facingMode?: CameraFacingMode) => Promise<void>;
+  start: (facingMode?: CameraFacingMode, constraints?: MediaStreamConstraints) => Promise<void>;
   stop: () => void;
   switchCamera: (newFacingMode: CameraFacingMode) => Promise<void>;
 }
@@ -47,15 +47,16 @@ export function useCamera(): UseCameraReturn {
   /**
    * Starts the camera
    */
-  const start = useCallback(async (facingMode: CameraFacingMode = 'environment') => {
-    setIsLoading(true);
-    setError(null);
+  const start = useCallback(
+    async (facingMode: CameraFacingMode = 'environment', constraints?: MediaStreamConstraints) => {
+      setIsLoading(true);
+      setError(null);
 
-    try {
-      const mediaStream = await cameraService.startCamera(facingMode);
-      setStream(mediaStream);
-      setPermission('granted');
-    } catch (err) {
+      try {
+        const mediaStream = await cameraService.startCamera(facingMode, constraints);
+        setStream(mediaStream);
+        setPermission('granted');
+      } catch (err) {
       const error = err as Error;
       setError(error);
 

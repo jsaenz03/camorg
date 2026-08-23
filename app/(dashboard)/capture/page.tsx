@@ -19,6 +19,7 @@ import { PageHeader } from '@/components/page-header';
 import type { CapturedPhoto } from '@/specs/001-role-you-are/contracts/camera-service';
 import { photoService } from '@/lib/services/photo-service';
 import { patientService } from '@/lib/services/patient-service';
+import { parseDobInput } from '@/lib/utils/date-formatting';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -61,7 +62,7 @@ function CaptureView() {
       } else {
         const newPatient = await patientService.createPatient({
           name: formData.patientName,
-          dateOfBirth: formData.patientDob ?? null,
+          dateOfBirth: parseDobInput(formData.patientDob),
         });
         patientId = newPatient.id;
         toast.info(`Created new patient: ${formData.patientName}`);

@@ -22,8 +22,9 @@ npm install
 npm run desktop
 ```
 
-This runs `next dev --turbopack` and launches the Tauri window pointing at
-`http://localhost:3000`. Camera requires `localhost` or HTTPS — the dev server
+This runs `next dev --turbopack` (port 3434, so it can't collide with another
+local Next app on 3000) and launches the Tauri window pointing at
+`http://localhost:3434`. Camera requires `localhost` or HTTPS — the dev server
 on `localhost` satisfies this.
 
 > Browser-only iteration (no Rust rebuild): `npm run dev`. Note that storage

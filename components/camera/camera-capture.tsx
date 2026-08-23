@@ -7,7 +7,7 @@
 
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { Aperture, Camera, Smartphone, SwitchCamera, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCamera } from '@/lib/hooks/use-camera';
@@ -16,6 +16,30 @@ import { cameraService } from '@/lib/services/camera-service';
 import { PhoneCameraPanel } from '@/components/camera/phone-camera-panel';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
+// Persisted camera choice (deviceId). Empty/unset means "default (auto)".
+const CAMERA_DEVICE_PREF = 'camog:camera-device-id';
+
+function constraintsFor(deviceId: string): MediaStreamConstraints | undefined {
+  if (!deviceId) {
+    return undefined;
+  }
+  return {
+    video: {
+      deviceId: { exact: deviceId },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+    },
+    audio: false,
+  };
+}
 
 interface CameraCaptureProps {
   onPhotoCaptured: (photo: CapturedPhoto) => void;
@@ -31,15 +55,61 @@ export function CameraCapture({
   const [currentFacingMode, setCurrentFacingMode] = useState<CameraFacingMode>(initialFacingMode);
   const [isCapturing, setIsCapturing] = useState(false);
   const [phoneMode, setPhoneMode] = useState(false);
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [deviceId, setDeviceId] = useState('');
 
   /**
-   * Start camera on mount
+   * Start camera on mount, honouring a previously chosen camera (e.g. a
+   * phone tethered as a USB webcam).
    */
   useEffect(() => {
-    start(initialFacingMode);
+    const stored = window.localStorage.getItem(CAMERA_DEVICE_PREF) ?? '';
+    setDeviceId(stored);
+    start(initialFacingMode, constraintsFor(stored));
     return () => stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * List cameras once permission is granted (labels need it), and refresh
+   * when devices are plugged/unplugged (e.g. tethering a phone by USB).
+   */
+  const refreshCameras = useCallback(async () => {
+    try {
+      setCameras(await cameraService.listCameras());
+    } catch {
+      // enumerateDevices unavailable — picker just stays hidden
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!stream) {
+      return;
+    }
+    void refreshCameras();
+    navigator.mediaDevices.addEventListener('devicechange', refreshCameras);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', refreshCameras);
+  }, [stream, refreshCameras]);
+
+  /**
+   * Handle explicit camera selection; falls back to the default camera if
+   * the chosen device can no longer be opened.
+   */
+  const handleCameraChange = async (value: string) => {
+    const nextDeviceId = value === 'default' ? '' : value;
+    setDeviceId(nextDeviceId);
+    window.localStorage.setItem(CAMERA_DEVICE_PREF, nextDeviceId);
+    stop();
+    try {
+      await start(currentFacingMode, constraintsFor(nextDeviceId));
+    } catch (error) {
+      console.error('Failed to open selected camera:', error);
+      toast.error('Could not open that camera. Falling back to the default camera.');
+      setDeviceId('');
+      window.localStorage.removeItem(CAMERA_DEVICE_PREF);
+      await start(currentFacingMode);
+    }
+  };
 
   /**
    * Attach stream to video element when available
@@ -104,7 +174,7 @@ export function CameraCapture({
 
   const handleUseBuiltInCamera = () => {
     setPhoneMode(false);
-    start(currentFacingMode);
+    start(currentFacingMode, constraintsFor(deviceId));
   };
 
   /**
@@ -223,6 +293,34 @@ export function CameraCapture({
           </Button>
         )}
       </div>
+
+      {/* Camera picker — appears once there is a real choice (e.g. a phone
+          tethered as a USB webcam shows up here) or a saved selection */}
+      {(cameras.length > 1 || deviceId) && (
+        <div className="px-4 pt-4 flex items-center gap-3">
+          <span className="text-sm text-muted-foreground whitespace-nowrap">Camera</span>
+          <Select
+            value={deviceId || 'default'}
+            onValueChange={handleCameraChange}
+            disabled={!stream || isCapturing}
+          >
+            <SelectTrigger className="w-full" aria-label="Camera device">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">Default (auto)</SelectItem>
+              {cameras.map((camera, index) => (
+                <SelectItem
+                  key={camera.deviceId || `camera-${index}`}
+                  value={camera.deviceId || `camera-${index}`}
+                >
+                  {camera.label || `Camera ${index + 1}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {/* Controls */}
       <div className="p-4 flex justify-center gap-4">

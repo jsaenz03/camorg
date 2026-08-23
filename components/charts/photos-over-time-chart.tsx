@@ -75,32 +75,38 @@ export function PhotosOverTimeChart({ photos }: PhotosOverTimeChartProps) {
 
   return (
     <Card className="flex flex-col">
-      <CardHeader className="flex flex-row items-start justify-between gap-2">
-        <div>
-          <CardTitle className="text-base">Photos captured</CardTitle>
-          <CardDescription>Daily capture activity</CardDescription>
-        </div>
-        <ToggleGroup
-          type="single"
-          value={range}
-          onValueChange={(v) => v && setRange(v)}
-          size="sm"
-          variant="outline"
-        >
-          {RANGE_OPTIONS.map((o) => (
-            <ToggleGroupItem key={o.value} value={o.value}>
-              {o.value}d
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
+      <CardHeader>
+        <CardTitle className="text-base">Photos captured</CardTitle>
+        <CardDescription>Daily capture activity</CardDescription>
       </CardHeader>
-      <CardContent className="flex-1">
+      <CardContent className="relative flex-1">
+        {/* Range toggle floats over the chart's empty top-right so this
+            card's header stays identical to its row siblings — an inline
+            header control made the header taller and pushed the chart out
+            of alignment with the other two cards. */}
+        {!isEmpty && (
+          <div className="absolute right-0 top-0 z-10">
+            <ToggleGroup
+              type="single"
+              value={range}
+              onValueChange={(v) => v && setRange(v)}
+              size="sm"
+              variant="outline"
+            >
+              {RANGE_OPTIONS.map((o) => (
+                <ToggleGroupItem key={o.value} value={o.value}>
+                  {o.value}d
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+        )}
         {isEmpty ? (
           <div className="flex h-[220px] items-center justify-center">
             <EmptyState
               icon={Images}
               title="No captures in this range"
-              description="Photos captured in the last {days} days will chart here."
+              description={`Photos captured in the last ${days} days will chart here.`}
             />
           </div>
         ) : (

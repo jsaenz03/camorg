@@ -15,21 +15,21 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
-import { ArrowLeft, AlertCircle, CalendarIcon, Camera, Globe, Loader2, Lock, Pencil } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Camera, Globe, Loader2, Lock, Pencil } from 'lucide-react';
 import Link from 'next/link';
 import type { Patient } from '@/types/patient';
 import type { PhotoRecord } from '@/types/photo';
 import { PhotoTimeline } from '@/components/photo/photo-timeline';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
+import { PhotoUpload } from '@/components/photo/photo-upload';
 import { EmptyState } from '@/components/empty-state';
 import { PageHeader } from '@/components/page-header';
 import { usePhotos } from '@/lib/hooks/use-photos';
 import { patientService } from '@/lib/services/patient-service';
-import { formatDateOfBirth } from '@/lib/utils/date-formatting';
-import { cn } from '@/lib/utils';
+import { formatDateOfBirth, parseDobInput } from '@/lib/utils/date-formatting';
+import { DobInput } from '@/components/patient/dob-input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Calendar } from '@/components/ui/calendar';
 import {
   Dialog,
   DialogContent,
@@ -41,13 +41,13 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 
@@ -123,6 +123,17 @@ function PatientTimelineView() {
     }
   }, [refresh, patientId]);
 
+  /** Uploaded photos go through the same save path as captured ones. */
+  const handleUploadSaved = useCallback(() => {
+    refresh();
+    if (patientId) {
+      patientService
+        .getPatientById(patientId)
+        .then(setPatient)
+        .catch(() => {});
+    }
+  }, [refresh, patientId]);
+
   if (isLoadingPatient || isLoadingPhotos) {
     return (
       <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
@@ -186,6 +197,7 @@ function PatientTimelineView() {
               <Pencil className="size-4" />
               Edit details
             </Button>
+            <PhotoUpload patient={patient} onSaved={handleUploadSaved} />
             <Button asChild>
               <Link href={`/capture?patient=${encodeURIComponent(patient.name)}`}>
                 <Camera className="size-4" />
@@ -244,16 +256,18 @@ const editPatientSchema = z.object({
     .max(100, 'Patient name must be 100 characters or less')
     .trim(),
   dateOfBirth: z
-    .date()
-    .nullable()
-    .refine((d) => !d || d.getTime() <= Date.now(), 'Date of birth cannot be in the future'),
+    .string()
+    .refine(
+      (v) => !v.trim() || parseDobInput(v) !== null,
+      'Enter a valid date, e.g. 4/2/85 or 04/02/1985',
+    ),
 });
 
 type EditPatientValues = z.infer<typeof editPatientSchema>;
 
 /**
  * Small dialog to edit a patient's name and optional date of birth.
- * Clearing the DOB picker saves null (date not recorded).
+ * Emptying the date of birth field saves null (date not recorded).
  */
 function EditPatientDialog({
   patient,
@@ -271,7 +285,7 @@ function EditPatientDialog({
     resolver: zodResolver(editPatientSchema),
     defaultValues: {
       name: patient.name,
-      dateOfBirth: patient.dateOfBirth,
+      dateOfBirth: patient.dateOfBirth ? format(patient.dateOfBirth, 'dd/MM/yyyy') : '',
     },
   });
 
@@ -280,7 +294,7 @@ function EditPatientDialog({
     try {
       const updated = await patientService.updatePatient(patient.id, {
         name: values.name,
-        dateOfBirth: values.dateOfBirth,
+        dateOfBirth: parseDobInput(values.dateOfBirth),
       });
       toast.success('Patient details updated');
       onSaved(updated);
@@ -328,45 +342,19 @@ function EditPatientDialog({
               control={form.control}
               name="dateOfBirth"
               render={({ field }) => (
-                <FormItem className="flex flex-col">
+                <FormItem>
                   <FormLabel>Date of birth</FormLabel>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <FormControl>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          role="combobox"
-                          disabled={isSaving}
-                          className={cn(
-                            'w-full justify-between text-left font-normal',
-                            !field.value && 'text-muted-foreground',
-                          )}
-                        >
-                          {field.value ? format(field.value, 'd MMM yyyy') : 'Not recorded'}
-                          <CalendarIcon className="size-4 opacity-50" />
-                        </Button>
-                      </FormControl>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={field.value ?? undefined}
-                        onSelect={(d) => field.onChange(d ?? null)}
-                        disabled={(date) => date > new Date() || date < new Date('1900-01-01')}
-                      />
-                      <div className="flex justify-end border-t p-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => field.onChange(null)}
-                        >
-                          Clear
-                        </Button>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
+                  <FormControl>
+                    <DobInput
+                      value={field.value}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      disabled={isSaving}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Optional — type it (e.g. 4/2/85) or use the calendar. Leave blank for none.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
