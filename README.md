@@ -89,6 +89,12 @@ hooks are agnostic to the storage backend.
 
 ## Licensing
 
+**This is not open-source software.** The source is publicly visible for
+transparency — so practices and their IT teams can verify that patient data
+stays local — but all rights are reserved (see `LICENSE`). Use, building,
+and redistribution require a commercial licence from the copyright holder.
+Compiling the source yourself does not grant one.
+
 Camog uses offline, per-install licences (see
 `specs/002-offline-licence/spec.md`). No server, no phone-home.
 

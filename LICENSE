@@ -1,0 +1,33 @@
+Camog — Source Availability Licence
+Copyright © 2026 Camog. All rights reserved.
+
+This repository makes the Camog source code publicly visible so that
+customers and their IT/security teams can review exactly what the software
+does — in particular, that patient data stays on the practice's own
+machines. Visibility is not a licence to use the software.
+
+1. No permission is granted. Unless you have a separate written licence
+   agreement with the copyright holder, you may NOT use, build, copy,
+   modify, merge, distribute, sublicense, sell, or offer the software (in
+   whole or in part) for any purpose, commercial or otherwise. Viewing and
+   reading the source is permitted; everything else is reserved.
+
+2. Runtime licensing still applies. The software enforces per-practice
+   licences signed with the vendor's private Ed25519 key. Compiling this
+   source yourself does not grant a licence, waive the trial, or entitle
+   you to keys, updates, or support.
+
+3. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+   KIND, EXPRESS OR IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE
+   LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF,
+   OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+4. Trademarks. "Camog", the Camog logo, and product names are reserved.
+   Builds of this source may not be distributed under those marks.
+
+For commercial licensing, contact the copyright holder.
+
+---
+For the avoidance of doubt: this is not an open-source licence. If a
+genuine open-source licence is ever adopted for this project, it will be
+stated here explicitly and unambiguously.
