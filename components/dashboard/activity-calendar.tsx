@@ -18,11 +18,11 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import type { PhotoWithPatient } from '@/lib/hooks/use-all-photos';
+import type { PhotoSummary } from '@/lib/services/photo-service';
 import { cn } from '@/lib/utils';
 
 interface ActivityCalendarProps {
-  photos: PhotoWithPatient[];
+  photos: PhotoSummary[];
   selectedDate?: Date | null;
   onSelectDate?: (date: Date | null) => void;
 }

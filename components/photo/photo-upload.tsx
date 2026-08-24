@@ -31,8 +31,10 @@ interface PhotoUploadProps {
   onSaved: () => void;
 }
 
-// Mirrors photoRecordCreateSchema's mime union.
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/heic', 'image/webp'];
+// Mirrors photoRecordCreateSchema's mime union minus HEIC: WebView2's canvas
+// decoder can't reliably decode HEIC, so accepting it here produced files that
+// fail at thumbnail time. HEIC remains valid at the schema level for captures.
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
@@ -94,7 +96,7 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
     }
 
     if (rejected.length > 0) {
-      toast.error(`Skipped ${rejected.join(', ')} — use JPEG, PNG, WebP or HEIC up to 20MB.`);
+      toast.error(`Skipped ${rejected.join(', ')} — use JPEG, PNG or WebP up to 20MB.`);
     }
     if (valid.length === 0) {
       return;
@@ -145,12 +147,26 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
     }
   };
 
-  const handleCancel = () => {
+  /**
+   * Discard the remaining queue. `accidental` marks the dialog-dismissal path
+   * (outside click / Escape), which always confirms; the explicit Cancel
+   * button confirms only when a batch would be lost. The source files stay on
+   * disk either way — the lost work is the entered metadata.
+   */
+  const handleCancel = (accidental = false) => {
     const remaining = queue.length - index;
+    if (remaining <= 0) return;
+    const message =
+      remaining > 1
+        ? `Discard ${remaining} photos still waiting to be added?`
+        : 'Discard this photo?';
+    if ((accidental || remaining > 1) && !window.confirm(message)) {
+      return;
+    }
     setQueue([]);
     setIndex(0);
     if (remaining > 1) {
-      toast.info(`Upload cancelled — ${remaining - 1} remaining photo(s) discarded`);
+      toast.info(`Upload cancelled — ${remaining} photo(s) discarded`);
     }
   };
 
@@ -184,7 +200,7 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={(open) => !open && !isSaving && handleCancel()}>
+      <Dialog open={dialogOpen} onOpenChange={(open) => !open && !isSaving && handleCancel(true)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
@@ -199,8 +215,9 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
 
           <PhotoMetadataForm
             onSubmit={handleFormSubmit}
-            onCancel={handleCancel}
+            onCancel={() => handleCancel(false)}
             isSubmitting={isSaving}
+            patientLocked
             defaultValues={{
               patientName: patient.name,
               patientDob: patient.dateOfBirth ? format(patient.dateOfBirth, 'dd/MM/yyyy') : '',

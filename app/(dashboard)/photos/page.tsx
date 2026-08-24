@@ -17,7 +17,7 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { BODY_PARTS, BodyPartLabels } from '@/types/body-part';
 import type { BodyPart } from '@/types/body-part';
 import type { PhotoRecord } from '@/types/photo';
-import { isSameDay } from 'date-fns';
+import { startOfDay, endOfDay } from 'date-fns';
 import { PageHeader } from '@/components/page-header';
 import { EmptyState } from '@/components/empty-state';
 import { PhotoBento } from '@/components/photo/photo-bento';
@@ -43,22 +43,30 @@ export default function PhotosPage() {
   const [activePhoto, setActivePhoto] = useState<PhotoRecord | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  // Load once (broad), then filter client-side so switching filters is instant.
-  // The "Show deleted photos" preference reveals soft-deleted captures here.
-  const { photos, isLoading, refresh } = useAllPhotos({
-    limit: 500,
+  // Filters run server-side (SQL) with the access scope, so the grid shows
+  // the true filtered set instead of a client-side subset of the newest 500.
+  const dayFilter = useMemo(() => {
+    if (!selectedDate) return {};
+    const from = startOfDay(selectedDate);
+    const to = endOfDay(selectedDate);
+    return { from, to };
+  }, [selectedDate]);
+
+  const {
+    photos,
+    total,
+    hasMore,
+    isLoading,
+    error,
+    loadMore,
+    refresh,
+  } = useAllPhotos({
+    ...dayFilter,
+    bodyPart: bodyPart === 'all' ? undefined : bodyPart,
+    patientId: patientId === 'all' ? undefined : patientId,
     includeDeleted: clinician?.preferences.showDeletedPhotos ?? false,
   });
-  const { patients } = usePatients({ includeArchived: false });
-
-  const filtered = useMemo(() => {
-    return photos.filter((photo) => {
-      if (selectedDate && !isSameDay(photo.capturedAt, selectedDate)) return false;
-      if (bodyPart !== 'all' && photo.bodyPart !== bodyPart) return false;
-      if (patientId !== 'all' && photo.patientId !== patientId) return false;
-      return true;
-    });
-  }, [photos, selectedDate, bodyPart, patientId]);
+  const { patients } = usePatients({ includeArchived: true });
 
   const hasFilters =
     selectedDate !== undefined || bodyPart !== 'all' || patientId !== 'all';
@@ -179,7 +187,8 @@ export default function PhotosPage() {
         <section>
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              {filtered.length} {filtered.length === 1 ? 'photo' : 'photos'}
+              {total} {total === 1 ? 'photo' : 'photos'}
+              {hasMore && ` · showing ${photos.length}`}
             </p>
           </div>
 
@@ -192,7 +201,18 @@ export default function PhotosPage() {
                 />
               ))}
             </div>
-          ) : filtered.length === 0 ? (
+          ) : error ? (
+            <EmptyState
+              icon={Images}
+              title="Couldn’t load photos"
+              description={error.message}
+              action={
+                <Button variant="outline" onClick={() => void refresh()}>
+                  Try again
+                </Button>
+              }
+            />
+          ) : photos.length === 0 ? (
             <EmptyState
               icon={hasFilters ? FilterX : Images}
               title={hasFilters ? 'No photos match' : 'No photos yet'}
@@ -217,7 +237,16 @@ export default function PhotosPage() {
               }
             />
           ) : (
-            <PhotoBento photos={filtered} onPhotoClick={handlePhotoClick} />
+            <>
+              <PhotoBento photos={photos} onPhotoClick={handlePhotoClick} />
+              {hasMore && (
+                <div className="mt-6 flex justify-center">
+                  <Button variant="outline" onClick={loadMore} disabled={isLoading}>
+                    Load more ({total - photos.length} remaining)
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>

@@ -98,6 +98,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('focus', onFocus);
   }, [refresh]);
 
+  // A desktop window that stays focused never refires `focus`, so actual
+  // input must also keep the session alive — otherwise a clinician capturing
+  // past the timeout is signed out mid-work. Real input (not mere focus)
+  // extends the session, throttled to once per minute; an untouched window
+  // lets the auto-logout lapse exactly as configured.
+  useEffect(() => {
+    let lastExtension = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastExtension < 60_000) return;
+      lastExtension = now;
+      void authService.refreshSession().catch(() => {});
+    };
+    for (const evt of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+      window.addEventListener(evt, onActivity, { passive: true });
+    }
+    return () => {
+      for (const evt of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+        window.removeEventListener(evt, onActivity);
+      }
+    };
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({ session, clinician, loading, refresh, clear }),
     [session, clinician, loading, refresh, clear],

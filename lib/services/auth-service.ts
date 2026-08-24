@@ -217,14 +217,13 @@ function writeSession(session: StoredSession | null): void {
 
 interface RememberedLogin {
   username: string;
-  passcode: string;
 }
 
 /**
- * SECURITY: this stores the passcode client-side by design — the user
- * explicitly opted in so the login form prefills. Within this app's
- * local-device threat model (unencrypted DB at rest, desktop login as the
- * boundary) it unlocks nothing the device itself doesn't already expose.
+ * Stores the username only. An earlier revision also stored the passcode;
+ * that shape is still read (username kept, passcode ignored) but is never
+ * written again — a readable localStorage must not yield a working
+ * credential for an app holding patient photos.
  */
 function readRememberedLogin(): RememberedLogin | null {
   if (typeof window === 'undefined') return null;
@@ -232,10 +231,10 @@ function readRememberedLogin(): RememberedLogin | null {
     const raw = localStorage.getItem(REMEMBERED_LOGIN_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<RememberedLogin>;
-    if (typeof parsed?.username !== 'string' || typeof parsed?.passcode !== 'string') {
+    if (typeof parsed?.username !== 'string') {
       return null;
     }
-    return { username: parsed.username, passcode: parsed.passcode };
+    return { username: parsed.username };
   } catch {
     return null;
   }
@@ -251,14 +250,10 @@ function clearRememberedLogin(): void {
   localStorage.removeItem(REMEMBERED_LOGIN_KEY);
 }
 
-/** Drop remembered details that no longer authenticate (e.g. passcode changed). */
+/** Drop remembered details that no longer authenticate (e.g. account gone). */
 function clearStaleRememberedLogin(attempted: ClinicianLogin): void {
   const remembered = readRememberedLogin();
-  if (
-    remembered &&
-    remembered.username === attempted.username &&
-    remembered.passcode === attempted.passcode
-  ) {
+  if (remembered && remembered.username === attempted.username) {
     clearRememberedLogin();
   }
 }
@@ -268,6 +263,25 @@ function clearStaleRememberedLogin(attempted: ClinicianLogin): void {
 // ============================================================
 
 export class AuthService implements IAuthService {
+  /**
+   * Brute-force damper: after MAX_FAILED_LOGINS consecutive failures, further
+   * attempts are refused for a short cooldown. In-memory (per webview
+   * process); PBKDF2 cost remains the main slowdown. ponytail: a persistent
+   * per-account lockout needs a DB column + admin unlock flow.
+   */
+  private static readonly MAX_FAILED_LOGINS = 5;
+  private static readonly LOGIN_COOLDOWN_MS = 30_000;
+  private failedLogins = 0;
+  private loginBlockedUntil = 0;
+
+  private registerFailedLogin(): void {
+    this.failedLogins += 1;
+    if (this.failedLogins >= AuthService.MAX_FAILED_LOGINS) {
+      this.loginBlockedUntil = Date.now() + AuthService.LOGIN_COOLDOWN_MS;
+      this.failedLogins = 0;
+    }
+  }
+
   // ---------- session helpers ----------
 
   private async getCurrentRow(): Promise<ClinicianRow | null> {
@@ -286,7 +300,15 @@ export class AuthService implements IAuthService {
       writeSession(null);
       return null;
     }
-    return rowToClinicianWithHash(rows[0]);
+    // Re-validate account state on every read: a deactivated or still-pending
+    // account must not keep an unexpired stored session (incl. a remembered
+    // localStorage session surviving app restarts).
+    const row = rows[0];
+    if (!row.is_active || row.is_pending) {
+      writeSession(null);
+      return null;
+    }
+    return rowToClinicianWithHash(row);
   }
 
   private async requireCurrentRow(): Promise<ClinicianRow> {
@@ -438,6 +460,10 @@ export class AuthService implements IAuthService {
   // ---------- login / logout ----------
 
   async login(data: ClinicianLogin): Promise<SessionInfo> {
+    if (Date.now() < this.loginBlockedUntil) {
+      const secs = Math.ceil((this.loginBlockedUntil - Date.now()) / 1000);
+      throw new PermissionDeniedError(`Too many failed attempts. Try again in ${secs}s.`);
+    }
     const validated = clinicianLoginSchema.parse(data);
     const db = await getDB();
     // On a fresh install the env bootstrap (first admin) is fired in the
@@ -453,6 +479,7 @@ export class AuthService implements IAuthService {
     // don't leak which one it is.
     const row = rows[0];
     if (!row) {
+      this.registerFailedLogin();
       clearStaleRememberedLogin(validated);
       throw new InvalidCredentialsError('Invalid username or passcode');
     }
@@ -463,9 +490,13 @@ export class AuthService implements IAuthService {
     // deactivated shouldn't be confirmable without knowing the credentials.
     const ok = await verifyPasscode(validated.passcode, clinicianRow.passcodeHash);
     if (!ok) {
-      clearStaleRememberedLogin(validated);
+      this.registerFailedLogin();
+      // A wrong passcode says nothing about the remembered username — keep it.
       throw new InvalidCredentialsError('Invalid username or passcode');
     }
+
+    this.failedLogins = 0;
+    this.loginBlockedUntil = 0;
 
     if (clinicianRow.isPending) {
       throw new PermissionDeniedError(
@@ -500,10 +531,7 @@ export class AuthService implements IAuthService {
     // Store or drop the login-form prefill per the tickbox. Written only
     // after a successful login so a typo never overwrites good details.
     if (validated.rememberLogin) {
-      writeRememberedLogin({
-        username: validated.username,
-        passcode: validated.passcode,
-      });
+      writeRememberedLogin({ username: validated.username });
     } else {
       clearRememberedLogin();
     }
@@ -612,12 +640,8 @@ export class AuthService implements IAuthService {
       [newHash, nowMs, row.id],
     );
 
-    // Keep the login-form prefill usable after a passcode change instead of
-    // leaving a stale pair that fails next sign-in.
-    const remembered = readRememberedLogin();
-    if (remembered && remembered.username === row.username) {
-      writeRememberedLogin({ username: row.username, passcode: newPasscode });
-    }
+    // The login-form prefill stores the username only, so a passcode change
+    // leaves it valid — nothing to rewrite.
   }
 
   /**
@@ -636,15 +660,46 @@ export class AuthService implements IAuthService {
     }
     writeSession(null);
     clearRememberedLogin();
+    // Photos and backups are patient data too — deleting only the DB rows
+    // left the JPEGs on disk as unreferenced PHI. Best-effort (a dead storage
+    // dir must not block the row wipe); failures are logged.
+    await this.wipePhotoFiles().catch((err) => {
+      console.warn('[resetApp] photo-file wipe incomplete:', err);
+    });
     const db = await getDB();
-    // patient_shares must come before patients (FK-less, but logically dependent).
-    for (const table of ['patient_shares', 'photos', 'patients', 'subparts', 'invitations', 'clinicians']) {
+    // patient_shares must come before patients (FK-less, but logically
+    // dependent). audit_log holds patient names/history — it resets as well.
+    for (const table of ['patient_shares', 'photos', 'patients', 'subparts', 'invitations', 'clinicians', 'audit_log']) {
       await db.execute(`DELETE FROM ${table}`);
     }
+    // Full factory reset of org settings (incl. the storage override); the
+    // licence columns stay so a dev reset doesn't force reactivation.
     await db.execute(
-      "UPDATE settings SET allow_public_signup = 1, org_name = 'Camog', updated_at = $1 WHERE id = 'app'",
+      `UPDATE settings
+          SET allow_public_signup = 1, org_name = 'Camog', photos_dir = NULL, updated_at = $1
+        WHERE id = 'app'`,
       [Date.now()],
     );
+  }
+
+  /**
+   * Delete Camog-owned files from the photos dir. Only uuid-named photos and
+   * timestamped backups are removed, so a folder shared with other content
+   * keeps it.
+   */
+  private async wipePhotoFiles(): Promise<void> {
+    const { getPhotosDir } = await import('@/lib/db/database');
+    const { readDir, remove } = await import('@tauri-apps/plugin-fs');
+    const { join } = await import('@tauri-apps/api/path');
+    const dir = await getPhotosDir();
+    const entries = await readDir(dir);
+    const photoFile = /^[0-9a-f-]{36}\.(thumb\.)?jpg$/i;
+    const backupFile = /^camog-backup-\d{14}\.db$/;
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      if (!photoFile.test(entry.name) && !backupFile.test(entry.name)) continue;
+      await remove(await join(dir, entry.name));
+    }
   }
 
   async getCurrentClinician(): Promise<Clinician> {
@@ -693,9 +748,11 @@ export class AuthService implements IAuthService {
     );
     if (!rows.length) throw new NotFoundError(`User not found: ${id}`);
     // Activating (approving) or deactivating both clear the pending flag:
-    // the admin has made a decision either way.
+    // the admin has made a decision either way. Deactivation also ends any
+    // server-side session so the stored web-storage session dies on its next
+    // read (defense-in-depth alongside the getCurrentRow state check).
     await db.execute(
-      'UPDATE clinicians SET is_active = $1, is_pending = 0 WHERE id = $2',
+      'UPDATE clinicians SET is_active = $1, is_pending = 0, session_expires_at = NULL WHERE id = $2',
       [active ? 1 : 0, id],
     );
     return rowToClinician((await this.getClinicianRow(id))!);

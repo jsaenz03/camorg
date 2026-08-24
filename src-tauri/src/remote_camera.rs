@@ -89,6 +89,11 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
     // Phone page pings on load so the desktop knows pairing succeeded.
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: true });
     respond_text(request, 200, "ok");
+  } else if method == Method::Post && url == format!("{prefix}bye") {
+    // Phone page beacons on hide/unload so the desktop can clear the
+    // "connected" indicator instead of showing it forever.
+    let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: false });
+    respond_text(request, 200, "ok");
   } else if method == Method::Post && url == format!("{prefix}photo") {
     if request.body_length().is_some_and(|len| len > MAX_BODY) {
       respond_text(request, 413, "Photo too large");
@@ -293,6 +298,9 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }).catch(function () {
     fail('Cannot reach Camog.\nMake sure the Camog app is open and your phone is on the same Wi-Fi.');
   });
+
+  // Tell the desktop when the page goes away so it can clear "connected".
+  addEventListener('pagehide', function () { navigator.sendBeacon('bye'); });
 
   $('photo').addEventListener('change', function () {
     var file = this.files && this.files[0];

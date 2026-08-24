@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -212,6 +213,11 @@ export function AppSettingsPanel() {
             </Button>
           </form>
         </Form>
+        <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+          <Link href="/legal" className="underline-offset-2 hover:underline">
+            Terms of Service &amp; Privacy Policy
+          </Link>
+        </p>
       </CardContent>
     </Card>
   );

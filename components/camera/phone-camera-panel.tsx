@@ -71,9 +71,8 @@ export function PhoneCameraPanel({ onPhotoCaptured }: PhoneCameraPanelProps) {
         unlistenStatus = await listen<RemoteCameraStatusEvent>(
           'remote-camera-status',
           (event) => {
-            if (event.payload.connected) {
-              setPhoneConnected(true);
-            }
+            // hello → true, bye (pagehide beacon) → false.
+            setPhoneConnected(event.payload.connected);
           }
         );
         const info = await invoke<RemoteCameraInfo>('start_remote_camera');

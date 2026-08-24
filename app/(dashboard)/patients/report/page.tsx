@@ -68,9 +68,14 @@ function ReportView() {
         setPatient(p);
 
         // Full-size images, oldest first (the report reads chronologically).
-        const ordered = [...records].sort(
-          (a, b) => a.capturedAt.getTime() - b.capturedAt.getTime(),
-        );
+        // ponytail: capped at 50 — every image loads as a full-size base64
+        // data URL, so a large timeline would freeze the print document.
+        // Upgrade path: paginate the report or print from scaled-down copies.
+        const MAX_REPORT_PHOTOS = 50;
+        const ordered = [...records]
+          .sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime())
+          .slice(0, MAX_REPORT_PHOTOS)
+          .sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
         const loaded: ReportPhoto[] = [];
         const bad: string[] = [];
         for (const r of ordered) {
@@ -91,6 +96,9 @@ function ReportView() {
         if (cancelled) return;
         setPhotos(loaded);
         setFailed(bad);
+        if (records.length > ordered.length) {
+          toast.info(`Report shows the ${ordered.length} most recent of ${records.length} photos.`);
+        }
       } catch {
         if (!cancelled) toast.error('Failed to load report');
       } finally {

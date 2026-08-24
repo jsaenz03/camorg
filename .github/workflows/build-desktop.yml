@@ -4,9 +4,9 @@ name: Build Desktop Installers
 # cannot cross-compile Windows binaries from macOS.
 #
 # Triggers:
-#   - push to default branch / PR to default branch -> build only (artifacts downloadable)
-#   - published GitHub Release   -> build + attach installers to the release
-#   - manual dispatch            -> build only
+#   - push to default branch / PR to default branch -> checks + build (artifacts downloadable)
+#   - published GitHub Release   -> checks + build + attach installers to the release
+#   - manual dispatch            -> checks + build
 
 on:
   push:
@@ -23,7 +23,44 @@ permissions:
   contents: write
 
 jobs:
+  # Quality gate: everything here must pass before any installer is built.
+  checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Self-checks (policy mirrors + feature wiring)
+        run: bash scripts/run-self-checks.sh
+
+      - name: Frontend build (static export)
+        run: npm run build
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke tests (Playwright)
+        run: npm test
+
   build:
+    needs: checks
     strategy:
       fail-fast: false
       matrix:
@@ -60,7 +97,8 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        # Pinned to a commit SHA: this action runs with a write-capable token.
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

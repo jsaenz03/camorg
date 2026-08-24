@@ -102,7 +102,7 @@ assert.equal(s2.sessionStorage.getItem(SESSION_KEY), null);
 assert.ok(s2.localStorage.getItem(SESSION_KEY), 'remembered session persisted');
 
 // A remembered session survives a "restart" (sessionStorage wiped).
-const remembered = readSession(s2);
+readSession(s2);
 s2.sessionStorage._map.clear();
 assert.equal(readSession(s2)?.clinicianId, 'a');
 assert.equal(readSession(s2)?.remember, true);
@@ -129,16 +129,17 @@ assert.equal(readSession(s4), null);
 
 const REMEMBERED_KEY = 'camog.rememberedLogin';
 
-// Mirrors readRememberedLogin: shape-checked, malformed JSON → null.
+// Mirrors readRememberedLogin: username-only shape-checked, malformed JSON →
+// null. The legacy {username, passcode} shape still reads (username kept).
 function readRememberedLogin(storages) {
   try {
     const raw = storages.localStorage.getItem(REMEMBERED_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (typeof parsed?.username !== 'string' || typeof parsed?.passcode !== 'string') {
+    if (typeof parsed?.username !== 'string') {
       return null;
     }
-    return { username: parsed.username, passcode: parsed.passcode };
+    return { username: parsed.username };
   } catch {
     return null;
   }
@@ -146,11 +147,7 @@ function readRememberedLogin(storages) {
 
 function clearStaleRememberedLogin(storages, attempted) {
   const remembered = readRememberedLogin(storages);
-  if (
-    remembered &&
-    remembered.username === attempted.username &&
-    remembered.passcode === attempted.passcode
-  ) {
+  if (remembered && remembered.username === attempted.username) {
     storages.localStorage.removeItem(REMEMBERED_KEY);
   }
 }
@@ -158,29 +155,33 @@ function clearStaleRememberedLogin(storages, attempted) {
 const s5 = makeStorages();
 s5.localStorage.setItem(
   REMEMBERED_KEY,
-  JSON.stringify({ username: 'dr@example.com', passcode: 'old-pass' }),
+  JSON.stringify({ username: 'dr@example.com' }),
 );
 
-// A failed attempt using the remembered pair (stale) drops the prefill…
-clearStaleRememberedLogin(s5, { username: 'dr@example.com', passcode: 'old-pass' });
+// A failed attempt on the remembered username (stale) drops the prefill…
+clearStaleRememberedLogin(s5, { username: 'dr@example.com' });
 assert.equal(readRememberedLogin(s5), null);
 
-// …but a failed attempt with different values (user retyping) keeps it.
+// …but a failed attempt with a different username (user retyping) keeps it.
+s5.localStorage.setItem(REMEMBERED_KEY, JSON.stringify({ username: 'dr@example.com' }));
+clearStaleRememberedLogin(s5, { username: 'someone-else' });
+assert.deepEqual(readRememberedLogin(s5), { username: 'dr@example.com' });
+
+// The legacy {username, passcode} shape still prefills the username and
+// never exposes a passcode through the reader.
 s5.localStorage.setItem(
   REMEMBERED_KEY,
-  JSON.stringify({ username: 'dr@example.com', passcode: 'old-pass' }),
+  JSON.stringify({ username: 'dr@example.com', passcode: 'legacy' }),
 );
-clearStaleRememberedLogin(s5, { username: 'dr@example.com', passcode: 'typo' });
-assert.deepEqual(readRememberedLogin(s5), {
-  username: 'dr@example.com',
-  passcode: 'old-pass',
-});
+const legacy = readRememberedLogin(s5);
+assert.deepEqual(legacy, { username: 'dr@example.com' });
+assert.equal('passcode' in legacy, false, 'reader must not surface a passcode');
 
 // Malformed stored details are ignored rather than thrown.
 const s6 = makeStorages();
 s6.localStorage.setItem(REMEMBERED_KEY, '{not json');
 assert.equal(readRememberedLogin(s6), null);
-s6.localStorage.setItem(REMEMBERED_KEY, JSON.stringify({ username: 42 }));
+s6.localStorage.setItem(REMEMBERED_KEY, JSON.stringify({ passcode: 'no-username' }));
 assert.equal(readRememberedLogin(s6), null);
 
 console.log('self-check-session: remember-me + auto-logout assertions passed');

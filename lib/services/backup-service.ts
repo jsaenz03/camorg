@@ -14,7 +14,12 @@
 
 import { getDB, getPhotosDir } from '@/lib/db/database';
 import { join } from '@tauri-apps/api/path';
+import { readDir, remove } from '@tauri-apps/plugin-fs';
 import { auditService } from '@/lib/services/audit-service';
+import { accessService } from '@/lib/services/access-service';
+
+/** Backups kept before the oldest is pruned (one per createBackup call). */
+const KEEP_BACKUPS = 10;
 
 export interface BackupResult {
   /** Absolute path of the written backup file. */
@@ -26,9 +31,11 @@ class BackupService {
   /**
    * Write a timestamped snapshot of camog.db into the photos directory.
    * Throws on failure — callers must surface it (a silent bad backup is a
-   * data-loss trap).
+   * data-loss trap). Admin-only: the snapshot contains every clinician's
+   * patient data.
    */
   async createBackup(): Promise<BackupResult> {
+    await accessService.requireAdmin();
     const db = await getDB();
     const dir = await getPhotosDir();
     const now = new Date();
@@ -50,12 +57,52 @@ class BackupService {
     const literal = `'${target.replace(/'/g, "''")}'`;
     await db.execute(`VACUUM INTO ${literal}`);
 
+    // Prune old snapshots so "backup now" can't fill the disk forever.
+    // Best-effort: a prune failure must not fail an otherwise good backup.
+    await this.pruneOldBackups(dir, target).catch((err) => {
+      console.warn('[backup] retention prune failed:', err);
+    });
+
     void auditService.record('backup.create', {
       entityType: 'database',
       detail: filename,
     });
 
     return { path: target, createdAt: now };
+  }
+
+  /** Timestamp of the newest camog-backup-*.db in the photos dir, null if none. */
+  async getLastBackupAt(): Promise<Date | null> {
+    const dir = await getPhotosDir();
+    const entries = await readDir(dir);
+    const stamps = entries
+      .filter((e) => !e.isDirectory)
+      .map((e) => /^camog-backup-(\d{14})\.db$/.exec(e.name))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => {
+        const s = m[1];
+        // Written with local getFullYear/getMonth/… — parse back as local.
+        return new Date(
+          Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)),
+          Number(s.slice(8, 10)), Number(s.slice(10, 12)), Number(s.slice(12, 14)),
+        ).getTime();
+      });
+    return stamps.length ? new Date(Math.max(...stamps)) : null;
+  }
+
+  /** Remove the oldest camog-backup-*.db files beyond KEEP_BACKUPS. */
+  private async pruneOldBackups(dir: string, justWritten: string): Promise<void> {
+    const entries = await readDir(dir);
+    const backups = entries
+      .filter((e) => !e.isDirectory && /^camog-backup-\d{14}\.db$/.test(e.name))
+      .map((e) => e.name)
+      // Timestamped names sort chronologically; newest first.
+      .sort((a, b) => b.localeCompare(a));
+    for (const name of backups.slice(KEEP_BACKUPS)) {
+      const victim = await join(dir, name);
+      if (victim === justWritten) continue;
+      await remove(victim);
+    }
   }
 }
 

@@ -10,13 +10,13 @@
 import type { LucideIcon } from 'lucide-react';
 import { Images, Users, CalendarDays, Activity } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-import type { PhotoWithPatient } from '@/lib/hooks/use-all-photos';
+import type { PhotoSummary } from '@/lib/services/photo-service';
 import type { Patient } from '@/types/patient';
 import { startOfDay, isSameDay, subDays } from 'date-fns';
 
 interface StatsOverviewProps {
   patients: Patient[];
-  photos: PhotoWithPatient[];
+  photos: PhotoSummary[];
 }
 
 function startOfWeek(): Date {

@@ -9,7 +9,7 @@
 
 import { useMemo } from 'react';
 import { Cell, Label, Pie, PieChart } from 'recharts';
-import type { PhotoWithPatient } from '@/lib/hooks/use-all-photos';
+import type { PhotoSummary } from '@/lib/services/photo-service';
 import { BodyPartLabels } from '@/types/body-part';
 import {
   Card,
@@ -28,7 +28,7 @@ import { EmptyState } from '@/components/empty-state';
 import { Images } from 'lucide-react';
 
 interface PhotosByBodyPartChartProps {
-  photos: PhotoWithPatient[];
+  photos: PhotoSummary[];
 }
 
 const CHART_COLORS = [

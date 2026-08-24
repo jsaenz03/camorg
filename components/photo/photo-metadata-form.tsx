@@ -84,6 +84,12 @@ interface PhotoMetadataFormProps {
   onCancel?: () => void;
   defaultValues?: Partial<PhotoMetadataFormValues>;
   isSubmitting?: boolean;
+  /**
+   * Freeze the patient name/DOB fields. Set by the upload dialog, which
+   * saves to a fixed patient — an edit there used to look accepted while
+   * being silently ignored (wrong-patient filing risk).
+   */
+  patientLocked?: boolean;
 }
 
 export function PhotoMetadataForm({
@@ -91,6 +97,7 @@ export function PhotoMetadataForm({
   onCancel,
   defaultValues,
   isSubmitting = false,
+  patientLocked = false,
 }: PhotoMetadataFormProps) {
   const form = useForm<PhotoMetadataFormValues>({
     resolver: zodResolver(photoMetadataFormSchema),
@@ -130,10 +137,15 @@ export function PhotoMetadataForm({
                   placeholder="Enter patient name"
                   {...field}
                   disabled={isSubmitting}
+                  readOnly={patientLocked}
                   autoFocus
                 />
               </FormControl>
-              <FormMessage />
+              {patientLocked ? (
+                <FormDescription>Fixed — this photo saves to the open patient&rsquo;s file.</FormDescription>
+              ) : (
+                <FormMessage />
+              )}
             </FormItem>
           )}
         />
@@ -150,12 +162,14 @@ export function PhotoMetadataForm({
                   value={field.value}
                   onChange={field.onChange}
                   onBlur={field.onBlur}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || patientLocked}
                 />
               </FormControl>
-              <FormDescription>
-                Optional — type it (e.g. 4/2/85) or use the calendar. Enables search by date of birth.
-              </FormDescription>
+              {!patientLocked && (
+                <FormDescription>
+                  Optional — type it (e.g. 4/2/85) or use the calendar. Enables search by date of birth.
+                </FormDescription>
+              )}
               <FormMessage />
             </FormItem>
           )}
@@ -173,7 +187,7 @@ export function PhotoMetadataForm({
               <div className="flex gap-2">
                 <Select
                   onValueChange={field.onChange}
-                  defaultValue={field.value}
+                  value={field.value ?? ''}
                   disabled={isSubmitting}
                 >
                   <FormControl>

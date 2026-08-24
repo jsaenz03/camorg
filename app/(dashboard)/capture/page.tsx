@@ -10,7 +10,7 @@
 
 'use client';
 
-import { useState, Suspense } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Camera, CameraOff } from 'lucide-react';
 import { useLicence } from '@/lib/licence/licence-context';
@@ -21,6 +21,12 @@ import type { CapturedPhoto } from '@/specs/001-role-you-are/contracts/camera-se
 import { photoService } from '@/lib/services/photo-service';
 import { patientService } from '@/lib/services/patient-service';
 import { parseDobInput } from '@/lib/utils/date-formatting';
+import {
+  saveCaptureDraft,
+  readCaptureDraft,
+  clearCaptureDraft,
+  draftToCapturedPhoto,
+} from '@/lib/utils/capture-draft';
 import { consentStatus } from '@/types/patient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -34,8 +40,39 @@ function CaptureView() {
   const [capturedPhoto, setCapturedPhoto] = useState<CapturedPhoto | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Restore an unsaved capture from a previous visit — the photo used to die
+  // with the page on any navigation before "Save".
+  useEffect(() => {
+    const draft = readCaptureDraft();
+    if (!draft) return;
+    void (async () => {
+      try {
+        const photo = await draftToCapturedPhoto(draft);
+        setCapturedPhoto(photo);
+        toast.info('Restored your unsaved photo from earlier — save it or retake.');
+      } catch {
+        clearCaptureDraft();
+      }
+    })();
+  }, []);
+
+  // Last line of defence for window close / reload while a capture is unsaved
+  // (in-app navigation is covered by the sessionStorage draft).
+  useEffect(() => {
+    if (!capturedPhoto) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [capturedPhoto]);
+
   const handlePhotoCaptured = (photo: CapturedPhoto) => {
     setCapturedPhoto(photo);
+    if (!saveCaptureDraft(photo)) {
+      console.warn('[capture] draft could not be persisted (storage quota)');
+    }
     toast.success('Photo captured');
   };
 
@@ -72,6 +109,19 @@ function CaptureView() {
           );
         }
       } else {
+        // Name-variant guard: without this, "Jon Smith" vs "John Smith" or a
+        // typo silently fragments one patient's record across two rows.
+        const duplicate = await patientService.isDuplicateName(formData.patientName);
+        if (
+          duplicate &&
+          !window.confirm(
+            `A patient with this exact name already exists: “${formData.patientName.trim()}”.\n\n` +
+              'Attach the photo to their record by choosing their name from search instead.\n\n' +
+              'Create a separate patient anyway?',
+          )
+        ) {
+          return; // keep the photo + form so the user can fix the name
+        }
         const newPatient = await patientService.createPatient({
           name: formData.patientName,
           dateOfBirth: parseDobInput(formData.patientDob),
@@ -92,6 +142,7 @@ function CaptureView() {
       });
 
       toast.success('Photo saved');
+      clearCaptureDraft();
 
       // 3. Navigate to patient timeline
       router.push(`/patients/view?id=${patientId}`);
@@ -124,18 +175,24 @@ function CaptureView() {
   };
 
   /**
-   * Handle cancel - discard captured photo and start over
+   * Handle cancel - discard captured photo and start over (confirmed — the
+   * photo has no other copy until it is saved)
    */
   const handleCancel = () => {
+    if (!window.confirm('Discard this photo? It hasn’t been saved.')) return;
     setCapturedPhoto(null);
+    clearCaptureDraft();
     toast.info('Photo discarded');
   };
 
   /**
-   * Handle retake - discard captured photo and show camera again
+   * Handle retake - discard captured photo and show camera again (confirmed,
+   * same reason as cancel)
    */
   const handleRetake = () => {
+    if (!window.confirm('Retake? The current photo will be discarded.')) return;
     setCapturedPhoto(null);
+    clearCaptureDraft();
   };
 
   // Read-only licence gate — the capture flow is the core licensed capability.

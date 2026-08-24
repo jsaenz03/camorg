@@ -16,6 +16,7 @@
     "fs:allow-write-file",
     "fs:allow-read-dir",
     "fs:allow-copy-file",
+    "fs:allow-remove",
     "dialog:default",
     {
       "identifier": "fs:scope",

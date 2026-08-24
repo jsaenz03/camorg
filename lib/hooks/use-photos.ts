@@ -6,7 +6,7 @@
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { PhotoRecord } from '@/types/photo';
 import type { BodyPart } from '@/types/body-part';
 import { photoService } from '@/lib/services/photo-service';
@@ -36,6 +36,9 @@ export function usePhotos(options: UsePhotosOptions = {}): UsePhotosReturn {
   const [photos, setPhotos] = useState<PhotoRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  // Monotonic sequence: a slow response from a previous patient must not
+  // commit over the current one (same guard as use-patients).
+  const seqRef = useRef(0);
 
   const loadPhotos = useCallback(async () => {
     if (!patientId) {
@@ -44,6 +47,7 @@ export function usePhotos(options: UsePhotosOptions = {}): UsePhotosReturn {
       return;
     }
 
+    const seq = ++seqRef.current;
     setIsLoading(true);
     setError(null);
 
@@ -52,12 +56,14 @@ export function usePhotos(options: UsePhotosOptions = {}): UsePhotosReturn {
         includeDeleted,
         bodyPart,
       });
+      if (seq !== seqRef.current) return;
       setPhotos(data);
     } catch (err) {
+      if (seq !== seqRef.current) return;
       setError(err instanceof Error ? err : new Error('Failed to load photos'));
       setPhotos([]);
     } finally {
-      setIsLoading(false);
+      if (seq === seqRef.current) setIsLoading(false);
     }
   }, [patientId, bodyPart, includeDeleted]);
 

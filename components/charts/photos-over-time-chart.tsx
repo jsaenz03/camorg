@@ -10,7 +10,7 @@
 import { useMemo, useState } from 'react';
 import { format, startOfDay, subDays, isAfter, isEqual } from 'date-fns';
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts';
-import type { PhotoWithPatient } from '@/lib/hooks/use-all-photos';
+import type { PhotoSummary } from '@/lib/services/photo-service';
 import {
   Card,
   CardContent,
@@ -29,7 +29,7 @@ import { EmptyState } from '@/components/empty-state';
 import { Images } from 'lucide-react';
 
 interface PhotosOverTimeChartProps {
-  photos: PhotoWithPatient[];
+  photos: PhotoSummary[];
 }
 
 const RANGE_OPTIONS = [

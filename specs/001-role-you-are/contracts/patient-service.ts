@@ -129,23 +129,18 @@ export interface IPatientService {
   isDuplicateName(name: string, excludeId?: string): Promise<boolean>;
 
   /**
-   * Updates denormalized photo counts (internal use, called by PhotoService)
+   * Recomputes denormalized photo counts from the photos table (internal,
+   * called by PhotoService after any create/delete/restore)
    *
    * @param id - Patient UUID
-   * @param delta - Change in photo count (+1 or -1)
-   * @param isDeleted - Whether this is for deleted or active photos
    * @returns Promise resolving to void
-   * @throws NotFoundError if patient does not exist
-   * @throws Error if IndexedDB transaction fails
    *
-   * Side effects:
-   * - Increments/decrements Patient.photoCount or deletedPhotoCount
-   * - Updates Patient.lastPhotoAt if delta > 0 and isDeleted = false
+   * Side effects (single atomic UPDATE):
+   * - photoCount = count of active photos, deletedPhotoCount = deleted ones
+   * - lastPhotoAt = latest active capture time
    * - Updates Patient.updatedAt
-   *
-   * Note: This method should be called within PhotoService transactions
    */
-  updatePhotoCount(id: string, delta: number, isDeleted: boolean): Promise<void>;
+  recountPhotos(id: string): Promise<void>;
 }
 
 /**

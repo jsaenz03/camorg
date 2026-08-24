@@ -5,8 +5,8 @@
  * See lib/services/backup-service.ts for the VACUUM INTO approach.
  */
 
-import { useState } from 'react';
-import { Database, Loader2, ShieldCheck } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Database, Loader2, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { backupService } from '@/lib/services/backup-service';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,15 +18,29 @@ import {
 } from '@/components/ui/card';
 import { toast } from 'sonner';
 
+/** Nudge threshold: older than this (or never) shows the staleness warning. */
+const STALE_AFTER_DAYS = 7;
+
 export function BackupPanel() {
   const [isBacking, setIsBacking] = useState(false);
   const [lastBackup, setLastBackup] = useState<{ path: string; createdAt: Date } | null>(null);
+  const [stale, setStale] = useState(false);
+
+  useEffect(() => {
+    backupService
+      .getLastBackupAt()
+      .then((at) => {
+        setStale(at === null || Date.now() - at.getTime() > STALE_AFTER_DAYS * 86_400_000);
+      })
+      .catch(() => {}); // can't read the folder — don't nag on top of it
+  }, []);
 
   async function handleBackup() {
     setIsBacking(true);
     try {
       const result = await backupService.createBackup();
       setLastBackup(result);
+      setStale(false);
       toast.success('Backup created');
     } catch (err) {
       toast.error(
@@ -49,6 +63,16 @@ export function BackupPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {stale && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
+            <p>
+              No recent backup found. Everything lives on this one disk — a disk
+              failure loses patients, metadata and photos. Back up now, or point
+              storage at a cloud-synced folder.
+            </p>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-3">
           <Button onClick={handleBackup} disabled={isBacking}>
             {isBacking ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}

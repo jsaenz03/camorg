@@ -17,10 +17,10 @@ import type { Patient } from '@/types/patient';
 import type { BodyPart } from '@/types/body-part';
 import { BodyPartLabels } from '@/types/body-part';
 import { patientService } from '@/lib/services/patient-service';
-import { photoService } from '@/lib/services/photo-service';
+import { photoService, type PhotoSummary } from '@/lib/services/photo-service';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatRelativeTime } from '@/lib/utils/date-formatting';
-import { isSameDay } from 'date-fns';
+import { startOfDay, endOfDay } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -40,11 +40,18 @@ export default function HomePage() {
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [recentPhotos, setRecentPhotos] = useState<PhotoWithPatient[]>([]);
+  // Lightweight rows for KPIs/charts/calendar — unlimited, unlike the full
+  // records above, so aggregates stay correct past any display limit.
+  const [summaries, setSummaries] = useState<PhotoSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [activePhoto, setActivePhoto] = useState<PhotoWithPatient | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  // Day-filtered bento photos, queried directly so a day outside the newest
+  // 200 still shows its photos.
+  const [dayPhotos, setDayPhotos] = useState<PhotoWithPatient[]>([]);
 
   // Honour the "Show deleted photos" preference alongside the clinician name.
   const showDeleted = clinician?.preferences.showDeletedPhotos ?? false;
@@ -53,9 +60,12 @@ export default function HomePage() {
     let mounted = true;
 
     async function load() {
+      setIsLoading(true);
+      setLoadError(null);
       try {
-        const [all, allPhotos] = await Promise.all([
+        const [all, allSummaries, allPhotos] = await Promise.all([
           patientService.getAllPatients({ includeArchived: false }),
+          photoService.getAllPhotoSummaries({ includeDeleted: showDeleted }),
           photoService.getAllPhotos({ limit: 200, includeDeleted: showDeleted }),
         ]);
         if (!mounted) return;
@@ -67,10 +77,15 @@ export default function HomePage() {
         }));
 
         setPatients(all);
+        setSummaries(allSummaries);
         setRecentPhotos(withNames);
-      } catch {
+      } catch (err) {
+        // A load failure is NOT an empty clinic — surface it distinctly so
+        // "my patients are gone" can't be mistaken for data loss.
         if (mounted) {
+          setLoadError(err instanceof Error ? err.message : String(err));
           setPatients([]);
+          setSummaries([]);
           setRecentPhotos([]);
         }
       } finally {
@@ -84,6 +99,38 @@ export default function HomePage() {
     };
   }, [showDeleted]);
 
+  // Calendar day selection: fetch that day's photos (bento shows up to 8).
+  useEffect(() => {
+    if (!selectedDate) {
+      setDayPhotos([]);
+      return;
+    }
+    let mounted = true;
+    void (async () => {
+      try {
+        const rows = await photoService.getAllPhotos({
+          from: startOfDay(selectedDate),
+          to: endOfDay(selectedDate),
+          includeDeleted: showDeleted,
+          limit: 8,
+        });
+        if (!mounted) return;
+        const nameById = new Map(patients.map((p) => [p.id, p.name]));
+        setDayPhotos(
+          rows.map((photo) => ({
+            ...photo,
+            patientName: nameById.get(photo.patientId) ?? 'Unknown patient',
+          })),
+        );
+      } catch {
+        if (mounted) setDayPhotos([]);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [selectedDate, showDeleted, patients]);
+
   const greeting = useMemo(() => {
     const name = clinician?.displayName?.split(' ')[0];
     const hour = new Date().getHours();
@@ -91,13 +138,13 @@ export default function HomePage() {
     return name ? `${part}, ${name}` : part;
   }, [clinician]);
 
-  const isEmpty = !isLoading && patients.length === 0;
+  const isEmpty = !isLoading && !loadError && patients.length === 0;
 
   // When a calendar day is selected, the "latest photos" bento filters to it.
   const visiblePhotos = useMemo(() => {
     if (!selectedDate) return recentPhotos.slice(0, 8);
-    return recentPhotos.filter((p) => isSameDay(p.capturedAt, selectedDate)).slice(0, 8);
-  }, [recentPhotos, selectedDate]);
+    return dayPhotos;
+  }, [recentPhotos, selectedDate, dayPhotos]);
 
   function handlePhotoClick(photo: PhotoWithPatient) {
     setActivePhoto(photo);
@@ -108,17 +155,23 @@ export default function HomePage() {
     setIsLoading(true);
     Promise.all([
       patientService.getAllPatients({ includeArchived: false }),
+      photoService.getAllPhotoSummaries({ includeDeleted: showDeleted }),
       photoService.getAllPhotos({ limit: 200, includeDeleted: showDeleted }),
     ])
-      .then(([all, allPhotos]) => {
+      .then(([all, allSummaries, allPhotos]) => {
         const nameById = new Map(all.map((p) => [p.id, p.name]));
         setPatients(all);
+        setSummaries(allSummaries);
         setRecentPhotos(
           allPhotos.map((photo) => ({
             ...photo,
             patientName: nameById.get(photo.patientId) ?? 'Unknown patient',
           })),
         );
+        setLoadError(null);
+      })
+      .catch((err: unknown) => {
+        setLoadError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => setIsLoading(false));
   }
@@ -138,6 +191,24 @@ export default function HomePage() {
             <Skeleton key={i} className="h-72 w-full rounded-xl" />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
+        <PageHeader title={greeting} description="Review activity or capture a new photo." />
+        <EmptyState
+          icon={Images}
+          title="Couldn’t load the dashboard"
+          description={`${loadError} — your data hasn’t changed; this is a read failure. Check the app/storage connection and try again.`}
+          action={
+            <Button variant="outline" onClick={handleRefresh}>
+              Try again
+            </Button>
+          }
+        />
       </div>
     );
   }
@@ -181,19 +252,19 @@ export default function HomePage() {
       />
 
       {/* KPIs */}
-      <StatsOverview patients={patients} photos={recentPhotos} />
+      <StatsOverview patients={patients} photos={summaries} />
 
       {/* Charts */}
       <div className="mt-8 grid gap-4 lg:grid-cols-3">
-        <PhotosOverTimeChart photos={recentPhotos} />
-        <PhotosByBodyPartChart photos={recentPhotos} />
+        <PhotosOverTimeChart photos={summaries} />
+        <PhotosByBodyPartChart photos={summaries} />
         <PatientsGrowthChart patients={patients} />
       </div>
 
       {/* Activity calendar + recent patients side by side */}
       <div className="mt-8 grid gap-4 lg:grid-cols-3">
         <ActivityCalendar
-          photos={recentPhotos}
+          photos={summaries}
           selectedDate={selectedDate}
           onSelectDate={setSelectedDate}
         />

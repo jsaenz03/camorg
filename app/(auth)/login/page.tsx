@@ -78,13 +78,14 @@ export default function LoginPage() {
   });
 
   // Prefill from remembered details in an effect (not defaultValues) so the
-  // prerendered HTML and the first client render stay in sync.
+  // prerendered HTML and the first client render stay in sync. Only the
+  // username is remembered — never the passcode.
   useEffect(() => {
     const remembered = authService.getRememberedLogin();
     if (remembered) {
       form.reset({
         username: remembered.username,
-        passcode: remembered.passcode,
+        passcode: '',
         rememberLogin: true,
       });
     }
@@ -194,8 +195,8 @@ export default function LoginPage() {
                   <div className="leading-none">
                     <FormLabel>Remember my sign-in details</FormLabel>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Fills in your username and passcode next time. Anyone with
-                      access to this device could sign in as you.
+                      Fills in your username next time. Your passcode is never
+                      stored on this device.
                     </p>
                   </div>
                 </FormItem>
@@ -312,6 +313,15 @@ export default function LoginPage() {
             Sign up
           </Link>
         </Button>
+        <p className="pt-1 text-center text-xs text-muted-foreground">
+          <Link href="/legal#terms-of-service" className="underline-offset-2 hover:underline">
+            Terms of Service
+          </Link>
+          {' · '}
+          <Link href="/legal#privacy-policy" className="underline-offset-2 hover:underline">
+            Privacy Policy
+          </Link>
+        </p>
       </CardFooter>
     </Card>
   );

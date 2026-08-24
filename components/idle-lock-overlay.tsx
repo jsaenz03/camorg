@@ -14,9 +14,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Loader2, Lock } from 'lucide-react';
 import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
+import { NotAuthenticatedError } from '@/lib/validators/errors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -78,20 +80,44 @@ export function IdleLockOverlay({ timeoutMs }: { timeoutMs: number }) {
       } else {
         setError('Incorrect passcode');
       }
-    } catch {
-      // Session vanished (signed out elsewhere) — the dashboard auth gate
-      // will redirect; nothing to unlock here.
-      setLocked(false);
-      setPasscode('');
+    } catch (err) {
+      if (err instanceof NotAuthenticatedError) {
+        // Session vanished (signed out elsewhere) — the dashboard auth gate
+        // will redirect; nothing to unlock here.
+        setLocked(false);
+        setPasscode('');
+      } else {
+        // Transient failure (DB/IPC) — never unlock on error; retry is safe.
+        setError('Could not verify passcode. Try again.');
+      }
     } finally {
       setIsVerifying(false);
     }
   }
 
+  // Freeze the background while locked. Rendering through a body portal puts
+  // the overlay outside the app root; `inert` on every other body child
+  // removes it from the tab order and the accessibility tree (a real focus
+  // trap), so patient data can't be reached by keyboard or screen reader
+  // under the blur.
+  useEffect(() => {
+    if (!locked) return;
+    const frozen: HTMLElement[] = [];
+    for (const el of Array.from(document.body.children)) {
+      if (!(el instanceof HTMLElement) || el.dataset.idleLockOverlay !== undefined) continue;
+      el.setAttribute('inert', '');
+      frozen.push(el);
+    }
+    return () => {
+      for (const el of frozen) el.removeAttribute('inert');
+    };
+  }, [locked]);
+
   if (!locked) return null;
 
-  return (
+  return createPortal(
     <div
+      data-idle-lock-overlay=""
       className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-2xl"
       role="dialog"
       aria-modal="true"
@@ -130,6 +156,7 @@ export function IdleLockOverlay({ timeoutMs }: { timeoutMs: number }) {
           </Button>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

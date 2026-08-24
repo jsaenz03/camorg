@@ -50,10 +50,11 @@ const dateOfBirthSchema = z
 export const consentSchema = z.object({
   givenAt: z.date().nullable(),
   scope: z.enum(['care', 'education', 'research']).nullable(),
-  expiresAt: z
-    .date()
-    .refine((d) => d.getTime() > Date.now(), 'Consent expiry must be in the future')
-    .nullable(),
+  // Expiry may legitimately be in the past: an expired consent is a state
+  // the UI surfaces (badge + capture warning), not an invalid one —
+  // requiring a future date blocked saving unrelated edits to a patient
+  // whose consent had lapsed.
+  expiresAt: z.date().nullable(),
 }).refine(
   (c) => c.givenAt === null || c.scope !== null,
   { message: 'Choose a consent scope', path: ['scope'] },
@@ -68,7 +69,9 @@ export const patientCreateSchema = z.object({
 
 export const patientUpdateSchema = z.object({
   name: z.string().min(1, 'Patient name is required').max(100, 'Patient name must be 100 characters or less').trim(),
-  dateOfBirth: dateOfBirthSchema.default(null), // absent → clear the DOB
+  // Explicit, no .default(): an omitted dateOfBirth must fail validation
+  // rather than silently clear the stored DOB. Callers pass null to clear.
+  dateOfBirth: dateOfBirthSchema,
   consent: consentSchema,
 });
 

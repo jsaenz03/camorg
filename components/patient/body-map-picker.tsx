@@ -75,6 +75,18 @@ const BACK: RegionDef[] = [
   { part: BodyPart.SCALP, kind: 'ellipse', props: { cx: 100, cy: 40, rx: 18, ry: 16 } },
 ];
 
+// Neck: anatomical filler between head and trunk, selectable in both views.
+const NECK: RegionDef = { part: BodyPart.NECK, kind: 'rect', props: { x: 90, y: 74, width: 20, height: 14, rx: 5 } };
+
+// Stable id for a region: part + screen side. Derived from geometry because
+// array indices differ between the front and back views, so an index-based id
+// would jump to the opposite limb when the view flips.
+function regionId(part: BodyPartType, kind: 'rect' | 'ellipse', props: RegionDef['props']): string {
+  const mid = kind === 'ellipse' ? Number(props.cx) : Number(props.x) + Number(props.width) / 2;
+  const side = mid < 100 ? 'left' : mid > 100 ? 'right' : 'center';
+  return `${part}-${side}`;
+}
+
 interface BodyMapPickerProps {
   value: BodyPartType | undefined;
   onSelect: (part: BodyPartType) => void;
@@ -84,7 +96,22 @@ interface BodyMapPickerProps {
 export function BodyMapPicker({ value, onSelect, disabled }: BodyMapPickerProps) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>('front');
+  // Which of a bilateral pair was last clicked, so only that side highlights.
+  // Null until the user clicks: a value arriving from the form carries no
+  // side, so both regions of that part highlight.
+  const [picked, setPicked] = useState<{ part: BodyPartType; key: string } | null>(null);
   const regions = view === 'front' ? FRONT : BACK;
+  const neckKey = regionId(NECK.part, NECK.kind, NECK.props);
+
+  const handleSelect = (part: BodyPartType, key: string) => {
+    setPicked({ part, key });
+    onSelect(part);
+  };
+
+  // A picked side only narrows the highlight while it belongs to the current
+  // value; any other part shows all of its regions.
+  const isSelected = (part: BodyPartType, key: string) =>
+    value === part && (picked?.part !== part || picked.key === key);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -123,22 +150,27 @@ export function BodyMapPicker({ value, onSelect, disabled }: BodyMapPickerProps)
         >
           {/* neck: anatomical filler, also selectable */}
           <RegionShape
-            part={BodyPart.NECK}
-            kind="rect"
-            props={{ x: 90, y: 74, width: 20, height: 14, rx: 5 }}
-            selected={value === BodyPart.NECK}
-            onSelect={onSelect}
+            part={NECK.part}
+            kind={NECK.kind}
+            props={NECK.props}
+            regionKey={neckKey}
+            selected={isSelected(NECK.part, neckKey)}
+            onSelect={handleSelect}
           />
-          {regions.map((r, i) => (
-            <RegionShape
-              key={`${r.part}-${i}`}
-              part={r.part}
-              kind={r.kind}
-              props={r.props}
-              selected={value === r.part}
-              onSelect={onSelect}
-            />
-          ))}
+          {regions.map((r, i) => {
+            const key = regionId(r.part, r.kind, r.props);
+            return (
+              <RegionShape
+                key={`${r.part}-${i}`}
+                part={r.part}
+                kind={r.kind}
+                props={r.props}
+                regionKey={key}
+                selected={isSelected(r.part, key)}
+                onSelect={handleSelect}
+              />
+            );
+          })}
         </svg>
 
         <div className="mt-2 flex items-center justify-between">
@@ -164,14 +196,16 @@ function RegionShape({
   part,
   kind,
   props,
+  regionKey,
   selected,
   onSelect,
 }: {
   part: BodyPartType;
   kind: 'rect' | 'ellipse';
   props: RegionDef['props'];
+  regionKey: string;
   selected: boolean;
-  onSelect: (part: BodyPartType) => void;
+  onSelect: (part: BodyPartType, key: string) => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const className = cn(
@@ -182,7 +216,7 @@ function RegionShape({
     className,
     onMouseEnter: () => setHovered(true),
     onMouseLeave: () => setHovered(false),
-    onClick: () => onSelect(part),
+    onClick: () => onSelect(part, regionKey),
     // Keyboard reachability for the diagram regions.
     tabIndex: 0,
     role: 'button',
@@ -190,7 +224,7 @@ function RegionShape({
     onKeyDown: (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        onSelect(part);
+        onSelect(part, regionKey);
       }
     },
   };

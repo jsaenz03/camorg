@@ -4,6 +4,9 @@
 
 mod remote_camera;
 
+use std::path::{Component, Path};
+
+use tauri::Manager;
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 use tauri_plugin_fs::FsExt;
 
@@ -66,20 +69,58 @@ pub fn run() {
   // are static, so a persisted custom dir must be re-granted on every launch.
   #[tauri::command]
   fn grant_directory_access(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    // Trust boundary: the webview supplies this string (normally via the
+    // native folder dialog). Refuse anything but an existing, non-root,
+    // non-home directory so a compromised webview can't hand the fs scope
+    // to the whole disk.
+    let p = Path::new(&path);
+    if !p.is_absolute() {
+      return Err("Path must be absolute".into());
+    }
+    // A path with no Normal component is a filesystem root ("/", "C:\\",
+    // UNC share roots).
+    if !p.components().any(|c| matches!(c, Component::Normal(_))) {
+      return Err("Refusing to grant a filesystem root".into());
+    }
+    if let Ok(home) = app.path().home_dir() {
+      if p == home {
+        return Err("Refusing to grant the user's home directory".into());
+      }
+    }
+    let meta = std::fs::metadata(p).map_err(|e| format!("Directory not accessible: {e}"))?;
+    if !meta.is_dir() {
+      return Err("Path is not a directory".into());
+    }
     app.fs_scope()
       .allow_directory(&path, true)
       .map_err(|e| e.to_string())
   }
 
   tauri::Builder::default()
-    .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
+    // Second launch focuses the existing window instead of opening a second
+    // process on the same SQLite file (split-brain UI + SQLITE_BUSY writes).
+    .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+      if let Some(webview) = app.get_webview_window("main") {
+        let _ = webview.unminimize();
+        let _ = webview.set_focus();
       }
+    }))
+    .setup(|app| {
+      // Logs in every build (release support was blind before): stdout for
+      // dev, a rotating file in the OS log dir, webview console.
+      app.handle().plugin(
+        tauri_plugin_log::Builder::default()
+          .level(log::LevelFilter::Info)
+          .max_file_size(1_000_000)
+          .targets([
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+              file_name: Some("camog".into()),
+            }),
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+          ])
+          .build(),
+      )?;
       Ok(())
     })
     .plugin(tauri_plugin_dialog::init())

@@ -12,6 +12,17 @@ import { v4 as uuidv4 } from 'uuid';
 import type { PhotoRecord } from '@/types/photo';
 import type { PhotoRecordCreate, PhotoRecordUpdate } from '@/lib/validators/schemas';
 import type { BodyPart } from '@/types/body-part';
+
+/** Lightweight photo row for aggregates (KPIs, charts, calendars). */
+export interface PhotoSummary {
+  id: string;
+  patientId: string;
+  patientName: string;
+  bodyPart: BodyPart;
+  capturedAt: Date;
+  isDeleted: boolean;
+}
+
 import type { IPhotoService } from '@/specs/001-role-you-are/contracts/photo-service';
 import { photoRecordCreateSchema, photoRecordUpdateSchema } from '@/lib/validators/schemas';
 import { getDB, photoPath, getPhotosDir } from '@/lib/db/database';
@@ -72,6 +83,18 @@ function uint8ToBase64(bytes: Uint8Array): string {
 }
 
 export class PhotoService implements IPhotoService {
+  /**
+   * Assemble a WHERE clause from condition fragments plus the access filter.
+   * Emits NOTHING when both are empty (admin + no filters) — a dangling
+   * `WHERE` before ORDER BY is a syntax error, which is exactly what the
+   * "near ORDER" dashboard failure was.
+   */
+  private static whereSql(conditions: string[], accessSql: string): string {
+    const parts = [...conditions, accessSql.replace(/^AND\s+/i, '').trim()].filter(
+      (p) => p.length > 0,
+    );
+    return parts.length ? `WHERE ${parts.join(' AND ')}` : '';
+  }
   /**
    * Creates a new photo record with metadata.
    * Compresses the source blob when the clinician's auto-compress preference
@@ -142,12 +165,12 @@ export class PhotoService implements IPhotoService {
           capturedMs,
           nowMs,
           nowMs,
-          '', // clinicianId: set by auth context when implemented
+          clinician.id,
         ]
       );
 
       // Update patient denormalised counts.
-      await patientService.updatePhotoCount(validated.patientId, 1, false);
+      await patientService.recountPhotos(validated.patientId);
 
       void auditService.record('photo.create', {
         entityType: 'photo',
@@ -271,6 +294,13 @@ export class PhotoService implements IPhotoService {
       [updatedSubpart ?? null, updatedNotes ?? null, nowMs, id]
     );
 
+    void auditService.record('photo.update', {
+      entityType: 'photo',
+      entityId: id,
+      patientId: photo.patientId,
+      detail: `${photo.bodyPart}${updatedSubpart ? ` · ${updatedSubpart}` : ''}`,
+    });
+
     // Record subpart usage if changed and provided.
     if (validated.subpart && validated.subpart !== photo.subpart) {
       await subpartService.recordUsage(photo.bodyPart, validated.subpart);
@@ -299,6 +329,8 @@ export class PhotoService implements IPhotoService {
     }
 
     const newId = uuidv4();
+    // The annotated copy is a new capture by the annotating clinician.
+    const annotator = await accessService.getCurrentClinician();
     const thumbnailBlob = await generateThumbnail(annotated, 200);
     const imagePath = await photoPath(`${newId}.jpg`);
     const thumbPath = await photoPath(`${newId}.thumb.jpg`);
@@ -327,11 +359,11 @@ export class PhotoService implements IPhotoService {
         photo.capturedAt.getTime(),
         nowMs,
         nowMs,
-        photo.clinicianId,
+        annotator.id,
       ]
     );
 
-    await patientService.updatePhotoCount(photo.patientId, 1, false);
+    await patientService.recountPhotos(photo.patientId);
     void auditService.record('photo.annotate', {
       entityType: 'photo',
       entityId: id,
@@ -372,9 +404,8 @@ export class PhotoService implements IPhotoService {
       [nowMs, nowMs, id]
     );
 
-    // Maintain denormalised counts: active -1, deleted +1.
-    await patientService.updatePhotoCount(photo.patientId, -1, false);
-    await patientService.updatePhotoCount(photo.patientId, 1, true);
+    // Maintain denormalised counts (single atomic recompute).
+    await patientService.recountPhotos(photo.patientId);
     void auditService.record('photo.delete', {
       entityType: 'photo',
       entityId: id,
@@ -405,8 +436,7 @@ export class PhotoService implements IPhotoService {
       [nowMs, id]
     );
 
-    await patientService.updatePhotoCount(photo.patientId, 1, false);
-    await patientService.updatePhotoCount(photo.patientId, -1, true);
+    await patientService.recountPhotos(photo.patientId);
     void auditService.record('photo.restore', {
       entityType: 'photo',
       entityId: id,
@@ -439,8 +469,10 @@ export class PhotoService implements IPhotoService {
       binds.push(bodyPart);
       sql += ` AND body_part = $${binds.length}`;
     }
-    binds.push(`%${normalizedKeyword}%`);
-    sql += ` AND LOWER(COALESCE(clinical_notes, '')) LIKE $${binds.length}`;
+    // Escape LIKE wildcards so % and _ in the note text match literally
+    // (same rule as the patient search).
+    binds.push(`%${normalizedKeyword.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    sql += ` AND LOWER(COALESCE(clinical_notes, '')) LIKE $${binds.length} ESCAPE '\\'`;
 
     sql += ' ORDER BY captured_at DESC';
 
@@ -497,38 +529,124 @@ export class PhotoService implements IPhotoService {
    * the current clinician can see. Optional filters by date range (capturedAt),
    * body part, and a limit.
    */
-  async getAllPhotos(
-    options: { from?: Date; to?: Date; bodyPart?: BodyPart; includeDeleted?: boolean; limit?: number } = {}
-  ): Promise<PhotoRecord[]> {
-    const { from, to, bodyPart, includeDeleted = false, limit } = options;
-
+  /**
+   * Lightweight rows for dashboard KPIs/charts — every accessible photo, no
+   * per-row file fields. Small enough to stay unlimited where a full
+   * PhotoRecord load would truncate.
+   */
+  async getAllPhotoSummaries(
+    options: { includeDeleted?: boolean } = {},
+  ): Promise<PhotoSummary[]> {
     const db = await getDB();
+    // Bind 1: the access filter's clinician id (no condition binds here).
+    const access = await accessService.getAccessiblePatientFilter(1);
+    const where = PhotoService.whereSql(
+      options.includeDeleted ? [] : ['ph.is_deleted = 0'],
+      access.sql,
+    );
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT ph.id, ph.patient_id, ph.body_part, ph.captured_at, ph.is_deleted,
+              p.name AS patient_name
+         FROM photos ph
+         JOIN patients p ON p.id = ph.patient_id
+         ${where}
+        ORDER BY ph.captured_at DESC`,
+      access.binds,
+    );
+    return rows.map((row) => ({
+      id: row.id as string,
+      patientId: row.patient_id as string,
+      patientName: (row.patient_name as string) ?? 'Unknown patient',
+      bodyPart: row.body_part as BodyPart,
+      capturedAt: new Date(row.captured_at as number),
+      isDeleted: Boolean(row.is_deleted),
+    }));
+  }
+
+  /**
+   * Access-scoped WHERE shared by getAllPhotos/getPhotosPage. Filtering in
+   * SQL (JOIN + the patient access filter) matters: LIMIT applied before a
+   * JS-side filter would silently under-return for non-admin clinicians.
+   */
+  private async buildPhotoQueryWhere(options: {
+    from?: Date;
+    to?: Date;
+    bodyPart?: BodyPart;
+    patientId?: string;
+    includeDeleted?: boolean;
+  }): Promise<{ where: string; binds: unknown[] }> {
+    const { from, to, bodyPart, patientId, includeDeleted = false } = options;
     const binds: unknown[] = [];
     const clauses: string[] = [];
-
-    if (!includeDeleted) clauses.push('is_deleted = 0');
+    if (!includeDeleted) clauses.push('ph.is_deleted = 0');
+    if (patientId) {
+      binds.push(patientId);
+      clauses.push(`ph.patient_id = $${binds.length}`);
+    }
     if (bodyPart) {
       binds.push(bodyPart);
-      clauses.push(`body_part = $${binds.length}`);
+      clauses.push(`ph.body_part = $${binds.length}`);
     }
     if (from) {
       binds.push(from.getTime());
-      clauses.push(`captured_at >= $${binds.length}`);
+      clauses.push(`ph.captured_at >= $${binds.length}`);
     }
     if (to) {
       binds.push(to.getTime());
-      clauses.push(`captured_at <= $${binds.length}`);
+      clauses.push(`ph.captured_at <= $${binds.length}`);
     }
+    const access = await accessService.getAccessiblePatientFilter(binds.length + 1);
+    binds.push(...access.binds);
+    return { where: PhotoService.whereSql(clauses, access.sql), binds };
+  }
 
-    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-    let sql = `SELECT * FROM photos ${where} ORDER BY captured_at DESC`;
+  async getAllPhotos(
+    options: { from?: Date; to?: Date; bodyPart?: BodyPart; patientId?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {}
+  ): Promise<PhotoRecord[]> {
+    const { from, to, bodyPart, patientId, includeDeleted = false, limit, offset } = options;
+    const db = await getDB();
+    const { where, binds } = await this.buildPhotoQueryWhere({ from, to, bodyPart, patientId, includeDeleted });
+
+    let sql = `SELECT ph.* FROM photos ph JOIN patients p ON p.id = ph.patient_id ${where} ORDER BY ph.captured_at DESC`;
     if (limit && limit > 0) {
       binds.push(limit);
       sql += ` LIMIT $${binds.length}`;
     }
+    if (offset && offset > 0) {
+      // OFFSET without LIMIT is invalid in SQLite — always bind both.
+      binds.push(offset);
+      sql += ` OFFSET $${binds.length}`;
+    }
 
     const rows = await db.select<Record<string, unknown>[]>(sql, binds);
-    return this.filterAccessible(rows.map(rowToPhoto));
+    return rows.map(rowToPhoto);
+  }
+
+  /**
+   * One page of the photos browser plus the total under the same filter, so
+   * the UI can page without ever silently truncating the library.
+   */
+  async getPhotosPage(
+    options: { from?: Date; to?: Date; bodyPart?: BodyPart; patientId?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {},
+  ): Promise<{ photos: PhotoRecord[]; total: number }> {
+    const { limit = 200, offset = 0, ...filters } = options;
+    const db = await getDB();
+    const { where, binds } = await this.buildPhotoQueryWhere(filters);
+
+    const countRows = await db.select<{ total: number }[]>(
+      `SELECT COUNT(*) AS total FROM photos ph JOIN patients p ON p.id = ph.patient_id ${where}`,
+      binds,
+    );
+    const total = countRows[0]?.total ?? 0;
+
+    const pageBinds = [...binds, Math.max(1, Math.floor(limit)), Math.max(0, Math.floor(offset))];
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT ph.* FROM photos ph JOIN patients p ON p.id = ph.patient_id ${where}
+        ORDER BY ph.captured_at DESC
+        LIMIT $${pageBinds.length - 1} OFFSET $${pageBinds.length}`,
+      pageBinds,
+    );
+    return { photos: rows.map(rowToPhoto), total };
   }
 
   /**

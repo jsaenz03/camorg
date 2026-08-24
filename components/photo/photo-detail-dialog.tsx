@@ -345,7 +345,8 @@ export function PhotoDetailDialog({
 
             {confirmDelete && (
               <p className="text-xs text-destructive">
-                Click again to permanently remove this photo.
+                Click again to remove this photo — it can be restored while it
+                stays in deleted.
               </p>
             )}
           </div>

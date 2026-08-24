@@ -371,6 +371,17 @@ function EditPatientDialog({
   const handleSubmit = async (values: EditPatientValues) => {
     setIsSaving(true);
     try {
+      // Renaming onto another patient's exact name fragments records — the
+      // service only warns, so confirm here where the user can still stop.
+      if (
+        values.name.trim().toLowerCase() !== patient.normalizedName &&
+        (await patientService.isDuplicateName(values.name, patient.id)) &&
+        !window.confirm(
+          `Another patient is already named “${values.name.trim()}”.\n\nSave this patient with the same name anyway?`,
+        )
+      ) {
+        return;
+      }
       const scope = (values.consentScope || null) as ConsentScope | null;
       const expiresAt = values.consentExpiresAt
         ? new Date(`${values.consentExpiresAt}T00:00:00`)

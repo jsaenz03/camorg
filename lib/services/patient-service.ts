@@ -367,30 +367,25 @@ export class PatientService implements IPatientService {
     return rows.length > 0;
   }
 
-  async updatePhotoCount(id: string, delta: number, isDeleted: boolean): Promise<void> {
+  /**
+   * Recompute a patient's denormalised photo counters from the photos table
+   * in one statement. The old read-modify-write drifted if a crash or
+   * interleaved write landed between the SELECT and the UPDATE; a
+   * correlated recompute is atomic and self-healing by construction.
+   */
+  async recountPhotos(id: string): Promise<void> {
     const db = await getDB();
-    const rows = await db.select<Record<string, unknown>[]>(
-      'SELECT * FROM patients WHERE id = $1',
-      [id],
-    );
-    if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
-    const patient = rowToPatient(rows[0]);
-
-    const nowMs = Date.now();
-    const newPhotoCount = isDeleted
-      ? patient.photoCount
-      : Math.max(0, patient.photoCount + delta);
-    const newDeletedCount = isDeleted
-      ? Math.max(0, patient.deletedPhotoCount + delta)
-      : patient.deletedPhotoCount;
-    const newLastPhotoAt =
-      delta > 0 && !isDeleted ? nowMs : patient.lastPhotoAt?.getTime() ?? null;
-
     await db.execute(
       `UPDATE patients
-         SET photo_count = $1, deleted_photo_count = $2, last_photo_at = $3, updated_at = $4
-       WHERE id = $5`,
-      [newPhotoCount, newDeletedCount, newLastPhotoAt, nowMs, id],
+          SET photo_count = (SELECT COUNT(*) FROM photos
+                              WHERE patient_id = patients.id AND is_deleted = 0),
+              deleted_photo_count = (SELECT COUNT(*) FROM photos
+                                      WHERE patient_id = patients.id AND is_deleted = 1),
+              last_photo_at = (SELECT MAX(captured_at) FROM photos
+                                WHERE patient_id = patients.id AND is_deleted = 0),
+              updated_at = $1
+        WHERE id = $2`,
+      [Date.now(), id],
     );
   }
 
