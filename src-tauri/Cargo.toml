@@ -32,3 +32,6 @@ base64 = "0.22"
 rand = "0.8"
 krilla = "0.8"
 skrifa = "0.42"
+
+[dev-dependencies]
+flate2 = "1"

@@ -134,6 +134,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       grant_directory_access,
       report::generate_case_report,
+      report::print_report,
       report::reveal_saved_report,
       remote_camera::start_remote_camera,
       remote_camera::stop_remote_camera

@@ -280,6 +280,10 @@ fn rule(s: &mut Surface, x0: f32, x1: f32, y: f32, color: rgb::Color, width: f32
   pb.move_to(x0, y);
   pb.line_to(x1, y);
   if let Some(path) = pb.finish() {
+    // draw_path paints with fill AND stroke when both are set: clear the
+    // fill so a stroked path can never be filled by stale text colour
+    // (this bug shipped photo frames as solid grey rectangles).
+    s.set_fill(None);
     s.set_stroke(Some(Stroke {
       paint: color.into(),
       width,
@@ -293,6 +297,10 @@ fn rect_outline(s: &mut Surface, rect: Rect, color: rgb::Color, width: f32) {
   let mut pb = PathBuilder::new();
   pb.push_rect(rect);
   if let Some(path) = pb.finish() {
+    // draw_path paints with fill AND stroke when both are set: clear the
+    // fill so a stroked path can never be filled by stale text colour
+    // (this bug shipped photo frames as solid grey rectangles).
+    s.set_fill(None);
     s.set_stroke(Some(Stroke {
       paint: color.into(),
       width,
@@ -628,6 +636,17 @@ pub fn generate_case_report(request: ReportRequest) -> Result<ReportOutcome, Str
   Ok(ReportOutcome { page_count: pages })
 }
 
+/// Open the native print dialog for the main window. WKWebView's JS
+/// window.print() is a silent no-op, so printing must go through Tauri.
+#[tauri::command]
+pub fn print_report(app: tauri::AppHandle) -> Result<(), String> {
+  use tauri::Manager;
+  match app.get_webview_window("main") {
+    Some(window) => window.print().map_err(|e| e.to_string()),
+    None => Err(String::from("Main window not found")),
+  }
+}
+
 /// Reveal a saved report in the platform file manager (Finder on macOS).
 /// Local-only affordance for the "save, then send it yourself" flow.
 #[tauri::command]
@@ -659,6 +678,52 @@ pub fn reveal_saved_report(path: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// Decompress every stream and check the operators we rely on: every photo
+  /// is drawn exactly once (Do), and no path is ever filled+stroked (B) —
+  /// the "solid grey photo boxes" bug was a stale fill surviving into the
+  /// photo frame stroke.
+  fn assert_content_operators(pdf: &[u8], expected_images: usize) {
+    use flate2::read::ZlibDecoder;
+    use std::io::Read;
+
+    fn find(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+      if from >= haystack.len() {
+        return None;
+      }
+      haystack[from..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|p| p + from)
+    }
+
+    let mut do_count = 0;
+    let mut b_count = 0;
+    let mut i = 0;
+    while let Some(pos) = find(pdf, b"stream", i) {
+      // "endstream" contains "stream"; skip those.
+      if pos >= 3 && &pdf[pos - 3..pos] == b"end" {
+        i = pos + 6;
+        continue;
+      }
+      let mut start = pos + 6;
+      while start < pdf.len() && (pdf[start] == b'\r' || pdf[start] == b'\n') {
+        start += 1;
+      }
+      let end = find(pdf, b"endstream", start).unwrap_or(pdf.len());
+      let stream = &pdf[start..end.min(pdf.len())];
+      let mut z = ZlibDecoder::new(stream);
+      let mut out = Vec::new();
+      if z.read_to_end(&mut out).is_ok() {
+        let text = String::from_utf8_lossy(&out);
+        do_count += text.matches(" Do").count();
+        b_count += text.matches("\nB\n").count() + text.matches(" B\n").count() + text.matches(" B ").count();
+      }
+      i = end.max(pos + 6);
+    }
+    assert_eq!(do_count, expected_images, "every photo must be drawn exactly once");
+    assert_eq!(b_count, 0, "no path may be filled+stroked (stale-fill bug)");
+  }
 
   #[test]
   fn wrap_fits_column_and_preserves_words() {
@@ -744,5 +809,6 @@ mod tests {
     if let Ok(dir) = std::env::var("CAMOG_REPORT_DUMP") {
       let _ = std::fs::write(format!("{dir}/report-test.pdf"), &bytes2);
     }
+    assert_content_operators(&bytes2, photos.len());
   }
 }

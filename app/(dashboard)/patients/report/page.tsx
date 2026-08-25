@@ -39,6 +39,10 @@ interface ReportPhoto {
   clinicalNotes: string | null;
 }
 
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 function sanitiseFileToken(name: string): string {
   return name.replace(/[/\\?%*:|"<>]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -164,13 +168,17 @@ function ReportView() {
   }, [photos]);
 
   function handlePrint() {
+    // WKWebView's window.print() is a silent no-op; go through Tauri's
+    // native print dialog instead.
     void auditService.record('photo.export', {
       entityType: 'patient',
       entityId: patientId,
       patientId,
       detail: `case report printed (${photos.length} photos)`,
     });
-    window.print();
+    invoke('print_report').catch((e: unknown) =>
+      toast.error(errorText(e), { duration: 8000 })
+    );
   }
 
   async function handleSavePdf() {
@@ -225,9 +233,7 @@ function ReportView() {
         },
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error), {
-        duration: 8000,
-      });
+      toast.error(errorText(error), { duration: 8000 });
     } finally {
       setIsGenerating(false);
     }
