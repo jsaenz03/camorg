@@ -3,6 +3,7 @@
 // scope grants and the phone-camera tether server.
 
 mod remote_camera;
+mod report;
 
 use std::path::{Component, Path};
 
@@ -132,6 +133,8 @@ pub fn run() {
     .plugin(tauri_plugin_fs::init())
     .invoke_handler(tauri::generate_handler![
       grant_directory_access,
+      report::generate_case_report,
+      report::reveal_saved_report,
       remote_camera::start_remote_camera,
       remote_camera::stop_remote_camera
     ])

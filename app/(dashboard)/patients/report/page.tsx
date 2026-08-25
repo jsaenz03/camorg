@@ -3,10 +3,10 @@
 /**
  * Patient Case Report
  *
- * Print-ready summary of a patient's photo history: header with identity +
- * consent status, then every active photo in capture order with its date,
- * body part, subpart and clinical notes. The browser print dialog
- * ("Save as PDF") does the PDF generation — no extra dependency.
+ * Preview of the printable case report plus a one-click "Save PDF" flow: the
+ * native save dialog picks the location, then the Rust side (report.rs)
+ * renders a styled PDF locally with krilla and writes it to disk. Nothing
+ * leaves the device; the doctor sends the file to the patient themselves.
  *
  * Static-export friendly: reads patient id from ?id= query param.
  */
@@ -14,13 +14,16 @@
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useState, useEffect, useMemo, Suspense } from 'react';
 import { format } from 'date-fns';
-import { ArrowLeft, Loader2, Printer } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
+import { ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import { consentStatus, ConsentScopeLabels } from '@/types/patient';
 import { BodyPartLabels } from '@/types/body-part';
 import { patientService } from '@/lib/services/patient-service';
 import { photoService } from '@/lib/services/photo-service';
 import { auditService } from '@/lib/services/audit-service';
+import { accessService } from '@/lib/services/access-service';
 import { formatDateOfBirth } from '@/lib/utils/date-formatting';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -29,10 +32,15 @@ import { toast } from 'sonner';
 interface ReportPhoto {
   id: string;
   url: string;
+  path: string;
   capturedAt: Date;
   bodyPart: string;
   subpart: string | null;
   clinicalNotes: string | null;
+}
+
+function sanitiseFileToken(name: string): string {
+  return name.replace(/[/\\?%*:|"<>]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function ReportView() {
@@ -42,7 +50,9 @@ function ReportView() {
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [photos, setPhotos] = useState<ReportPhoto[]>([]);
+  const [preparedBy, setPreparedBy] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [failed, setFailed] = useState<string[]>([]);
 
   useEffect(() => {
@@ -64,26 +74,38 @@ function ReportView() {
         const records = await photoService.getPhotosByPatient(patientId, {
           includeDeleted: false,
         });
+        const clinician = await accessService
+          .getCurrentClinician()
+          .then((c) => c.displayName)
+          .catch(() => null);
         if (cancelled) return;
-        setPatient(p);
+        setPreparedBy(clinician ?? p.ownerName ?? 'Clinician');
+        if (cancelled) return;
 
         // Full-size images, oldest first (the report reads chronologically).
         // ponytail: capped at 50 — every image loads as a full-size base64
-        // data URL, so a large timeline would freeze the print document.
+        // data URL, so a large timeline would freeze the report page.
         // Upgrade path: paginate the report or print from scaled-down copies.
         const MAX_REPORT_PHOTOS = 50;
         const ordered = [...records]
           .sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime())
           .slice(0, MAX_REPORT_PHOTOS)
           .sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
+        const paths = await photoService.getActivePhotoFilePaths(patientId);
         const loaded: ReportPhoto[] = [];
         const bad: string[] = [];
         for (const r of ordered) {
+          const path = paths.get(r.id);
+          if (!path) {
+            bad.push(r.id);
+            continue;
+          }
           try {
             const url = await photoService.exportPhotoAsDataUrl(r.id);
             loaded.push({
               id: r.id,
               url,
+              path,
               capturedAt: r.capturedAt,
               bodyPart: BodyPartLabels[r.bodyPart] ?? r.bodyPart,
               subpart: r.subpart,
@@ -94,10 +116,13 @@ function ReportView() {
           }
         }
         if (cancelled) return;
+        setPatient(p);
         setPhotos(loaded);
         setFailed(bad);
         if (records.length > ordered.length) {
-          toast.info(`Report shows the ${ordered.length} most recent of ${records.length} photos.`);
+          toast.info(
+            `Report shows the ${ordered.length} most recent of ${records.length} photos.`
+          );
         }
       } catch {
         if (!cancelled) toast.error('Failed to load report');
@@ -113,6 +138,31 @@ function ReportView() {
 
   const consent = useMemo(() => (patient ? consentStatus(patient) : 'none'), [patient]);
 
+  const consentText =
+    consent === 'valid'
+      ? `${ConsentScopeLabels[patient?.consentScope ?? 'care']}${
+          patient?.consentExpiresAt
+            ? ` (expires ${format(patient.consentExpiresAt, 'dd/MM/yyyy')})`
+            : ''
+        }`
+      : consent === 'expired'
+        ? 'EXPIRED'
+        : 'None on record';
+
+  const photoCountLabel = useMemo(() => {
+    if (!patient) return '';
+    return photos.length === patient.photoCount
+      ? `${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}`
+      : `${photos.length} of ${patient.photoCount} photos`;
+  }, [patient, photos]);
+
+  const timelineLabel = useMemo(() => {
+    if (photos.length === 0) return null;
+    const first = photos[0].capturedAt;
+    const last = photos[photos.length - 1].capturedAt;
+    return `${format(first, 'dd/MM/yyyy')} to ${format(last, 'dd/MM/yyyy')}`;
+  }, [photos]);
+
   function handlePrint() {
     void auditService.record('photo.export', {
       entityType: 'patient',
@@ -121,6 +171,66 @@ function ReportView() {
       detail: `case report printed (${photos.length} photos)`,
     });
     window.print();
+  }
+
+  async function handleSavePdf() {
+    if (!patient || photos.length === 0 || isGenerating) return;
+    const defaultName = `Camog case report - ${sanitiseFileToken(patient.name)} - ${format(new Date(), 'yyyy-MM-dd')}.pdf`;
+
+    const target = await save({
+      title: 'Save case report',
+      defaultPath: defaultName,
+      filters: [{ name: 'PDF document', extensions: ['pdf'] }],
+    });
+    if (!target) return; // cancelled
+
+    setIsGenerating(true);
+    try {
+      const outcome = await invoke<{ pageCount: number }>('generate_case_report', {
+        request: {
+          savePath: target,
+          patientName: patient.name,
+          dateOfBirth: patient.dateOfBirth ? formatDateOfBirth(patient.dateOfBirth) : null,
+          treatingClinician: patient.ownerName ?? null,
+          preparedBy,
+          preparedAt: format(new Date(), 'dd/MM/yyyy, h:mm a'),
+          consentLabel: consentText,
+          consentValid: consent === 'valid',
+          photoCountLabel,
+          timelineLabel,
+          photos: photos.map((p) => ({
+            path: p.path,
+            capturedLabel: format(p.capturedAt, 'dd/MM/yyyy'),
+            bodyPart: p.bodyPart,
+            subpart: p.subpart,
+            clinicalNotes: p.clinicalNotes,
+          })),
+        },
+      });
+      void auditService.record('photo.export', {
+        entityType: 'patient',
+        entityId: patientId,
+        patientId,
+        detail: `case report PDF saved (${photos.length} photos, ${outcome.pageCount} pages)`,
+      });
+      toast.success(`Report saved (${outcome.pageCount} ${outcome.pageCount === 1 ? 'page' : 'pages'})`, {
+        description: target,
+        action: {
+          label: 'Show in Finder',
+          onClick: () => {
+            void invoke('reveal_saved_report', { path: target }).catch((e: unknown) =>
+              toast.error(String(e))
+            );
+          },
+        },
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error), {
+        duration: 8000,
+      });
+    } finally {
+      setIsGenerating(false);
+    }
   }
 
   if (isLoading) {
@@ -135,94 +245,131 @@ function ReportView() {
 
   if (!patient) return null;
 
-  const consentText =
-    consent === 'valid'
-      ? `${ConsentScopeLabels[patient.consentScope ?? 'care']}${
-          patient.consentExpiresAt
-            ? ` (expires ${format(patient.consentExpiresAt, 'dd/MM/yyyy')})`
-            : ''
-        }`
-      : consent === 'expired'
-        ? 'EXPIRED'
-        : 'None on record';
-
   return (
     <div className="container mx-auto max-w-4xl px-4 py-8 md:px-6 md:py-10">
-      <div className="print-hidden mb-6 flex items-center gap-2">
-        <Button variant="ghost" onClick={() => router.push(`/patients/view?id=${patient.id}`)} className="-ml-2">
+      <div className="print-hidden mb-6 flex flex-wrap items-center gap-2">
+        <Button
+          variant="ghost"
+          onClick={() => router.push(`/patients/view?id=${patient.id}`)}
+          className="-ml-2"
+        >
           <ArrowLeft className="size-4" />
           Back to timeline
         </Button>
-        <Button className="ml-auto" onClick={handlePrint} disabled={photos.length === 0}>
-          <Printer className="size-4" />
-          Print / Save as PDF
-        </Button>
+        <p className="ml-2 hidden max-w-sm text-xs leading-relaxed text-muted-foreground lg:block">
+          The PDF is created on this device only. Send it to your patient from your email or
+          messaging app.
+        </p>
+        <div className="ml-auto flex gap-2">
+          <Button variant="outline" onClick={handlePrint} disabled={photos.length === 0}>
+            <Printer className="size-4" />
+            Print
+          </Button>
+          <Button
+            onClick={() => void handleSavePdf()}
+            disabled={photos.length === 0 || isGenerating}
+          >
+            {isGenerating ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <FileDown className="size-4" />
+            )}
+            Save PDF
+          </Button>
+        </div>
       </div>
 
-      <div className="print-report space-y-8">
-        <header className="border-b pb-4">
-          <h1 className="text-2xl font-semibold">Patient case report</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Generated {format(new Date(), 'dd/MM/yyyy HH:mm')} · Camog
+      {/* Paper preview: the document artifact stays light-themed even in dark
+          mode; only the surrounding chrome follows the app theme. */}
+      <article className="print-report mx-auto w-full max-w-[820px] rounded-lg border bg-white px-8 py-10 text-zinc-900 shadow-sm md:px-12">
+        <header>
+          <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-500">
+            Camog · Clinical photo documentation
           </p>
-          <dl className="mt-4 grid grid-cols-2 gap-x-8 gap-y-1 text-sm sm:grid-cols-3">
+          <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight">Patient case report</h1>
+            <div className="text-right text-xs leading-relaxed text-zinc-600">
+              <p>Prepared by {preparedBy ?? 'Clinician'}</p>
+              <p>{format(new Date(), 'dd/MM/yyyy, h:mm a')}</p>
+            </div>
+          </div>
+          <dl className="mt-8 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-3">
             <div>
-              <dt className="text-muted-foreground">Patient</dt>
-              <dd className="font-medium">{patient.name}</dd>
+              <dt className="text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Patient
+              </dt>
+              <dd className="mt-1 text-sm font-medium">{patient.name}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Date of birth</dt>
-              <dd className="font-medium">
-                {patient.dateOfBirth ? formatDateOfBirth(patient.dateOfBirth) : '—'}
+              <dt className="text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Date of birth
+              </dt>
+              <dd className="mt-1 text-sm font-medium">
+                {patient.dateOfBirth ? formatDateOfBirth(patient.dateOfBirth) : 'Not recorded'}
               </dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Photos</dt>
-              <dd className="font-medium">{photos.length}</dd>
+              <dt className="text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Photos
+              </dt>
+              <dd className="mt-1 text-sm font-medium">{photoCountLabel}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Owner</dt>
-              <dd className="font-medium">{patient.ownerName ?? '—'}</dd>
+              <dt className="text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Treating clinician
+              </dt>
+              <dd className="mt-1 text-sm font-medium">{patient.ownerName ?? 'Not recorded'}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Consent</dt>
-              <dd className={consent === 'valid' ? 'font-medium' : 'font-medium text-destructive'}>
+              <dt className="text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Photo timeline
+              </dt>
+              <dd className="mt-1 text-sm font-medium">{timelineLabel ?? '-'}</dd>
+            </div>
+            <div>
+              <dt className="text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Photo consent
+              </dt>
+              <dd
+                className={`mt-1 text-sm font-medium ${
+                  consent === 'valid' ? '' : 'text-red-700'
+                }`}
+              >
                 {consentText}
               </dd>
             </div>
           </dl>
+          <div className="mt-8 border-t-2 border-[#007B82]" />
         </header>
 
-        {failed.length > 0 && (
-          <p className="print-hidden text-sm text-destructive">
-            {failed.length} photo{failed.length === 1 ? '' : 's'} could not be loaded and
-            {' '}were left out of this report.
-          </p>
-        )}
-
         {photos.length === 0 ? (
-          <p className="text-muted-foreground">No photos on record for this patient.</p>
+          <p className="mt-8 text-sm text-zinc-500">No photos on record for this patient.</p>
         ) : (
-          <div className="grid gap-6 sm:grid-cols-2">
+          <div className="mt-8 space-y-8">
             {photos.map((photo, i) => (
-              <figure key={photo.id} className="print-break space-y-2">
-                <div className="overflow-hidden rounded-lg border bg-black">
-                  <img
-                    src={photo.url}
-                    alt={`Photo ${i + 1}: ${photo.bodyPart}, taken ${format(photo.capturedAt, 'd MMM yyyy')}`}
-                    className="h-auto w-full object-contain"
-                  />
-                </div>
-                <figcaption className="text-xs leading-relaxed text-muted-foreground">
-                  <span className="font-medium text-foreground">
-                    {format(photo.capturedAt, 'dd/MM/yyyy')}
-                  </span>{' '}
-                  · {photo.bodyPart}
-                  {photo.subpart ? ` · ${photo.subpart}` : ''}
+              <figure key={photo.id} className="print-break flex flex-col gap-4 sm:flex-row">
+                <img
+                  src={photo.url}
+                  alt={`Photo ${i + 1}: ${photo.bodyPart}, taken ${format(photo.capturedAt, 'd MMM yyyy')}`}
+                  className="w-full shrink-0 rounded-sm border border-zinc-200 bg-white object-contain sm:w-60"
+                />
+                <figcaption className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">{format(photo.capturedAt, 'dd/MM/yyyy')}</p>
+                  <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                    Photo {i + 1} of {photos.length}
+                  </p>
+                  <p className="mt-2 text-sm font-medium">
+                    {photo.bodyPart}
+                    {photo.subpart ? ` · ${photo.subpart}` : ''}
+                  </p>
                   {photo.clinicalNotes ? (
                     <>
-                      <br />
-                      {photo.clinicalNotes}
+                      <p className="mt-3 text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                        Notes
+                      </p>
+                      <p className="mt-1 whitespace-pre-line text-[13px] leading-relaxed text-zinc-700">
+                        {photo.clinicalNotes}
+                      </p>
                     </>
                   ) : null}
                 </figcaption>
@@ -230,7 +377,25 @@ function ReportView() {
             ))}
           </div>
         )}
-      </div>
+
+        {photos.length > 0 && (
+          <footer className="mt-10 border-t border-zinc-200 pt-4">
+            <p className="text-xs leading-relaxed text-zinc-500">
+              This report was generated locally with Camog on{' '}
+              {format(new Date(), 'dd/MM/yyyy, h:mm a')}. All photos and clinical notes remain
+              stored on the treating clinician&apos;s device; Camog does not transmit patient
+              data.
+            </p>
+          </footer>
+        )}
+      </article>
+
+      {failed.length > 0 && (
+        <p className="print-hidden mt-4 text-sm text-destructive">
+          {failed.length} photo{failed.length === 1 ? '' : 's'} could not be loaded and{' '}
+          {failed.length === 1 ? 'was' : 'were'} left out of this report.
+        </p>
+      )}
     </div>
   );
 }

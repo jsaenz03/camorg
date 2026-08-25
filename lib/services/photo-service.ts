@@ -525,6 +525,28 @@ export class PhotoService implements IPhotoService {
   }
 
   /**
+   * Absolute on-disk JPEG paths for a patient's active photos (id → path).
+   * Same access rule as getPhotosByPatient. Used by report generation, which
+   * streams the bytes straight into the PDF from the Rust side.
+   */
+  async getActivePhotoFilePaths(patientId: string): Promise<Map<string, string>> {
+    if (!(await accessService.canAccessPatient(patientId))) return new Map();
+    const db = await getDB();
+    const rows = await db.select<{ id: string; image_path: string }[]>(
+      'SELECT id, image_path FROM photos WHERE patient_id = $1 AND is_deleted = 0',
+      [patientId]
+    );
+    const dir = await getPhotosDir();
+    const map = new Map<string, string>();
+    for (const r of rows) {
+      // ponytail: image_path stores just the filename; resolve against the
+      // live photos dir (see exportPhotoAsDataUrl).
+      map.set(r.id, await join(dir, r.image_path));
+    }
+    return map;
+  }
+
+  /**
    * Retrieves photos across all patients, newest first. Restricted to patients
    * the current clinician can see. Optional filters by date range (capturedAt),
    * body part, and a limit.
