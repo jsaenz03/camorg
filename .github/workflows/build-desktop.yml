@@ -1,7 +1,8 @@
 name: Build Desktop Installers
 
-# Produces the Windows installer (.msi) and macOS DMG from CI, since Tauri
-# cannot cross-compile Windows binaries from macOS.
+# Produces the Windows installer (.exe, NSIS) and the macOS DMG (Apple
+# silicon) from CI, since Tauri cannot cross-compile Windows binaries from
+# macOS.
 #
 # Triggers:
 #   - push to default branch / PR to default branch -> checks + build (artifacts downloadable)
@@ -66,11 +67,9 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
-          - platform: macos-latest
-            args: "--target x86_64-apple-darwin"
+            args: "--target aarch64-apple-darwin --bundles dmg"
           - platform: windows-latest
-            args: ""
+            args: "--bundles nsis"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -86,7 +85,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -111,7 +110,7 @@ jobs:
         if: github.event_name != 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: camog-${{ matrix.platform }}-${{ matrix.args || 'default' }}
+          name: camog-${{ matrix.platform }}
           path: |
             src-tauri/target/*/release/bundle/**/*.dmg
             src-tauri/target/*/release/bundle/**/*.app
