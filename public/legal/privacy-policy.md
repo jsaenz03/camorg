@@ -1,6 +1,6 @@
 # Camog Privacy Policy
 
-**Effective date:** 23/08/2026 · **Version:** 1.0
+**Effective date:** 26/08/2026 · **Version:** 1.1
 
 > **DRAFT FOR REVIEW — NOT LEGAL ADVICE.**
 > Supplier details are completed (entity, ABN, address, privacy contact, distribution). This document must still be reviewed by a qualified Australian lawyer before publication or use.
@@ -10,9 +10,9 @@
 
 ## 1. Who we are
 
-**John Raphael Saenz** ABN **55 882 511 758**, of **Wollongong NSW 2500, Australia** ("we", "us", "Supplier") is the supplier of the Camog clinical photo documentation software ("**Software**").
+**John Raphael Saenz** (trading as **ClinicIQ Solutions**) ABN **55 882 511 758**, of **Wollongong NSW 2500, Australia** ("we", "us", "Supplier") is the supplier of the Camog clinical photo documentation software ("**Software**").
 
-**Privacy contact:** John Raphael Saenz (Supplier) · **admin@cliniciq.com.au**
+**Privacy contact:** privacy@cliniciq.com.au (Privacy Officer) · General enquiries: admin@cliniciq.com.au · https://cliniciq.com.au
 
 ## 2. At a glance
 

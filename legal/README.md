@@ -3,13 +3,18 @@
 - `terms-of-service.md` — Terms of Service (software licence) for organisations installing Camog.
 - `privacy-policy.md` — Privacy Policy (APP-aligned; Part A covers the supplier, Part B covers how the app handles patient information and the practice's obligations).
 
-## Before publishing — replace every `[SQUARE-BRACKET PLACEHOLDER]`
+## Before publishing — have a qualified Australian lawyer review both documents
 
-1. Supplier legal entity name and ABN (both documents).
-2. Postal address, support email, phone, distribution URL, privacy contact/officer.
-3. Commercial model (ToS cl 3.2) — currently drafted as free of charge; amend if fees are introduced.
-4. Liability cap amount (ToS cl 12.3).
-5. Governing state/territory (ToS cl 16).
+Supplier details are completed from the ClinicIQ business records (ABN 55 882 511 758,
+Wollongong NSW): entity + trading name, ABN, address, support/privacy contacts,
+distribution URL, commercial model (ToS cl 3.2 — 14-day trial then licence key,
+matching the code), governing law (New South Wales, ToS cl 16).
+
+Still to confirm with the lawyer:
+
+1. Liability cap amount (ToS cl 12.3 — currently AUD $100 / fees paid, a common
+   no-fee-software formulation; confirm it suits ClinicIQ's risk position).
+2. Whether any fees will be charged for licence keys (amend cl 3.2 if so).
 
 ## Also do
 

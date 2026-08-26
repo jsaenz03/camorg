@@ -609,6 +609,27 @@ fn render_report(
 
 #[tauri::command]
 pub fn generate_case_report(request: ReportRequest) -> Result<ReportOutcome, String> {
+  let photo_count = request.photos.len();
+  // Recorded for Settings → Diagnostics; messages must stay patient-free
+  // (counts and pages only).
+  match generate_case_report_inner(request) {
+    Ok(outcome) => {
+      crate::diagnostics::record(
+        crate::diagnostics::Level::Info,
+        "report",
+        &format!("Case report generated ({} photos, {} pages)", photo_count, outcome.page_count),
+        None,
+      );
+      Ok(outcome)
+    }
+    Err(e) => {
+      crate::diagnostics::record(crate::diagnostics::Level::Error, "report", &e, None);
+      Err(e)
+    }
+  }
+}
+
+fn generate_case_report_inner(request: ReportRequest) -> Result<ReportOutcome, String> {
   let fonts = load_fonts();
 
   // Read and validate every photo before writing anything, so a moved file
@@ -641,10 +662,14 @@ pub fn generate_case_report(request: ReportRequest) -> Result<ReportOutcome, Str
 #[tauri::command]
 pub fn print_report(app: tauri::AppHandle) -> Result<(), String> {
   use tauri::Manager;
-  match app.get_webview_window("main") {
+  let result = match app.get_webview_window("main") {
     Some(window) => window.print().map_err(|e| e.to_string()),
     None => Err(String::from("Main window not found")),
+  };
+  if let Err(e) = &result {
+    crate::diagnostics::record(crate::diagnostics::Level::Error, "print", e, None);
   }
+  result
 }
 
 /// Reveal a saved report in the platform file manager (Finder on macOS).
@@ -670,7 +695,11 @@ pub fn reveal_saved_report(path: String) -> Result<(), String> {
     .map(|dir| std::process::Command::new("xdg-open").arg(dir).spawn().map(|_| ()))
     .unwrap_or_else(|| std::process::Command::new("xdg-open").arg(&path).spawn().map(|_| ()));
 
-  result.map_err(|e| format!("Could not open the file manager: {e}"))
+  result.map_err(|e| {
+    let msg = format!("Could not open the file manager: {e}");
+    crate::diagnostics::record(crate::diagnostics::Level::Error, "reveal", &msg, None);
+    msg
+  })
 }
 
 // ---- tests ----

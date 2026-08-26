@@ -118,7 +118,15 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
     };
     match app.emit(PHOTO_EVENT, photo) {
       Ok(()) => respond_text(request, 200, "ok"),
-      Err(_) => respond_text(request, 500, "Could not deliver photo to app"),
+      Err(e) => {
+        crate::diagnostics::record(
+          crate::diagnostics::Level::Error,
+          "phone-camera",
+          &format!("Could not deliver phone photo to the app: {e}"),
+          None,
+        );
+        respond_text(request, 500, "Could not deliver photo to app")
+      }
     }
   } else {
     respond_text(request, 404, "Not found");
@@ -149,13 +157,16 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   stop_remote_camera().await;
 
   let ip = lan_ip();
-  let server = Server::http((ip, 0))
-    .map_err(|e| format!("failed to start phone-camera server: {e}"))?;
-  let port = server
-    .server_addr()
-    .to_ip()
-    .map(|a| a.port())
-    .ok_or_else(|| "failed to determine phone-camera server port".to_string())?;
+  let server = Server::http((ip, 0)).map_err(|e| {
+    let msg = format!("failed to start phone-camera server: {e}");
+    crate::diagnostics::record(crate::diagnostics::Level::Error, "phone-camera", &msg, None);
+    msg
+  })?;
+  let port = server.server_addr().to_ip().map(|a| a.port()).ok_or_else(|| {
+    let msg = "failed to determine phone-camera server port".to_string();
+    crate::diagnostics::record(crate::diagnostics::Level::Error, "phone-camera", &msg, None);
+    msg
+  })?;
   let token = format!("{:016x}", rand::random::<u64>());
   let server = Arc::new(server);
 
@@ -167,6 +178,14 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
     server,
     thread: Some(thread),
   });
+
+  // No token in diagnostics — the pairing URL is a secret.
+  crate::diagnostics::record(
+    crate::diagnostics::Level::Info,
+    "phone-camera",
+    &format!("Phone camera link started on {ip}:{port}"),
+    None,
+  );
 
   Ok(RemoteCameraInfo {
     url: format!("http://{ip}:{port}/t/{token}/"),

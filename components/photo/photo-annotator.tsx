@@ -50,6 +50,7 @@ import {
   MousePointer2,
   Pencil,
   Plus,
+  RotateCcw,
   Ruler,
   Square,
   Trash2,
@@ -222,6 +223,13 @@ export default function PhotoAnnotator({
 
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [view, setView] = useState({ width: 0, height: 0, scale: 1 });
+  // User zoom on top of the fitted scale (1 = fit). The stage stays in
+  // natural-image coordinates via effScale; zoomed content scrolls.
+  const [zoom, setZoom] = useState(1);
+  const effScale = view.scale * zoom;
+  const zoomIn = () => setZoom((z) => Math.min(8, z * 1.25));
+  const zoomOut = () => setZoom((z) => Math.max(0.5, z / 1.25));
+  const zoomFit = () => setZoom(1);
 
   const [tool, setTool] = useState<Tool>('text');
   const [color, setColor] = useState(PEN_COLORS[0]);
@@ -246,6 +254,7 @@ export default function PhotoAnnotator({
 
   // Load the image, then keep the stage fitted to the container.
   useEffect(() => {
+    setZoom(1);
     const img = new Image();
     img.onload = () => setImage(img);
     img.src = src;
@@ -311,8 +320,8 @@ export default function PhotoAnnotator({
     if (!stage) return null;
     const pos = stage.getPointerPosition();
     if (!pos) return null;
-    return { x: pos.x / view.scale, y: pos.y / view.scale };
-  }, [view.scale]);
+    return { x: pos.x / effScale, y: pos.y / effScale };
+  }, [effScale]);
 
   const draftingRef = useRef<Annotation | null>(null);
   const [draft, setDraft] = useState<Annotation | null>(null);
@@ -553,9 +562,9 @@ export default function PhotoAnnotator({
     const url = stage.toDataURL({
       x: 0,
       y: 0,
-      width: view.width,
-      height: view.height,
-      pixelRatio: image.naturalWidth / view.width,
+      width: view.width * zoom,
+      height: view.height * zoom,
+      pixelRatio: image.naturalWidth / (view.width * zoom),
       mimeType: 'image/jpeg',
       quality: 0.92,
     });
@@ -896,21 +905,22 @@ export default function PhotoAnnotator({
         </div>
       </div>
 
-      {/* Canvas */}
-      <div ref={containerRef} className="flex min-h-0 flex-1 items-center justify-center bg-black/90 p-3">
-        {image && view.width > 0 && (
-          <div className="relative">
-            <Stage
-              ref={stageRef}
-              width={view.width}
-              height={view.height}
-              scaleX={view.scale}
-              scaleY={view.scale}
-              style={{ cursor }}
-              onPointerDown={handleStagePointerDown}
-              onPointerMove={handleStagePointerMove}
-              onPointerUp={handleStagePointerUp}
-            >
+      {/* Canvas: zoomed content scrolls; auto margins centre it when it fits */}
+      <div className="relative flex min-h-0 flex-1 bg-black/90">
+        <div ref={containerRef} className="flex min-h-0 flex-1 overflow-auto p-3">
+          {image && view.width > 0 && (
+            <div className="relative m-auto">
+              <Stage
+                ref={stageRef}
+                width={view.width * zoom}
+                height={view.height * zoom}
+                scaleX={effScale}
+                scaleY={effScale}
+                style={{ cursor }}
+                onPointerDown={handleStagePointerDown}
+                onPointerMove={handleStagePointerMove}
+                onPointerUp={handleStagePointerUp}
+              >
               <Layer listening={false}>
                 <KonvaImage image={image} width={image.naturalWidth} height={image.naturalHeight} />
               </Layer>
@@ -925,8 +935,8 @@ export default function PhotoAnnotator({
                   borderStroke="#71717a"
                   anchorStroke="#fafafa"
                   anchorFill="#18181b"
-                  anchorSize={4 / view.scale}
-                  borderStrokeWidth={1 / view.scale}
+                  anchorSize={4 / effScale}
+                  borderStrokeWidth={1 / effScale}
                 />
               </Layer>
             </Stage>
@@ -940,9 +950,9 @@ export default function PhotoAnnotator({
                 onBlur={(e) => commitText(editingAnn.id, e.currentTarget.value)}
                 className="absolute z-10 min-w-[120px] resize border-2 border-primary bg-background/90 px-1 font-bold outline-none"
                 style={{
-                  left: editingAnn.x * view.scale,
-                  top: (editingAnn.y - editingAnn.fontSize * 0.15) * view.scale,
-                  fontSize: editingAnn.fontSize * view.scale,
+                  left: editingAnn.x * effScale,
+                  top: (editingAnn.y - editingAnn.fontSize * 0.15) * effScale,
+                  fontSize: editingAnn.fontSize * effScale,
                   fontFamily: editingAnn.fontFamily,
                   lineHeight: 1.1,
                   color: editingAnn.color,
@@ -952,6 +962,57 @@ export default function PhotoAnnotator({
                 aria-label="Annotation text"
               />
             )}
+            </div>
+          )}
+        </div>
+
+        {/* Zoom controls */}
+        {image && view.width > 0 && (
+          <div className="absolute bottom-3 right-3 flex flex-col items-center gap-1 rounded-lg bg-black/60 p-1 backdrop-blur-sm">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 text-white hover:bg-white/20 hover:text-white"
+              aria-label="Zoom in"
+              title="Zoom in"
+              disabled={isSaving || zoom >= 8}
+              onClick={zoomIn}
+            >
+              <Plus className="size-4" />
+            </Button>
+            <button
+              type="button"
+              className="px-1 text-xs tabular-nums text-white"
+              title="Current zoom (relative to fit)"
+              onClick={zoomFit}
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 text-white hover:bg-white/20 hover:text-white"
+              aria-label="Reset zoom to fit"
+              title="Fit to window"
+              disabled={isSaving || zoom === 1}
+              onClick={zoomFit}
+            >
+              <RotateCcw className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 text-white hover:bg-white/20 hover:text-white"
+              aria-label="Zoom out"
+              title="Zoom out"
+              disabled={isSaving || zoom <= 0.5}
+              onClick={zoomOut}
+            >
+              <Minus className="size-4" />
+            </Button>
           </div>
         )}
       </div>

@@ -2,6 +2,7 @@
 // tauri-plugin-fs (photo files). App-level Rust commands: photo-directory
 // scope grants and the phone-camera tether server.
 
+mod diagnostics;
 mod remote_camera;
 mod report;
 
@@ -70,31 +71,45 @@ pub fn run() {
   // are static, so a persisted custom dir must be re-granted on every launch.
   #[tauri::command]
   fn grant_directory_access(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    // Every refusal is recorded so Settings → Diagnostics can explain why a
+    // custom photos folder stopped working.
+    let deny = |msg: String| -> Result<(), String> {
+      diagnostics::record(diagnostics::Level::Error, "grant-directory", &msg, None);
+      Err(msg)
+    };
     // Trust boundary: the webview supplies this string (normally via the
     // native folder dialog). Refuse anything but an existing, non-root,
     // non-home directory so a compromised webview can't hand the fs scope
     // to the whole disk.
     let p = Path::new(&path);
     if !p.is_absolute() {
-      return Err("Path must be absolute".into());
+      return deny("Path must be absolute".into());
     }
     // A path with no Normal component is a filesystem root ("/", "C:\\",
     // UNC share roots).
     if !p.components().any(|c| matches!(c, Component::Normal(_))) {
-      return Err("Refusing to grant a filesystem root".into());
+      return deny("Refusing to grant a filesystem root".into());
     }
     if let Ok(home) = app.path().home_dir() {
       if p == home {
-        return Err("Refusing to grant the user's home directory".into());
+        return deny("Refusing to grant the user's home directory".into());
       }
     }
-    let meta = std::fs::metadata(p).map_err(|e| format!("Directory not accessible: {e}"))?;
+    let meta = match std::fs::metadata(p) {
+      Ok(meta) => meta,
+      Err(e) => return deny(format!("Directory not accessible: {e}")),
+    };
     if !meta.is_dir() {
-      return Err("Path is not a directory".into());
+      return deny("Path is not a directory".into());
     }
-    app.fs_scope()
+    app
+      .fs_scope()
       .allow_directory(&path, true)
-      .map_err(|e| e.to_string())
+      .map_err(|e| {
+        let msg = format!("Could not grant access to the folder: {e}");
+        diagnostics::record(diagnostics::Level::Error, "grant-directory", &msg, None);
+        msg
+      })
   }
 
   tauri::Builder::default()
@@ -107,6 +122,7 @@ pub fn run() {
       }
     }))
     .setup(|app| {
+      diagnostics::install_panic_hook();
       // Logs in every build (release support was blind before): stdout for
       // dev, a rotating file in the OS log dir, webview console.
       app.handle().plugin(
@@ -122,6 +138,12 @@ pub fn run() {
           ])
           .build(),
       )?;
+      diagnostics::record(
+        diagnostics::Level::Info,
+        "app",
+        &format!("Camog started (v{}, {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS),
+        None,
+      );
       Ok(())
     })
     .plugin(tauri_plugin_dialog::init())
@@ -137,7 +159,10 @@ pub fn run() {
       report::print_report,
       report::reveal_saved_report,
       remote_camera::start_remote_camera,
-      remote_camera::stop_remote_camera
+      remote_camera::stop_remote_camera,
+      diagnostics::record_web_diagnostic,
+      diagnostics::diagnostics_info,
+      diagnostics::diagnostics_clear
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

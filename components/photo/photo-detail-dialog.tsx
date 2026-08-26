@@ -113,6 +113,8 @@ export function PhotoDetailDialog({
 
   if (!photo) return null;
 
+  const photoAlt = `Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? `, ${photo.subpart}` : ''}`;
+
   // Annotating swaps the Radix dialog for a fullscreen overlay. The editor
   // portals its save-modal, option popovers and text input to document.body —
   // inside a Radix Dialog those are outside the focus trap and the layer's
@@ -123,7 +125,7 @@ export function PhotoDetailDialog({
         <div className="h-full w-full overflow-hidden rounded-xl border shadow-lg">
           <PhotoAnnotator
             src={imageUrl}
-            alt={`Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? `, ${photo.subpart}` : ''}`}
+            alt={photoAlt}
             onSave={handleSaveAnnotation}
             onClose={() => setAnnotate(false)}
           />
@@ -238,7 +240,7 @@ export function PhotoDetailDialog({
               <>
                 <PhotoViewer
                   src={imageUrl}
-                  alt={`Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? `, ${photo.subpart}` : ''}`}
+                  alt={photoAlt}
                   className="h-[60vh] w-full"
                 />
                 {!photo.isDeleted && (

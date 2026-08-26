@@ -57,6 +57,16 @@ The app uses Tauri's `appDataDir`:
 - `photos/<photoId>.jpg` — full-size JPEG (compressed to ≤1920px, quality 0.85).
 - `photos/<photoId>.thumb.jpg` — 200×200 thumbnail.
 
+### Logs & diagnostics
+
+**Settings → Diagnostics** shows what failed this session (command errors,
+panics, webview errors) plus database/photos-folder health checks, and can
+copy a support report. Everything shown there is also written to the rotating
+log file next to the app data folder — `~/Library/Logs/com.camog.app/camog.log`
+on macOS, `%APPDATA%\com.camog.app\logs\camog.log` on Windows (1 MB cap).
+**Clear** (type CLEAR to confirm) empties the session list and removes those
+log files.
+
 ### Photo storage location (local or cloud)
 
 By default photo files live in the app data folder above. An admin can point

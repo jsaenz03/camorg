@@ -95,7 +95,7 @@ export default function LoginPage() {
     try {
       await authService.login(values);
       await refresh();
-      router.replace('/capture');
+      router.replace('/');
     } catch (err) {
       console.error('[login] failed:', err);
       toast.error(

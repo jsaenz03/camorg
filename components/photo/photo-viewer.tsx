@@ -44,17 +44,28 @@ export function PhotoViewer({ src, alt, className }: PhotoViewerProps) {
           const { zoomIn, zoomOut, resetTransform } = utils as unknown as ZoomControls;
           return (
             <>
+              {/* The library injects width/height: fit-content on its wrapper
+                  and content AFTER Tailwind loads, so h-full/w-full classes
+                  lose the cascade and the interactive area shrink-wraps the
+                  photo (zoom can never reach the surrounding box). Inline
+                  styles win the cascade and force both to fill the viewer. */}
               <TransformComponent
                 wrapperClass="h-full w-full"
+                wrapperStyle={{ width: '100%', height: '100%' }}
                 contentClass="flex h-full w-full items-center justify-center"
+                contentStyle={{ width: '100%', height: '100%', display: 'flex' }}
               >
-                <div className="relative">
+                <div className="relative flex h-full w-full items-center justify-center">
+                  {/* w/h-full + object-contain (not max-*): the img element is
+                      always exactly the box size and the photo fit-fills it,
+                      so it tracks every box resize — max-width would cap it
+                      at the photo's intrinsic width ("stuck at load width"). */}
                   {/* eslint-disable-next-line @next/next/no-img-element -- data-URL image from local storage */}
                   <img
                     src={src}
                     alt={alt}
                     draggable={false}
-                    className="max-h-full max-w-full select-none object-contain"
+                    className="h-full w-full select-none object-contain"
                   />
                 </div>
               </TransformComponent>

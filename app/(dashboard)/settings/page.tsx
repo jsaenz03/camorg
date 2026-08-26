@@ -27,6 +27,7 @@ import { StoragePanel } from '@/components/settings/storage-panel';
 import { BackupPanel } from '@/components/settings/backup-panel';
 import { AuditLogPanel } from '@/components/settings/audit-log-panel';
 import { LicencePanel } from '@/components/settings/licence-panel';
+import { DiagnosticsPanel } from '@/components/settings/diagnostics-panel';
 import { PageHeader } from '@/components/page-header';
 
 import {
@@ -101,6 +102,7 @@ export default function SettingsPage() {
           {isAdmin && <TabsTrigger value="audit">Audit</TabsTrigger>}
           {isAdmin && <TabsTrigger value="licence">Licence</TabsTrigger>}
           {isAdmin && <TabsTrigger value="app">App</TabsTrigger>}
+          <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile" className="mt-6 space-y-4">
@@ -144,6 +146,9 @@ export default function SettingsPage() {
             <AppSettingsPanel />
           </TabsContent>
         )}
+        <TabsContent value="diagnostics" className="mt-6">
+          <DiagnosticsPanel />
+        </TabsContent>
       </Tabs>
     </div>
   );

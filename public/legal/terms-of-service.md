@@ -1,16 +1,16 @@
 # Camog — Terms of Service
 
-**Effective date:** 23/08/2026 · **Version:** 1.0
+**Effective date:** 26/08/2026 · **Version:** 1.1
 
 > **DRAFT FOR REVIEW — NOT LEGAL ADVICE.**
-> Supplier details are completed (entity, ABN, address, contact, distribution). This document must still be reviewed by a qualified Australian lawyer before publication or use.
+> Supplier details and commercial terms are completed (entity, trading name, ABN, address, contacts, distribution, licence model, governing law). This document must still be reviewed by a qualified Australian lawyer before publication or use — in particular the liability cap in clause 12.3.
 > Statements about how the Software works reflect Camog v0.1.x. If the Software changes (for example, if telemetry, cloud services or fees are ever added), these Terms and the Privacy Policy must be updated to match.
 
 ---
 
 ## 1. Agreement to these Terms
 
-1.1 These Terms of Service ("**Terms**") are a legal agreement between you and **John Raphael Saenz** ABN **55 882 511 758** ("**we**", "**us**", "**Supplier**") in relation to the Camog clinical photo documentation software, including any copies and any updates we release ("**Software**").
+1.1 These Terms of Service ("**Terms**") are a legal agreement between you and **John Raphael Saenz** (trading as **ClinicIQ Solutions**) ABN **55 882 511 758** ("**we**", "**us**", "**Supplier**") in relation to the Camog clinical photo documentation software, including any copies and any updates we release ("**Software**").
 
 1.2 "**You**" means the organisation (such as a medical practice or clinic) on whose computer the Software is installed. If you accept these Terms on behalf of an organisation, you warrant that you are authorised to bind that organisation.
 
@@ -31,7 +31,7 @@ The following points are summaries only and do not replace the full clauses that
 
 3.1 Subject to these Terms, we grant you a **non-exclusive, non-transferable, non-sublicensable, revocable** licence to install and run the Software on computers you own or control, for your internal clinical documentation and practice administration purposes.
 
-3.2 **[Confirm commercial model — e.g. "The Software is currently supplied free of charge." Amend this clause if fees, subscriptions or licence keys are introduced.]**
+3.2 The Software is supplied under a licence key. A new installation operates as a full-featured **14-day trial**, after which the installation becomes **read-only** (existing records remain viewable) until a licence key issued by us is activated. Licence keys are verified entirely on your device. Contact us (clause 18) for current licence terms and any applicable fees.
 
 3.3 The Software incorporates third-party open-source components (including the Tauri, React and Next.js frameworks and their dependencies). Those components are licensed to you under their own licence terms, and nothing in these Terms limits any rights those licences give you. A current list is in the `package.json` and `src-tauri/Cargo.toml` manifests distributed with the source code.
 
@@ -112,7 +112,7 @@ Version 0.1.x is an early ("beta") release. It may contain defects, and features
 
 12.2 Subject to clause 12.1, we are not liable for any indirect, incidental or consequential loss, or for any loss of profits, revenue, goodwill or **loss or corruption of data**, however caused (including by defects in the Software or by use of the phone-camera tether or backup features).
 
-12.3 Subject to clauses 12.1 and 12.2, our aggregate liability arising out of or in connection with the Software is limited to **[AMOUNT — e.g. AUD $100, or the fees you paid us in the 12 months before the claim, whichever is greater]**.
+12.3 Subject to clauses 12.1 and 12.2, our aggregate liability arising out of or in connection with the Software is limited to **AUD $100, or the fees you paid us in the 12 months before the claim, whichever is greater**.
 
 12.4 Nothing in these Terms excludes or limits any liability that cannot lawfully be excluded or limited, including liability for fraud, or for death or personal injury caused by negligence.
 
@@ -136,7 +136,7 @@ We may amend these Terms from time to time. Material changes will be published a
 
 ## 16. Governing law
 
-These Terms are governed by the laws of **[INSERT AUSTRALIAN STATE OR TERRITORY — e.g. New South Wales]**, Australia, and you and we submit to the non-exclusive jurisdiction of the courts of that state or territory. Nothing in these Terms affects your rights under the Australian Consumer Law or any other law that cannot be excluded.
+These Terms are governed by the laws of **New South Wales**, Australia, and you and we submit to the non-exclusive jurisdiction of the courts of that state or territory. Nothing in these Terms affects your rights under the Australian Consumer Law or any other law that cannot be excluded.
 
 ## 17. General
 
@@ -144,4 +144,4 @@ These Terms are governed by the laws of **[INSERT AUSTRALIAN STATE OR TERRITORY 
 
 ## 18. Contact
 
-**John Raphael Saenz** · ABN **55 882 511 758** · **Wollongong NSW 2500, Australia** · Email: **admin@cliniciq.com.au** · Distribution: **https://github.com/jsaenz03/camorg/releases**
+**John Raphael Saenz**, trading as **ClinicIQ Solutions** · ABN **55 882 511 758** · **Wollongong NSW 2500, Australia** · Website: **https://cliniciq.com.au** · Email: **admin@cliniciq.com.au** · Distribution: **https://github.com/jsaenz03/camorg/releases**

@@ -129,7 +129,7 @@ function SignupInner() {
       await authService.acceptInvitation(values);
       await refresh();
       toast.success('Account created');
-      router.replace('/capture');
+      router.replace('/');
     } catch (err) {
       console.error('[signup] invite accept failed:', err);
       toast.error(toErrorMessage(err, 'Sign up failed'));
@@ -157,7 +157,7 @@ function SignupInner() {
       }
       await refresh();
       toast.success(`Organisation ready — welcome, ${admin.displayName}`);
-      router.replace('/capture');
+      router.replace('/');
     } catch (err) {
       console.error('[signup] organisation setup failed:', err);
       toast.error(toErrorMessage(err, 'Set up failed'));
@@ -173,7 +173,7 @@ function SignupInner() {
       }
       await refresh();
       toast.success('Account created');
-      router.replace('/capture');
+      router.replace('/');
     } catch (err) {
       console.error('[signup] registration failed:', err);
       toast.error(toErrorMessage(err, 'Sign up failed'));
