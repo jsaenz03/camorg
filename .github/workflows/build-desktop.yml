@@ -139,6 +139,8 @@ jobs:
       - name: Publish rolling 'edge' pre-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout in this job — pin the repo so gh never needs git.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # Move the 'edge' tag to this commit; recreate the release fresh.
@@ -146,6 +148,7 @@ jobs:
           mapfile -t files < <(find installers -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \))
           echo "Attaching ${#files[@]} installers:" && printf '  %s\n' "${files[@]}"
           gh release create edge "${files[@]}" \
+            --target "$GITHUB_SHA" \
             --title "Edge build (main @ ${GITHUB_SHA:0:7})" \
             --prerelease \
             --notes "Automated build of \`main\` — [run #${GITHUB_RUN_NUMBER}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Untested pre-release; prefer the latest stable release for daily use."
