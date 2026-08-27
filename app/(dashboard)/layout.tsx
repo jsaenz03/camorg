@@ -8,18 +8,22 @@
  *
  * Auth gate: redirects to /login when no session is present. Holds a minimal
  * skeleton while the session is resolving so we never flash protected UI.
- * Also mounts the idle privacy lock (Settings → App → idle timeout).
+ * Also mounts the idle privacy lock (Settings → App → idle timeout) and
+ * blocks on a must-change-passcode screen for temporary-passcode accounts
+ * (precreated invitations, dev seed) until a new passcode is set.
  */
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
+import { Button } from '@/components/ui/button';
 import { AppSidebar } from '@/components/app-sidebar';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { UserMenu } from '@/components/user-menu';
 import { IdleLockOverlay } from '@/components/idle-lock-overlay';
 import { LicenceBanner } from '@/components/licence/licence-banner';
+import { ChangePasscodeForm } from '@/components/settings/change-passcode-form';
 import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -44,13 +48,44 @@ function IdleLockGate() {
   return <IdleLockOverlay timeoutMs={timeoutMs} />;
 }
 
+/**
+ * Blocking gate for accounts still on a temporary passcode (precreated
+ * invitations, dev seed): the app chrome stays hidden until a new passcode
+ * is set. An escape hatch signs out instead of trapping the wrong user.
+ */
+function MustChangePasscodeGate({
+  onDone,
+  onSignOut,
+}: {
+  onDone: () => Promise<void>;
+  onSignOut: () => void;
+}) {
+  return (
+    <div className="flex min-h-dvh items-center justify-center px-4 py-12">
+      <div className="w-full max-w-sm space-y-4">
+        <div className="space-y-1 text-center">
+          <h1 className="text-lg font-semibold">Set a new passcode</h1>
+          <p className="text-sm text-muted-foreground">
+            You signed in with a temporary passcode. Choose a new one to
+            continue using Camog.
+          </p>
+        </div>
+        <ChangePasscodeForm onchanged={onDone} />
+        <Button variant="ghost" size="sm" className="w-full" onClick={onSignOut}>
+          Sign out instead
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const { session, loading } = useAuth();
+  const { session, clinician, loading, refresh, clear } = useAuth();
 
   useEffect(() => {
     if (loading) return;
@@ -67,6 +102,21 @@ export default function DashboardLayout({
           <Skeleton className="h-64 w-full" />
         </div>
       </div>
+    );
+  }
+
+  if (clinician?.mustChangePasscode) {
+    return (
+      <MustChangePasscodeGate
+        onDone={refresh}
+        onSignOut={() => {
+          void (async () => {
+            await authService.logout();
+            clear();
+            router.replace('/login');
+          })();
+        }}
+      />
     );
   }
 

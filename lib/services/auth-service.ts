@@ -333,7 +333,7 @@ export class AuthService implements IAuthService {
     if (!rows.length) {
       return {
         sessionTimeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
-        allowPublicSignup: true,
+        allowPublicSignup: false,
         orgName: 'Camog',
         idleLockTimeoutMs: 300_000,
         updatedAt: new Date(),
@@ -674,9 +674,11 @@ export class AuthService implements IAuthService {
     }
     // Full factory reset of org settings (incl. the storage override); the
     // licence columns stay so a dev reset doesn't force reactivation.
+    // allow_public_signup returns to the fresh-install default (invite-only,
+    // per migration 002) so a reset device behaves like a new one.
     await db.execute(
       `UPDATE settings
-          SET allow_public_signup = 1, org_name = 'Camog', photos_dir = NULL, updated_at = $1
+          SET allow_public_signup = 0, org_name = 'Camog', photos_dir = NULL, updated_at = $1
         WHERE id = 'app'`,
       [Date.now()],
     );
@@ -790,20 +792,15 @@ export class AuthService implements IAuthService {
     const tokenHash = await hashPasscode(token);
     const nowMs = Date.now();
     const expiresAt = nowMs + validated.ttlDays * 24 * 60 * 60 * 1000;
-
-    const tempHash = validated.tempPasscode
-      ? await hashPasscode(validated.tempPasscode)
-      : null;
-
     const mustChange = validated.kind === 'precreated';
 
     const db = await getDB();
     await db.execute(
       `INSERT INTO invitations
          (id, token, token_hash, kind, username, display_name, role,
-          temp_passcode_hash, must_change_passcode, invited_by,
+          must_change_passcode, invited_by,
           created_at, expires_at, accepted_at, accepted_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL, NULL)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL)`,
       [
         id,
         token,
@@ -812,13 +809,30 @@ export class AuthService implements IAuthService {
         validated.username,
         validated.displayName,
         validated.role,
-        tempHash,
         mustChange ? 1 : 0,
         admin.id,
         nowMs,
         expiresAt,
       ],
     );
+
+    // `precreated`: the account exists from this moment — the invitee signs in
+    // with the temp passcode and the dashboard's must-change gate forces a new
+    // one. The invitation is accepted on the spot so its code can't also be
+    // redeemed at /signup (the username is taken either way).
+    let acceptedAt: Date | null = null;
+    let acceptedBy: string | null = null;
+    if (validated.kind === 'precreated') {
+      acceptedBy = await this.createClinicianRow({
+        username: validated.username,
+        passcode: validated.tempPasscode!,
+        displayName: validated.displayName,
+        role: validated.role,
+        mustChangePasscode: true,
+      });
+      await this.markInvitationAccepted(token, acceptedBy);
+      acceptedAt = new Date(nowMs);
+    }
 
     return {
       id,
@@ -831,8 +845,8 @@ export class AuthService implements IAuthService {
       invitedBy: admin.id,
       createdAt: new Date(nowMs),
       expiresAt: new Date(expiresAt),
-      acceptedAt: null,
-      acceptedBy: null,
+      acceptedAt,
+      acceptedBy,
     };
   }
 
@@ -989,8 +1003,9 @@ export class AuthService implements IAuthService {
   }
 
   /**
-   * Inserts a clinician row with a PBKDF2-hashed passcode. Shared by the env
-   * bootstrap, the dev seed, registration, and invitation acceptance.
+   * Inserts a clinician row with a PBKDF2-hashed passcode and returns its id.
+   * Shared by the env bootstrap, the dev seed, registration, invitation
+   * acceptance, and precreated-invitation creation.
    */
   private async createClinicianRow(input: {
     username: string;
@@ -998,7 +1013,7 @@ export class AuthService implements IAuthService {
     displayName: string;
     role: ClinicianRole;
     mustChangePasscode: boolean;
-  }): Promise<void> {
+  }): Promise<string> {
     const id = uuidv4();
     const nowMs = Date.now();
     const passcodeHash = await hashPasscode(input.passcode);
@@ -1026,6 +1041,7 @@ export class AuthService implements IAuthService {
         nowMs,
       ],
     );
+    return id;
   }
 
   // ---------- internal helpers ----------

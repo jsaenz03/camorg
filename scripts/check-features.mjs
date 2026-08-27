@@ -119,6 +119,28 @@ for (const doc of ['terms-of-service.md', 'privacy-policy.md']) {
 }
 check('legal page renders markdown', read('app/legal/page.tsx').includes('renderMarkdown'));
 
+// 10. Invitation flow wiring: precreated invites create the account at invite
+//     time (temp passcode + must-change), the signup screen exposes code entry
+//     even when public signup is on, and the dashboard enforces the
+//     must-change-passcode gate.
+const authServiceSrc = read('lib/services/auth-service.ts');
+check(
+  'auth-service: precreated invites create the clinician row at invite time',
+  /if \(validated\.kind === 'precreated'\) \{[\s\S]{0,200}createClinicianRow[\s\S]{0,300}mustChangePasscode: true/.test(authServiceSrc),
+);
+check(
+  'auth-service: factory reset restores the invite-only default',
+  /SET allow_public_signup = 0/.test(authServiceSrc),
+);
+check(
+  'signup: invite-code entry reachable in both public and invite-only modes',
+  /showCodeEntry/.test(read('app/(auth)/signup/page.tsx')),
+);
+check(
+  'dashboard layout gates on mustChangePasscode',
+  /clinician\?\.mustChangePasscode/.test(read('app/(dashboard)/layout.tsx')),
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

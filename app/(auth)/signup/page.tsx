@@ -11,7 +11,8 @@
  *     username/displayName, set a fresh passcode, accept the invitation.
  *  3. No token + `allow_public_signup` — open registration. The account is
  *     created pending; an admin approves it in Settings → Users before it can
- *     sign in.
+ *     sign in. An "I have an invite code" link swaps in the code field so
+ *     invited users can always reach mode 2.
  *  4. No token + invite-only — inline code field; on submit, resolve the
  *     invitation and switch to mode 2.
  */
@@ -74,6 +75,8 @@ function SignupInner() {
   const [codeInput, setCodeInput] = useState('');
   const [orgName, setOrgName] = useState('');
   const [pendingSubmitted, setPendingSubmitted] = useState(false);
+  // Public-signup mode only: swaps the request-access form for the code field.
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -388,8 +391,76 @@ function SignupInner() {
     );
   }
 
+  // ----- invite-code entry (default in invite-only mode; reachable from
+  // public mode via the "I have an invite code" toggle) -----
+  const lookup = async () => {
+    const code = codeInput.trim();
+    if (!code) {
+      toast.error('Enter an invite code');
+      return;
+    }
+    try {
+      const inv = await authService.resolveInvitation(code);
+      router.replace(`/signup?token=${encodeURIComponent(inv.token)}`);
+    } catch (err) {
+      const message =
+        err instanceof NotFoundError
+          ? 'Invite code not found'
+          : err instanceof Error
+            ? err.message
+            : 'Could not resolve invite';
+      toast.error(message);
+    }
+  };
+
+  const inviteCodeCard = (
+    <Card>
+      <CardHeader>
+        <CardTitle>Sign up with an invite</CardTitle>
+        <CardDescription>
+          Enter the code your administrator gave you.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Input
+          placeholder="e.g. ABCD1234"
+          value={codeInput}
+          onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void lookup();
+            }
+          }}
+        />
+        <Button className="w-full" onClick={lookup}>
+          Continue
+        </Button>
+      </CardContent>
+      <CardFooter className="flex-col gap-2">
+        {boot.publicSignup ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full"
+            onClick={() => setShowCodeEntry(false)}
+          >
+            <ArrowLeft className="mr-2 size-4" /> Request access instead
+          </Button>
+        ) : (
+          <Button variant="ghost" size="sm" asChild className="w-full">
+            <Link href="/login">
+              <ArrowLeft className="mr-2 size-4" /> Back to sign in
+            </Link>
+          </Button>
+        )}
+      </CardFooter>
+    </Card>
+  );
+
   // ----- open signup (pending approval) -----
   if (boot.publicSignup) {
+    if (showCodeEntry) return inviteCodeCard;
     if (pendingSubmitted) {
       return (
         <Card>
@@ -479,11 +550,19 @@ function SignupInner() {
             </form>
           </Form>
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex-col gap-2">
           <Button variant="ghost" size="sm" asChild className="w-full">
             <Link href="/login">
               <ArrowLeft className="mr-2 size-4" /> Back to sign in
             </Link>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full"
+            onClick={() => setShowCodeEntry(true)}
+          >
+            I have an invite code
           </Button>
         </CardFooter>
       </Card>
@@ -491,59 +570,7 @@ function SignupInner() {
   }
 
   // ----- invite-only -----
-  const lookup = async () => {
-    const code = codeInput.trim();
-    if (!code) {
-      toast.error('Enter an invite code');
-      return;
-    }
-    try {
-      const inv = await authService.resolveInvitation(code);
-      router.replace(`/signup?token=${encodeURIComponent(inv.token)}`);
-    } catch (err) {
-      const message =
-        err instanceof NotFoundError
-          ? 'Invite code not found'
-          : err instanceof Error
-            ? err.message
-            : 'Could not resolve invite';
-      toast.error(message);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Sign up</CardTitle>
-        <CardDescription>
-          Sign up is invite-only. Enter the code your administrator gave you.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <Input
-          placeholder="e.g. ABCD1234"
-          value={codeInput}
-          onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              void lookup();
-            }
-          }}
-        />
-        <Button className="w-full" onClick={lookup}>
-          Continue
-        </Button>
-      </CardContent>
-      <CardFooter>
-        <Button variant="ghost" size="sm" asChild className="w-full">
-          <Link href="/login">
-            <ArrowLeft className="mr-2 size-4" /> Back to sign in
-          </Link>
-        </Button>
-      </CardFooter>
-    </Card>
-  );
+  return inviteCodeCard;
 }
 
 export default function SignupPage() {

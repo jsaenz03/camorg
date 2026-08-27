@@ -36,3 +36,14 @@ test.describe('auth gate', () => {
     await expect(page).toHaveURL(/\/login\/?$/, { timeout: 20_000 });
   });
 });
+
+test.describe('signup screen', () => {
+  // Outside the Tauri shell the settings fetch fails and the page falls back
+  // to the invite-only posture — which must always expose the code field (the
+  // "nowhere to put the token" regression).
+  test('invite-code entry is reachable', async ({ page }) => {
+    await page.goto('/signup');
+    await expect(page.getByText('Enter the code your administrator gave you')).toBeVisible();
+    await expect(page.getByPlaceholder('e.g. ABCD1234')).toBeVisible();
+  });
+});

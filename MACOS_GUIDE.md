@@ -30,7 +30,9 @@ approves them under **Settings → Users** (see below).
 ### Adding people (administrator)
 
 - **Invitations** (Settings → Invitations): generate a code, hand it to the
-  new member, they sign up with it and choose their own passcode
+  new member — they enter it on the sign-up screen ("I have an invite code")
+  and choose their own passcode. Precreated invites skip the code: you set a
+  temporary passcode and they must choose a new one at first sign-in
 - **Public sign up**: if enabled (Settings → App settings), anyone can
   request access from the sign-in screen; their account stays **pending**
   until an administrator approves it in Settings → Users

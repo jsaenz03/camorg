@@ -206,25 +206,27 @@ export function InvitationsPanel() {
                       </FormItem>
                     )}
                   />
-                  <FormField
-                    control={form.control}
-                    name="ttlDays"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Expires (days)</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={90}
-                            value={field.value}
-                            onChange={(e) => field.onChange(Number(e.target.value))}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {kind !== 'precreated' && (
+                    <FormField
+                      control={form.control}
+                      name="ttlDays"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Expires (days)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={90}
+                              value={field.value}
+                              onChange={(e) => field.onChange(Number(e.target.value))}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                 </div>
                 {kind === 'precreated' && (
                   <FormField
@@ -257,31 +259,51 @@ export function InvitationsPanel() {
       <CardContent className="space-y-4">
         {revealed && (
           <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
-            <p className="mb-1 font-medium">
-              {revealed.kind === 'precreated'
-                ? 'Account created. Share these credentials:'
-                : 'Share this invite code (shown once):'}
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="rounded bg-background px-2 py-1 font-mono text-base tracking-widest">
-                {revealed.token}
-              </code>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void navigator.clipboard.writeText(revealed.token);
-                  toast.success('Code copied');
-                }}
-              >
-                <Copy className="size-4" />
-              </Button>
-              {revealed.kind === 'precreated' && (
-                <span className="text-muted-foreground">
-                  temp passcode set by you
-                </span>
-              )}
-            </div>
+            {revealed.kind === 'precreated' ? (
+              <>
+                <p className="mb-1 font-medium">
+                  Account created. Share these sign-in details:
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="rounded bg-background px-2 py-1 font-mono text-base tracking-widest">
+                    {revealed.username}
+                  </code>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(revealed.username);
+                      toast.success('Username copied');
+                    }}
+                  >
+                    <Copy className="size-4" />
+                  </Button>
+                </div>
+                <p className="mt-2 text-muted-foreground">
+                  They sign in with this username and the temporary passcode you
+                  set, then choose their own passcode.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="mb-1 font-medium">Share this invite code (shown once):</p>
+                <div className="flex items-center gap-2">
+                  <code className="rounded bg-background px-2 py-1 font-mono text-base tracking-widest">
+                    {revealed.token}
+                  </code>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(revealed.token);
+                      toast.success('Code copied');
+                    }}
+                  >
+                    <Copy className="size-4" />
+                  </Button>
+                </div>
+              </>
+            )}
             <Button
               variant="link"
               size="sm"
