@@ -71,7 +71,8 @@ The next launch shows the first-run wizard again.
 
 Download the newer `.dmg` from
 [Releases](https://github.com/jsaenz03/camorg/releases) and drag it over the
-existing app in Applications. Your data is untouched.
+existing app in Applications. Your data is untouched. Pick the release marked
+**Latest** — "Edge build" entries are automated pre-releases.
 
 ## Troubleshooting
 

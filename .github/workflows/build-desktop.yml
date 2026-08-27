@@ -5,9 +5,10 @@ name: Build Desktop Installers
 # Windows binaries from macOS.
 #
 # Triggers:
-#   - push to default branch / PR to default branch -> checks + build (artifacts downloadable)
-#   - published GitHub Release   -> checks + build + attach installers to the release
-#   - manual dispatch            -> checks + build
+#   - push to default branch -> checks + build (artifacts) + rolling 'edge' pre-release
+#   - PR to default branch   -> checks + build (artifacts)
+#   - published GitHub Release -> checks + build + attach installers to the release
+#   - manual dispatch        -> checks + build
 
 on:
   push:
@@ -119,3 +120,32 @@ jobs:
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.exe
           if-no-files-found: error
+
+  publish-edge:
+    # Releases convention: every packaged build of main lands on the Releases
+    # page as a rolling 'edge' pre-release (recreated each run, never
+    # accumulated). Stable releases are still cut by publishing a versioned
+    # GitHub Release, which the release-event path above attaches to.
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - name: Publish rolling 'edge' pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Move the 'edge' tag to this commit; recreate the release fresh.
+          gh release delete edge --yes --cleanup-tag >/dev/null 2>&1 || true
+          mapfile -t files < <(find installers -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \))
+          echo "Attaching ${#files[@]} installers:" && printf '  %s\n' "${files[@]}"
+          gh release create edge "${files[@]}" \
+            --title "Edge build (main @ ${GITHUB_SHA:0:7})" \
+            --prerelease \
+            --notes "Automated build of \`main\` — [run #${GITHUB_RUN_NUMBER}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Untested pre-release; prefer the latest stable release for daily use."
