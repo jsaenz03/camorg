@@ -5,5 +5,12 @@
 	<!-- macOS refuses WKWebView camera access (no TCC prompt) without this key. -->
 	<key>NSCameraUsageDescription</key>
 	<string>Camog uses the camera to capture clinical photos.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Camog does not use the microphone; macOS may bundle it with the camera request.</string>
+	<!-- Stable TCC identity for the dev binary: the dev plist has no bundle id
+	     of its own, and without one macOS may silently deny camera access
+	     instead of prompting, leaving Camog absent from Privacy settings. -->
+	<key>CFBundleIdentifier</key>
+	<string>com.camog.app</string>
 </dict>
 </plist>
