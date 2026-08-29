@@ -34,6 +34,7 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { useAuth } from '@/lib/auth/auth-context';
+import { useBranding } from '@/components/branding-boot';
 
 interface NavLink {
   href: string;
@@ -79,6 +80,7 @@ function initials(name: string): string {
 export function AppSidebar() {
   const pathname = usePathname();
   const { clinician } = useAuth();
+  const { orgName, logoDataUrl } = useBranding();
 
   return (
     <Sidebar collapsible="icon">
@@ -86,16 +88,16 @@ export function AppSidebar() {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild tooltip="Camog">
+            <SidebarMenuButton size="lg" asChild tooltip={orgName}>
               <Link href="/">
-                {/* eslint-disable-next-line @next/next/no-img-element -- static export; brand mark */}
+                {/* eslint-disable-next-line @next/next/no-img-element -- static export / inline data URL; brand mark */}
                 <img
-                  src="/logo.png"
-                  alt="Camog"
+                  src={logoDataUrl ?? '/logo.png'}
+                  alt={orgName}
                   className="aspect-square size-8 rounded-lg object-contain"
                 />
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">Camog</span>
+                  <span className="truncate font-semibold">{orgName}</span>
                   <span className="truncate text-xs text-muted-foreground">
                     Clinical Photos
                   </span>

@@ -23,6 +23,7 @@ import {
   invitationCreateSchema,
   invitationAcceptSchema,
   settingsUpdateSchema,
+  logoDataUrlSchema,
 } from '@/lib/validators/schemas';
 import type { IAuthService, SessionInfo } from '@/specs/001-role-you-are/contracts/auth-service';
 import { getDB, ensureBootstrapped } from '@/lib/db/database';
@@ -179,6 +180,9 @@ function rowToSettings(row: Record<string, unknown>): AppSettings {
     allowPublicSignup: Boolean(row.allow_public_signup),
     orgName: row.org_name as string,
     idleLockTimeoutMs: (row.idle_lock_timeout_ms as number) ?? 300_000,
+    brandPrimary: (row.brand_primary as string | null) ?? null,
+    brandAccent: (row.brand_accent as string | null) ?? null,
+    logoDataUrl: (row.logo_data_url as string | null) ?? null,
     updatedAt: new Date(row.updated_at as number),
   };
 }
@@ -336,6 +340,9 @@ export class AuthService implements IAuthService {
         allowPublicSignup: false,
         orgName: 'Camog',
         idleLockTimeoutMs: 300_000,
+        brandPrimary: null,
+        brandAccent: null,
+        logoDataUrl: null,
         updatedAt: new Date(),
       };
     }
@@ -351,6 +358,9 @@ export class AuthService implements IAuthService {
       allowPublicSignup: validated.allowPublicSignup ?? current.allowPublicSignup,
       orgName: validated.orgName ?? current.orgName,
       idleLockTimeoutMs: validated.idleLockTimeoutMs ?? current.idleLockTimeoutMs,
+      brandPrimary: validated.brandPrimary !== undefined ? validated.brandPrimary : current.brandPrimary,
+      brandAccent: validated.brandAccent !== undefined ? validated.brandAccent : current.brandAccent,
+      logoDataUrl: current.logoDataUrl,
       updatedAt: new Date(),
     };
     const db = await getDB();
@@ -360,17 +370,35 @@ export class AuthService implements IAuthService {
              allow_public_signup = $2,
              org_name = $3,
              idle_lock_timeout_ms = $4,
-             updated_at = $5
+             brand_primary = $5,
+             brand_accent = $6,
+             updated_at = $7
        WHERE id = 'app'`,
       [
         next.sessionTimeoutMs,
         next.allowPublicSignup ? 1 : 0,
         next.orgName,
         next.idleLockTimeoutMs,
+        next.brandPrimary,
+        next.brandAccent,
         next.updatedAt.getTime(),
       ],
     );
     return next;
+  }
+
+  /** The business logo (inline data URL, downscaled by the UI). Written
+   *  through this dedicated setter — never updateSettings() — so the base64
+   *  blob stays out of the settings form payload and its schema. */
+  async setLogo(dataUrl: string | null): Promise<AppSettings> {
+    await this.requireAdmin();
+    const validated = logoDataUrlSchema.parse(dataUrl);
+    const db = await getDB();
+    await db.execute(
+      `UPDATE settings SET logo_data_url = $1, updated_at = $2 WHERE id = 'app'`,
+      [validated, Date.now()],
+    );
+    return this.getSettings();
   }
 
   // ---------- registration ----------
@@ -672,13 +700,15 @@ export class AuthService implements IAuthService {
     for (const table of ['patient_shares', 'photos', 'patients', 'subparts', 'invitations', 'clinicians', 'audit_log']) {
       await db.execute(`DELETE FROM ${table}`);
     }
-    // Full factory reset of org settings (incl. the storage override); the
-    // licence columns stay so a dev reset doesn't force reactivation.
-    // allow_public_signup returns to the fresh-install default (invite-only,
-    // per migration 002) so a reset device behaves like a new one.
+    // Full factory reset of org settings (incl. the storage override and the
+    // business branding); the licence columns stay so a dev reset doesn't
+    // force reactivation. allow_public_signup returns to the fresh-install
+    // default (invite-only, per migration 002) so a reset device behaves
+    // like a new one.
     await db.execute(
       `UPDATE settings
-          SET allow_public_signup = 0, org_name = 'Camog', photos_dir = NULL, updated_at = $1
+          SET allow_public_signup = 0, org_name = 'Camog', photos_dir = NULL,
+              brand_primary = NULL, brand_accent = NULL, logo_data_url = NULL, updated_at = $1
         WHERE id = 'app'`,
       [Date.now()],
     );

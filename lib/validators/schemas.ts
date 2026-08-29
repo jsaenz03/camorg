@@ -156,13 +156,34 @@ export const invitationAcceptSchema = z.object({
   passcode: passcodeRules,
 });
 
+/** Brand colour: `#rgb` / `#rrggbb` hex, normalised to lowercase `#rrggbb`. */
+export const hexColourSchema = z
+  .string()
+  .regex(/^#?[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/, 'Enter a hex colour like #007b82')
+  .transform((v) => {
+    const bare = v.replace(/^#/, '');
+    return `#${(bare.length === 3 ? [...bare].map((c) => c + c).join('') : bare).toLowerCase()}`;
+  });
+
 export const settingsUpdateSchema = z.object({
   sessionTimeoutMs: z.number().int().min(60_000).max(86_400_000).optional(),
   allowPublicSignup: z.boolean().optional(),
   orgName: z.string().min(1).max(100).trim().optional(),
   /** Idle privacy lock: 0 disables, otherwise 1 min – 1 hour. */
   idleLockTimeoutMs: z.number().int().min(0).max(3_600_000).optional(),
+  /** null removes the override — the built-in Camog teal stands. */
+  brandPrimary: hexColourSchema.nullable().optional(),
+  brandAccent: hexColourSchema.nullable().optional(),
 });
+
+/** The business logo as an inline data URL (already downscaled by the UI).
+ *  Image MIME types only, capped so the settings row (read on every page
+ *  load) stays light. */
+export const logoDataUrlSchema = z
+  .string()
+  .max(600_000, 'That image is too large — try one under about 400 KB.')
+  .regex(/^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/, 'Not a supported image data URL')
+  .nullable();
 
 /**
  * Absolute filesystem path for the photos storage directory (local or a

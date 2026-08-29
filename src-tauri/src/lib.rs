@@ -64,6 +64,12 @@ pub fn run() {
       sql: include_str!("../migrations/008_licence.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 9,
+      description: "branding: business logo and colour palette",
+      sql: include_str!("../migrations/009_branding.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory

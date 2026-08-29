@@ -15,6 +15,7 @@ import { useRouter } from 'next/navigation';
 import { Aperture } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/auth-context';
+import { useBranding } from '@/components/branding-boot';
 
 export default function AuthLayout({
   children,
@@ -23,6 +24,7 @@ export default function AuthLayout({
 }) {
   const router = useRouter();
   const { session, loading } = useAuth();
+  const { orgName, logoDataUrl } = useBranding();
 
   useEffect(() => {
     if (loading) return;
@@ -38,8 +40,13 @@ export default function AuthLayout({
           href="/"
           className="mb-8 flex items-center justify-center gap-2 font-semibold tracking-tight"
         >
-          <Aperture className="size-6 text-primary" />
-          <span className="text-lg">Camog</span>
+          {logoDataUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- inline data URL, nothing for next/image to optimise
+            <img src={logoDataUrl} alt={orgName} className="size-6 object-contain" />
+          ) : (
+            <Aperture className="size-6 text-primary" />
+          )}
+          <span className="text-lg">{orgName}</span>
         </Link>
         {children}
         {process.env.NODE_ENV === 'development' && (

@@ -29,5 +29,10 @@ export interface AppSettings {
   orgName: string;
   /** Idle privacy lock: 0 = off. */
   idleLockTimeoutMs: number;
+  /** Brand colours (lowercase `#rrggbb`); null keeps the built-in teal. */
+  brandPrimary: string | null;
+  brandAccent: string | null;
+  /** Business logo as an inline data URL; null keeps the built-in mark. */
+  logoDataUrl: string | null;
   updatedAt: Date;
 }

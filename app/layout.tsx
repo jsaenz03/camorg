@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { DiagnosticsInit } from "@/components/diagnostics-init";
+import { BrandingProvider } from "@/components/branding-boot";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -38,15 +39,17 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <ErrorBoundary>
             <DiagnosticsInit />
-            <LicenceProvider>
-              <AuthProvider>
-                <TooltipProvider delayDuration={300}>
-                  {children}
-                  <LicenceActivationDialog />
-                  <Toaster richColors />
-                </TooltipProvider>
-              </AuthProvider>
-            </LicenceProvider>
+            <BrandingProvider>
+              <LicenceProvider>
+                <AuthProvider>
+                  <TooltipProvider delayDuration={300}>
+                    {children}
+                    <LicenceActivationDialog />
+                    <Toaster richColors />
+                  </TooltipProvider>
+                </AuthProvider>
+              </LicenceProvider>
+            </BrandingProvider>
           </ErrorBoundary>
         </ThemeProvider>
       </body>

@@ -241,6 +241,9 @@ export interface IAuthService {
 
   getSettings(): Promise<AppSettings>;
   updateSettings(patch: SettingsUpdate): Promise<AppSettings>;
+  /** Business logo (inline data URL) — dedicated setter so the base64 blob
+   *  never travels through the SettingsUpdate form schema. Admin only. */
+  setLogo(dataUrl: string | null): Promise<AppSettings>;
 
   // ----- Dev / bootstrapping -----
 
