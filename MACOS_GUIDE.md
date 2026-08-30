@@ -17,9 +17,24 @@ other tools on the machine.
      WebView2 component automatically if the machine is missing it)
 2. Open the `.dmg` and drag **Camog** into **Applications**
 3. Launch Camog from Applications
-   - On first launch, macOS may warn that the app is from an unidentified
-     developer (the app is not yet code-signed). Right-click Camog →
-     **Open** → **Open** in the dialog. This is only needed once.
+   - Camog is not signed with an Apple Developer certificate, so on modern
+     macOS a browser-downloaded copy is blocked on first launch with a
+     misleading **"'Camog' is damaged and can't be opened"** message. The app
+     is fine — macOS just refuses unsigned downloads. One-time fix: open
+     **Terminal** (Applications → Utilities → Terminal), paste this, press
+     Return, then launch Camog normally:
+     ```bash
+     xattr -d com.apple.quarantine /Applications/Camog.app
+     ```
+   - To avoid the workaround entirely, download the `.dmg` from Terminal
+     instead of a browser — files fetched with `curl` carry no quarantine
+     flag. Pick the file for your Mac from the
+     [releases page](https://github.com/jsaenz03/camorg/releases), e.g. for
+     Apple Silicon and version `X.Y.Z`:
+     ```bash
+     curl -LO https://github.com/jsaenz03/camorg/releases/download/vX.Y.Z/Camog_X.Y.Z_aarch64.dmg
+     ```
+     (Intel Macs: the `_x64.dmg` file.)
 4. The first-run wizard appears: name your organisation and create the first
    account — it becomes the organisation administrator
 5. Sign in with the account you just created
@@ -92,7 +107,12 @@ existing app in Applications. Your data is untouched. Pick the release marked
 
 ### App won't start
 1. Confirm macOS 10.15 (Catalina) or newer
-2. If Gatekeeper blocks launch, right-click → Open (see install step 3)
+2. "'Camog' is damaged and can't be opened" — this is Gatekeeper refusing the
+   unsigned download, not real damage. Clear the quarantine flag (once):
+   ```bash
+   xattr -d com.apple.quarantine /Applications/Camog.app
+   ```
+   (see install step 3)
 3. If the database is corrupted, reset it (see Maintenance) — this deletes
    all data
 
@@ -138,8 +158,10 @@ npm run desktop:build
 ```
 
 Output lands in `src-tauri/target/release/bundle/`. CI (GitHub Actions)
-builds and attaches the signed-off macOS DMGs and Windows MSI to each
-[Release](https://github.com/jsaenz03/camorg/releases) automatically.
+builds and attaches the macOS DMGs and Windows installers to each
+[Release](https://github.com/jsaenz03/camorg/releases) automatically. macOS
+builds are ad-hoc signed only (no Apple Developer certificate, no
+notarisation) — see install step 3 for the first-launch note.
 
 > **Warning:** a local `.env` with bootstrap credentials gets baked into a
 > locally built installer (Next inlines `NEXT_PUBLIC_*` values at build
