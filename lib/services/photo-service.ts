@@ -11,7 +11,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { PhotoRecord } from '@/types/photo';
 import type { PhotoRecordCreate, PhotoRecordUpdate } from '@/lib/validators/schemas';
-import type { BodyPart } from '@/types/body-part';
+import type { BodyPart, Laterality } from '@/types/body-part';
 
 /** Lightweight photo row for aggregates (KPIs, charts, calendars). */
 export interface PhotoSummary {
@@ -59,6 +59,7 @@ function rowToPhoto(row: Record<string, unknown>): PhotoRecord {
     mimeType: row.mime_type as string,
     fileSizeBytes: row.file_size_bytes as number,
     bodyPart: row.body_part as BodyPart,
+    laterality: (row.laterality as Laterality | null) ?? null,
     subpart: (row.subpart as string | null) ?? null,
     clinicalNotes: (row.clinical_notes as string | null) ?? null,
     capturedAt: new Date(row.captured_at as number),
@@ -148,9 +149,9 @@ export class PhotoService implements IPhotoService {
       await db.execute(
         `INSERT INTO photos
            (id, patient_id, image_path, thumbnail_path, original_file_name,
-            mime_type, file_size_bytes, body_part, subpart, clinical_notes,
+            mime_type, file_size_bytes, body_part, laterality, subpart, clinical_notes,
             captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, NULL)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 0, NULL)`,
         [
           id,
           validated.patientId,
@@ -160,6 +161,7 @@ export class PhotoService implements IPhotoService {
           validated.mimeType,
           storedBlob.size,
           validated.bodyPart,
+          validated.laterality ?? null,
           validated.subpart ?? null,
           validated.clinicalNotes ?? null,
           capturedMs,
@@ -193,6 +195,7 @@ export class PhotoService implements IPhotoService {
         mimeType: validated.mimeType,
         fileSizeBytes: storedBlob.size,
         bodyPart: validated.bodyPart,
+        laterality: validated.laterality ?? null,
         subpart: validated.subpart || null,
         clinicalNotes: validated.clinicalNotes || null,
         capturedAt: validated.capturedAt,
@@ -281,6 +284,8 @@ export class PhotoService implements IPhotoService {
     const photo = rowToPhoto(rows[0]);
     await accessService.assertCanManagePatient(photo.patientId);
 
+    const updatedLaterality =
+      validated.laterality !== undefined ? validated.laterality : photo.laterality;
     const updatedSubpart =
       validated.subpart !== undefined ? validated.subpart : photo.subpart;
     const updatedNotes =
@@ -289,16 +294,20 @@ export class PhotoService implements IPhotoService {
 
     await db.execute(
       `UPDATE photos
-         SET subpart = $1, clinical_notes = $2, updated_at = $3
-       WHERE id = $4`,
-      [updatedSubpart ?? null, updatedNotes ?? null, nowMs, id]
+         SET laterality = $1, subpart = $2, clinical_notes = $3, updated_at = $4
+       WHERE id = $5`,
+      [updatedLaterality, updatedSubpart ?? null, updatedNotes ?? null, nowMs, id]
     );
 
+    const auditParts = [
+      updatedLaterality ?? photo.bodyPart,
+      ...(updatedSubpart ? [updatedSubpart] : []),
+    ];
     void auditService.record('photo.update', {
       entityType: 'photo',
       entityId: id,
       patientId: photo.patientId,
-      detail: `${photo.bodyPart}${updatedSubpart ? ` · ${updatedSubpart}` : ''}`,
+      detail: auditParts.join(' · '),
     });
 
     // Record subpart usage if changed and provided.
@@ -306,7 +315,13 @@ export class PhotoService implements IPhotoService {
       await subpartService.recordUsage(photo.bodyPart, validated.subpart);
     }
 
-    return { ...photo, subpart: updatedSubpart, clinicalNotes: updatedNotes, updatedAt: new Date(nowMs) };
+    return {
+      ...photo,
+      laterality: updatedLaterality,
+      subpart: updatedSubpart,
+      clinicalNotes: updatedNotes,
+      updatedAt: new Date(nowMs),
+    };
   }
 
   /**
@@ -342,9 +357,9 @@ export class PhotoService implements IPhotoService {
     await db.execute(
       `INSERT INTO photos
          (id, patient_id, image_path, thumbnail_path, original_file_name,
-          mime_type, file_size_bytes, body_part, subpart, clinical_notes,
+          mime_type, file_size_bytes, body_part, laterality, subpart, clinical_notes,
           captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0, NULL)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 0, NULL)`,
       [
         newId,
         photo.patientId,
@@ -354,6 +369,7 @@ export class PhotoService implements IPhotoService {
         mimeType,
         annotated.size,
         photo.bodyPart,
+        photo.laterality,
         photo.subpart,
         photo.clinicalNotes,
         photo.capturedAt.getTime(),

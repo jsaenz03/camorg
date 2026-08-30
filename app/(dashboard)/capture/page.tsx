@@ -20,6 +20,7 @@ import { PageHeader } from '@/components/page-header';
 import type { CapturedPhoto } from '@/specs/001-role-you-are/contracts/camera-service';
 import { photoService } from '@/lib/services/photo-service';
 import { patientService } from '@/lib/services/patient-service';
+import { companionService } from '@/lib/services/companion-service';
 import { parseDobInput } from '@/lib/utils/date-formatting';
 import {
   saveCaptureDraft,
@@ -136,6 +137,7 @@ function CaptureView() {
         imageBlob: capturedPhoto.blob,
         mimeType: capturedPhoto.blob.type as 'image/jpeg' | 'image/png' | 'image/heic' | 'image/webp',
         bodyPart: formData.bodyPart,
+        laterality: formData.laterality ?? null,
         subpart: formData.subpart || null,
         clinicalNotes: formData.clinicalNotes || null,
         capturedAt: formData.capturedAt ?? capturedPhoto.capturedAt,
@@ -143,6 +145,9 @@ function CaptureView() {
 
       toast.success('Photo saved');
       clearCaptureDraft();
+      // Refresh the phone link's shared library (no-op when no session is
+      // open) so the phone can review the new photo immediately.
+      void companionService.publish().catch(() => {});
 
       // 3. Navigate to patient timeline
       router.push(`/patients/view?id=${patientId}`);

@@ -19,6 +19,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/s
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { AppSidebar } from '@/components/app-sidebar';
+import { CompanionProvider } from '@/components/companion/companion-provider';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { UserMenu } from '@/components/user-menu';
 import { IdleLockOverlay } from '@/components/idle-lock-overlay';
@@ -122,19 +123,21 @@ export default function DashboardLayout({
 
   return (
     <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset>
-        <LicenceBanner />
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/75">
-          <SidebarTrigger />
-          <Separator orientation="vertical" className="mr-1 h-5" />
-          <div className="ml-auto flex items-center gap-1">
-            <ThemeToggle />
-            <UserMenu />
-          </div>
-        </header>
-        <main className="flex-1">{children}</main>
-      </SidebarInset>
+      <CompanionProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <LicenceBanner />
+          <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+            <SidebarTrigger />
+            <Separator orientation="vertical" className="mr-1 h-5" />
+            <div className="ml-auto flex items-center gap-1">
+              <ThemeToggle />
+              <UserMenu />
+            </div>
+          </header>
+          <main className="flex-1">{children}</main>
+        </SidebarInset>
+      </CompanionProvider>
       <IdleLockGate />
     </SidebarProvider>
   );

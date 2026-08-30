@@ -1,4 +1,4 @@
-import { BodyPart } from './body-part';
+import { BodyPart, type Laterality } from './body-part';
 
 /**
  * Represents a single clinical photograph with associated metadata
@@ -19,6 +19,7 @@ export interface PhotoRecord {
 
   // Clinical Metadata
   bodyPart: BodyPart; // Enumerated anatomical region
+  laterality: Laterality | null; // Patient's left/right side (bilateral regions only)
   subpart: string | null; // Custom anatomical detail (optional)
   clinicalNotes: string | null; // Free-text clinical observations (optional)
 

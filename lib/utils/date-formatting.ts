@@ -78,6 +78,13 @@ export function dobFromMs(ms: number): Date {
 }
 
 /**
+ * Aliases for the same UTC-midnight convention used by non-DOB day-precision
+ * columns (patients.review_due_at) — same storage form, clearer call sites.
+ */
+export const dateToMs = dobToMs;
+export const dateFromMs = dobFromMs;
+
+/**
  * Expands a two-digit year to the most plausible four-digit one: 69–99 →
  * 1900s, 00–68 → 2000s (POSIX strptime pivot), then pulled back a century
  * when it would land in the future — a date of birth can't be.

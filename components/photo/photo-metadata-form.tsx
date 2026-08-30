@@ -7,12 +7,18 @@
 
 'use client';
 
+import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
 import { CalendarIcon, Loader2 } from 'lucide-react';
-import { BodyPart, BodyPartLabels } from '@/types/body-part';
+import {
+  BodyPart,
+  BodyPartLabels,
+  BILATERAL_BODY_PARTS,
+  type Laterality,
+} from '@/types/body-part';
 import { parseDobInput } from '@/lib/utils/date-formatting';
 import { BodyMapPicker } from '@/components/patient/body-map-picker';
 import { DobInput } from '@/components/patient/dob-input';
@@ -63,6 +69,8 @@ const photoMetadataFormSchema = z.object({
   bodyPart: z.nativeEnum(BodyPart, {
     message: 'Please select a body part',
   }),
+  /** Patient's side for bilateral regions; unset for central ones. */
+  laterality: z.enum(['left', 'right']).optional(),
   subpart: z
     .string()
     .max(100, 'Subpart must be 100 characters or less')
@@ -105,15 +113,27 @@ export function PhotoMetadataForm({
       patientName: defaultValues?.patientName || '',
       patientDob: defaultValues?.patientDob || '',
       bodyPart: defaultValues?.bodyPart || undefined,
+      laterality: defaultValues?.laterality,
       subpart: defaultValues?.subpart || '',
       clinicalNotes: defaultValues?.clinicalNotes || '',
     },
   });
 
+  // Laterality only makes sense for paired regions — clear it when the part
+  // changes to a central one so a stale side never reaches the database.
+  const bodyPartValue = form.watch('bodyPart');
+  const isBilateral = bodyPartValue ? BILATERAL_BODY_PARTS.has(bodyPartValue) : false;
+  useEffect(() => {
+    if (bodyPartValue && !BILATERAL_BODY_PARTS.has(bodyPartValue)) {
+      if (form.getValues('laterality')) form.setValue('laterality', undefined);
+    }
+  }, [bodyPartValue, form]);
+
   const handleSubmit = (data: PhotoMetadataFormValues) => {
     // Transform empty strings to null for optional fields
     const transformedData = {
       ...data,
+      laterality: isBilateral ? (data.laterality ?? null) : null,
       subpart: data.subpart === '' ? null : data.subpart,
       clinicalNotes: data.clinicalNotes === '' ? null : data.clinicalNotes,
     };
@@ -191,7 +211,10 @@ export function PhotoMetadataForm({
                   disabled={isSubmitting}
                 >
                   <FormControl>
-                    <SelectTrigger>
+                    {/* flex-1: the trigger must fill the row — the default w-fit
+                        resizes with the selected label and shoves the body-map
+                        button sideways on every change. */}
+                    <SelectTrigger className="min-w-0 flex-1">
                       <SelectValue placeholder="Select body part" />
                     </SelectTrigger>
                   </FormControl>
@@ -205,7 +228,11 @@ export function PhotoMetadataForm({
                 </Select>
                 <BodyMapPicker
                   value={field.value}
-                  onSelect={field.onChange}
+                  laterality={form.watch('laterality') ?? null}
+                  onSelect={(part, side) => {
+                    field.onChange(part);
+                    form.setValue('laterality', side ?? undefined, { shouldDirty: true });
+                  }}
                   disabled={isSubmitting}
                 />
               </div>
@@ -213,6 +240,48 @@ export function PhotoMetadataForm({
             </FormItem>
           )}
         />
+
+        {/* Laterality (bilateral regions only) */}
+        {isBilateral && (
+          <FormField
+            control={form.control}
+            name="laterality"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Side</FormLabel>
+                <FormControl>
+                  <div
+                    role="radiogroup"
+                    aria-label="Patient's side"
+                    className="flex w-fit gap-1 rounded-md border p-0.5"
+                  >
+                    {(['left', 'right'] as Laterality[]).map((side) => (
+                      <button
+                        key={side}
+                        type="button"
+                        role="radio"
+                        aria-checked={field.value === side}
+                        disabled={isSubmitting}
+                        onClick={() => field.onChange(side)}
+                        className={cn(
+                          'rounded px-4 py-1.5 text-sm font-medium capitalize transition-colors',
+                          field.value === side
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {side}
+                      </button>
+                    ))}
+                  </div>
+                </FormControl>
+                <FormDescription>
+                  The patient&rsquo;s own {field.value ?? 'left/right'} side.
+                </FormDescription>
+              </FormItem>
+            )}
+          />
+        )}
 
         {/* Subpart */}
         <FormField

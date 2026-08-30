@@ -15,20 +15,23 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
-import { ArrowLeft, AlertCircle, Camera, FileText, Globe, Loader2, Lock, Pencil, ShieldCheck, ShieldAlert, Columns2 } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Camera, CalendarCheck, FileText, Globe, Loader2, Lock, Pencil, ShieldCheck, ShieldAlert, Columns2 } from 'lucide-react';
 import Link from 'next/link';
 import type { Patient, ConsentScope } from '@/types/patient';
-import { ConsentScopeLabels, consentStatus } from '@/types/patient';
+import { ConsentScopeLabels, consentStatus, reviewStatus } from '@/types/patient';
 import type { PhotoRecord } from '@/types/photo';
 import { PhotoTimeline } from '@/components/photo/photo-timeline';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
 import { PhotoCompareDialog } from '@/components/photo/photo-compare-dialog';
 import { PhotoUpload } from '@/components/photo/photo-upload';
+import { ReviewBadge } from '@/components/patient/review-badge';
 import { EmptyState } from '@/components/empty-state';
 import { PageHeader } from '@/components/page-header';
 import { usePhotos } from '@/lib/hooks/use-photos';
 import { useAuth } from '@/lib/auth/auth-context';
+import { useBranding } from '@/components/branding-boot';
 import { patientService } from '@/lib/services/patient-service';
+import { notifyAttentionChanged } from '@/lib/services/notification-service';
 import { formatDateOfBirth, parseDobInput } from '@/lib/utils/date-formatting';
 import { DobInput } from '@/components/patient/dob-input';
 import { Badge } from '@/components/ui/badge';
@@ -66,6 +69,8 @@ function PatientTimelineView() {
   const router = useRouter();
   const patientId = searchParams.get('id') as string;
   const { clinician } = useAuth();
+  const { reviewWarningDays, reviewStaleDays } = useBranding();
+  const [isMarkingReviewed, setIsMarkingReviewed] = useState(false);
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [isLoadingPatient, setIsLoadingPatient] = useState(true);
@@ -187,6 +192,25 @@ function PatientTimelineView() {
   if (!patient) return null;
 
   const consent = consentStatus(patient);
+  const review = reviewStatus(patient, {
+    warningDays: reviewWarningDays,
+    staleDays: reviewStaleDays,
+  });
+
+  /** One-click "review done": stamps the review, clears the due date. */
+  const handleMarkReviewed = async () => {
+    setIsMarkingReviewed(true);
+    try {
+      const updated = await patientService.markReviewed(patient.id);
+      setPatient(updated);
+      notifyAttentionChanged();
+      toast.success(`${patient.name} marked as reviewed`);
+    } catch {
+      toast.error('Failed to record the review. Please try again.');
+    } finally {
+      setIsMarkingReviewed(false);
+    }
+  };
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
@@ -221,6 +245,7 @@ function PatientTimelineView() {
                 {consent === 'expired' ? 'Consent expired' : 'No consent'}
               </Badge>
             )}
+            <ReviewBadge patient={patient} />
             <Badge variant="outline" className="gap-1">
               {patient.isOrgShared ? (
                 <>
@@ -232,6 +257,12 @@ function PatientTimelineView() {
                 </>
               )}
             </Badge>
+            {review === 'overdue' && (
+              <Button variant="outline" onClick={handleMarkReviewed} disabled={isMarkingReviewed}>
+                {isMarkingReviewed ? <Loader2 className="size-4 animate-spin" /> : <CalendarCheck className="size-4" />}
+                Mark reviewed
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setIsEditOpen(true)}>
               <Pencil className="size-4" />
               Edit details
@@ -267,6 +298,19 @@ function PatientTimelineView() {
           {consent === 'expired'
             ? 'This patient’s photo consent has expired. Record new consent before capturing further photos.'
             : 'No photo consent on record for this patient. Consider recording consent via Edit details.'}
+        </div>
+      )}
+
+      {review === 'overdue' && patient.reviewDueAt && (
+        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+          This patient’s review was due {format(patient.reviewDueAt, 'd MMM yyyy')} — use
+          “Mark reviewed” once done, or reschedule via Edit details.
+        </div>
+      )}
+      {review === 'stale' && (
+        <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-700 dark:text-amber-400">
+          No review scheduled for this patient and the last activity was a while ago —
+          consider setting a review date via Edit details.
         </div>
       )}
 
@@ -336,6 +380,11 @@ const editPatientSchema = z.object({
     .string()
     .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), 'Enter a valid date')
     .refine((v) => !v || new Date(v).getTime() > Date.now(), 'Expiry must be in the future'),
+  /** Optional ISO date (yyyy-mm-dd); '' = no review scheduled. Past dates
+   *  are allowed — that's exactly how a review becomes overdue. */
+  reviewDueAt: z
+    .string()
+    .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), 'Enter a valid date'),
 });
 
 type EditPatientValues = z.infer<typeof editPatientSchema>;
@@ -365,6 +414,7 @@ function EditPatientDialog({
       dateOfBirth: patient.dateOfBirth ? format(patient.dateOfBirth, 'dd/MM/yyyy') : '',
       consentScope: patient.consentScope ?? '',
       consentExpiresAt: patient.consentExpiresAt ? format(patient.consentExpiresAt, 'yyyy-MM-dd') : '',
+      reviewDueAt: patient.reviewDueAt ? format(patient.reviewDueAt, 'yyyy-MM-dd') : '',
     },
   });
 
@@ -397,7 +447,11 @@ function EditPatientDialog({
           scope,
           expiresAt: scope ? expiresAt : null,
         },
+        review: {
+          dueAt: values.reviewDueAt ? new Date(`${values.reviewDueAt}T00:00:00`) : null,
+        },
       });
+      notifyAttentionChanged();
       toast.success('Patient details updated');
       onSaved(updated);
       onOpenChange(false);
@@ -418,7 +472,7 @@ function EditPatientDialog({
         <DialogHeader>
           <DialogTitle>Edit patient details</DialogTitle>
           <DialogDescription>
-            Update the patient name or record an optional date of birth.
+            Update the patient name, date of birth, consent, or review schedule.
           </DialogDescription>
         </DialogHeader>
 
@@ -501,6 +555,24 @@ function EditPatientDialog({
                   </FormControl>
                   <FormDescription>
                     After this date the patient shows as consent-expired. Leave blank for no expiry.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="reviewDueAt"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Next review date (optional)</FormLabel>
+                  <FormControl>
+                    <Input type="date" {...field} value={field.value ?? ''} disabled={isSaving} />
+                  </FormControl>
+                  <FormDescription>
+                    The dashboard flags upcoming reviews ahead of time and overdue ones after.
+                    Leave blank for none.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

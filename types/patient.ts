@@ -39,6 +39,10 @@ export interface Patient {
   consentGivenAt: Date | null; // When consent was recorded; null = never
   consentScope: ConsentScope | null; // What the patient agreed to
   consentExpiresAt: Date | null; // Optional expiry; null = no expiry
+
+  // Clinician review scheduling (migration 010). Status is derived, never stored.
+  reviewDueAt: Date | null; // Next scheduled review date; null = none set
+  lastReviewedAt: Date | null; // When the clinician last marked it reviewed
 }
 
 /** What a patient's photo consent covers. */
@@ -65,4 +69,62 @@ export function consentStatus(patient: {
     return 'expired';
   }
   return 'valid';
+}
+
+/**
+ * Review alerting (migration 010), derived at read time like consent so
+ * upcoming/overdue/stale states never need a background job.
+ *
+ * - `overdue`   a scheduled review date has passed
+ * - `due-soon`  a scheduled review falls within the warning window
+ * - `scheduled` a review date is set but further out
+ * - `stale`     no review scheduled, and the patient has photos but has been
+ *               quiet (no review or capture) for longer than the stale window
+ * - `none`      nothing to flag
+ */
+export type ReviewStatus = 'none' | 'scheduled' | 'due-soon' | 'overdue' | 'stale';
+
+export const DEFAULT_REVIEW_WARNING_DAYS = 7;
+export const DEFAULT_REVIEW_STALE_DAYS = 90;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function reviewStatus(
+  patient: {
+    reviewDueAt: Date | null;
+    lastReviewedAt: Date | null;
+    lastPhotoAt: Date | null;
+    photoCount: number;
+  },
+  options: { warningDays?: number; staleDays?: number; now?: Date } = {},
+): ReviewStatus {
+  const {
+    warningDays = DEFAULT_REVIEW_WARNING_DAYS,
+    staleDays = DEFAULT_REVIEW_STALE_DAYS,
+    now = new Date(),
+  } = options;
+
+  if (patient.reviewDueAt) {
+    // Due dates are stored day-precision (local midnight), so anything
+    // before today's local midnight is past due — today itself is "due soon".
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (patient.reviewDueAt.getTime() < todayStart.getTime()) return 'overdue';
+    if (patient.reviewDueAt.getTime() <= now.getTime() + warningDays * DAY_MS) {
+      return 'due-soon';
+    }
+    return 'scheduled';
+  }
+
+  const lastActivity = Math.max(
+    patient.lastReviewedAt?.getTime() ?? 0,
+    patient.lastPhotoAt?.getTime() ?? 0,
+  );
+  if (
+    patient.photoCount > 0 &&
+    lastActivity > 0 &&
+    now.getTime() - lastActivity > staleDays * DAY_MS
+  ) {
+    return 'stale';
+  }
+  return 'none';
 }

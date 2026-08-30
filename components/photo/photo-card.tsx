@@ -15,6 +15,7 @@ import { Loader2 } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
 import { BodyPartLabels } from '@/types/body-part';
 import { Badge } from '@/components/ui/badge';
+import { BodyMapBadge } from '@/components/patient/body-map-badge';
 import { photoService } from '@/lib/services/photo-service';
 import { formatCaptureDate, formatRelativeTime } from '@/lib/utils/date-formatting';
 import { cn } from '@/lib/utils';
@@ -125,6 +126,20 @@ export function PhotoCard({
         {photo.isDeleted && (
           <span className="absolute left-2 top-2 rounded-md bg-destructive px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
             Deleted
+          </span>
+        )}
+
+        {/* Body-map indicator: where on the patient this was taken */}
+        {thumbnailUrl && !isLoading && !error && (
+          <span
+            className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-black/55 p-1"
+            title={`${BodyPartLabels[photo.bodyPart]}${photo.laterality ? ` (${photo.laterality})` : ''}`}
+          >
+            <BodyMapBadge
+              bodyPart={photo.bodyPart}
+              laterality={photo.laterality}
+              className="block h-9 w-auto"
+            />
           </span>
         )}
 

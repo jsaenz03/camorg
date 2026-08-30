@@ -1,29 +1,28 @@
 /**
  * PhoneCameraPanel Component
  *
- * Pairs a phone as the capture camera. Starts the LAN tether server in the
- * Rust shell, shows the pairing URL as a QR code, and listens for the photo
- * the phone sends back. The photo is rebuilt into the same CapturedPhoto the
- * built-in camera path produces, so the save pipeline is unchanged.
- *
- * Server lifecycle is tied to this component's mount: navigating away or
- * capturing a photo unmounts the capture screen and stops the server.
+ * Pairs a phone as the capture camera. The session is owned by the
+ * CompanionProvider (like the sidebar's Phone link dialog): this panel
+ * reuses a live session if there is one, otherwise asks the provider to
+ * start it. The session deliberately outlives this screen — the sidebar
+ * shows it and can end it — so the QR the phone scanned keeps working while
+ * you move around the app. The photo arrives as a Tauri event and is
+ * rebuilt into the same CapturedPhoto the built-in camera path produces, so
+ * the save pipeline is unchanged.
  */
 
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { QRCodeSVG } from 'qrcode.react';
 import { Copy, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { setCaptureScreenActive, useCompanion } from '@/components/companion/companion-provider';
 import type {
   CapturedPhoto,
-  RemoteCameraInfo,
   RemoteCameraPhotoEvent,
-  RemoteCameraStatusEvent,
 } from '@/specs/001-role-you-are/contracts/camera-service';
 
 interface PhoneCameraPanelProps {
@@ -31,19 +30,21 @@ interface PhoneCameraPanelProps {
 }
 
 export function PhoneCameraPanel({ onPhotoCaptured }: PhoneCameraPanelProps) {
-  const [url, setUrl] = useState<string | null>(null);
+  const { active: sessionActive, url, phoneConnected, start } = useCompanion();
   const [startError, setStartError] = useState<string | null>(null);
-  const [phoneConnected, setPhoneConnected] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
-  // Keep the latest callback without restarting the server on parent re-renders.
+  // Keep the latest callback without restarting the session on parent re-renders.
   const onPhotoCapturedRef = useRef(onPhotoCaptured);
   onPhotoCapturedRef.current = onPhotoCaptured;
 
   useEffect(() => {
     let cancelled = false;
     let unlistenPhoto: UnlistenFn | undefined;
-    let unlistenStatus: UnlistenFn | undefined;
+
+    // The provider's global listener defers to the capture screen while the
+    // panel is mounted, so a photo is never handled twice.
+    setCaptureScreenActive(true);
 
     (async () => {
       try {
@@ -68,17 +69,9 @@ export function PhoneCameraPanel({ onPhotoCaptured }: PhoneCameraPanelProps) {
             }
           }
         );
-        unlistenStatus = await listen<RemoteCameraStatusEvent>(
-          'remote-camera-status',
-          (event) => {
-            // hello → true, bye (pagehide beacon) → false.
-            setPhoneConnected(event.payload.connected);
-          }
-        );
-        const info = await invoke<RemoteCameraInfo>('start_remote_camera');
-        if (!cancelled) {
-          setUrl(info.url);
-        }
+        // One owner: if no Phone link is live, the provider starts (and from
+        // then on tracks) the session; if one is, we just ride on it.
+        if (!sessionActive) await start();
       } catch (error) {
         console.error('Failed to start phone camera link:', error);
         if (!cancelled) {
@@ -89,11 +82,10 @@ export function PhoneCameraPanel({ onPhotoCaptured }: PhoneCameraPanelProps) {
 
     return () => {
       cancelled = true;
+      setCaptureScreenActive(false);
       unlistenPhoto?.();
-      unlistenStatus?.();
-      void invoke('stop_remote_camera').catch(() => {});
     };
-  }, [attempt]);
+  }, [attempt, sessionActive, start]);
 
   const handleCopyUrl = async () => {
     if (!url) {

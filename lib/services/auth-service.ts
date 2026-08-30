@@ -183,6 +183,8 @@ function rowToSettings(row: Record<string, unknown>): AppSettings {
     brandPrimary: (row.brand_primary as string | null) ?? null,
     brandAccent: (row.brand_accent as string | null) ?? null,
     logoDataUrl: (row.logo_data_url as string | null) ?? null,
+    reviewWarningDays: (row.review_warning_days as number) ?? 7,
+    reviewStaleDays: (row.review_stale_days as number) ?? 90,
     updatedAt: new Date(row.updated_at as number),
   };
 }
@@ -343,6 +345,8 @@ export class AuthService implements IAuthService {
         brandPrimary: null,
         brandAccent: null,
         logoDataUrl: null,
+        reviewWarningDays: 7,
+        reviewStaleDays: 90,
         updatedAt: new Date(),
       };
     }
@@ -361,6 +365,8 @@ export class AuthService implements IAuthService {
       brandPrimary: validated.brandPrimary !== undefined ? validated.brandPrimary : current.brandPrimary,
       brandAccent: validated.brandAccent !== undefined ? validated.brandAccent : current.brandAccent,
       logoDataUrl: current.logoDataUrl,
+      reviewWarningDays: validated.reviewWarningDays ?? current.reviewWarningDays,
+      reviewStaleDays: validated.reviewStaleDays ?? current.reviewStaleDays,
       updatedAt: new Date(),
     };
     const db = await getDB();
@@ -372,7 +378,9 @@ export class AuthService implements IAuthService {
              idle_lock_timeout_ms = $4,
              brand_primary = $5,
              brand_accent = $6,
-             updated_at = $7
+             review_warning_days = $7,
+             review_stale_days = $8,
+             updated_at = $9
        WHERE id = 'app'`,
       [
         next.sessionTimeoutMs,
@@ -381,6 +389,8 @@ export class AuthService implements IAuthService {
         next.idleLockTimeoutMs,
         next.brandPrimary,
         next.brandAccent,
+        next.reviewWarningDays,
+        next.reviewStaleDays,
         next.updatedAt.getTime(),
       ],
     );

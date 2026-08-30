@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { BodyPart } from '@/types/body-part';
 import type { ClinicianRole } from '@/types/clinician';
 
+const lateralitySchema = z.enum(['left', 'right']).nullable();
+
 const passcodeRules = z
   .string()
   .min(8, 'Passcode must be at least 8 characters')
@@ -24,12 +26,14 @@ export const photoRecordCreateSchema = z.object({
   bodyPart: z.nativeEnum(BodyPart, {
     message: 'Please select a body part',
   }),
+  laterality: lateralitySchema.optional(),
   subpart: z.string().max(100, 'Subpart must be 100 characters or less').optional().nullable(),
   clinicalNotes: z.string().max(2000, 'Clinical notes must be 2000 characters or less').optional().nullable(),
   capturedAt: z.date().refine((d) => d.getTime() <= Date.now(), 'Capture date cannot be in the future'),
 });
 
 export const photoRecordUpdateSchema = z.object({
+  laterality: lateralitySchema.optional(),
   subpart: z.string().max(100, 'Subpart must be 100 characters or less').optional().nullable(),
   clinicalNotes: z.string().max(2000, 'Clinical notes must be 2000 characters or less').optional().nullable(),
 });
@@ -62,6 +66,15 @@ export const consentSchema = z.object({
 
 export type ConsentInput = z.infer<typeof consentSchema>;
 
+/** Review scheduling block on patient updates. dueAt null = no review set. */
+export const reviewScheduleSchema = z.object({
+  // Past dates are legitimate: an overdue review is a state the UI alerts
+  // on, not an invalid one (same reasoning as consent expiry).
+  dueAt: z.date().nullable(),
+});
+
+export type ReviewScheduleInput = z.infer<typeof reviewScheduleSchema>;
+
 export const patientCreateSchema = z.object({
   name: z.string().min(1, 'Patient name is required').max(100, 'Patient name must be 100 characters or less').trim(),
   dateOfBirth: dateOfBirthSchema.optional(), // optional: DOB is never required
@@ -73,6 +86,7 @@ export const patientUpdateSchema = z.object({
   // rather than silently clear the stored DOB. Callers pass null to clear.
   dateOfBirth: dateOfBirthSchema,
   consent: consentSchema,
+  review: reviewScheduleSchema,
 });
 
 export type PatientCreate = z.infer<typeof patientCreateSchema>;
@@ -174,6 +188,9 @@ export const settingsUpdateSchema = z.object({
   /** null removes the override — the built-in Camog teal stands. */
   brandPrimary: hexColourSchema.nullable().optional(),
   brandAccent: hexColourSchema.nullable().optional(),
+  /** Review alert windows, in days. */
+  reviewWarningDays: z.number().int().min(0).max(365).optional(),
+  reviewStaleDays: z.number().int().min(7).max(730).optional(),
 });
 
 /** The business logo as an inline data URL (already downscaled by the UI).

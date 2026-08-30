@@ -97,6 +97,42 @@ Services (`lib/services/*`) are singletons consumed by React hooks; their
 public API is preserved from the prior IndexedDB version, so components and
 hooks are agnostic to the storage backend.
 
+## Phone link (companion sidecar)
+
+**Sidebar → Phone link** opens a QR pairing that turns a phone (same Wi-Fi)
+into a second screen for the signed-in clinician:
+
+- **Camera** — the original tethered capture: snap on the phone, review and
+  save on the desktop. If a photo arrives while you are away from the Capture
+  screen, Camog stashes it as the capture draft and offers a "Review" jump.
+- **Library** (toggleable, on by default) — the phone mirrors what you can
+  open on the PC: searchable patient list with review/consent flags,
+  per-patient photo grids, and a full-screen viewer with swipe navigation,
+  double-tap zoom, metadata and notes. Every thumbnail carries a small body-map
+  badge (bottom-right) showing where on the patient the photo was taken,
+  left/right aware — same on the desktop timeline and dashboard tiles.
+- **Review actions** — mark a patient reviewed, request a PDF case report
+  (prepared by the desktop, then downloadable), compare photos exactly like
+  the desktop dialog (Earlier/Later pickers, side-by-side or overlay with an
+  opacity slider, shared zoom and pan — pinch or drag either image and both
+  move together), blur a photo for privacy, and switch the interface light or
+  dark (remembered per phone).
+
+The phone mirrors your access exactly — it uses the same access-filtered
+queries as the desktop UI and only ever sees patients you can see; review and
+report requests run through the same permission-checked services. The link
+lives until you press **End session**, closes itself after 30 minutes of
+inactivity, and sessions are audited. The connection is local and
+unencrypted, so end it when you are done.
+
+Body parts on paired regions (arms, hands, legs, feet) record the patient's
+side — pick it on the body map or with the Side control in the capture form
+and photo details.
+
+Self-checks: `node scripts/check-features.mjs` (wiring) and
+`node scripts/check-phone-page.mjs` (renders the real phone page in headless
+Chromium, drives every surface, and screenshots it).
+
 ## Licensing
 
 **This is not open-source software.** The source is publicly visible for

@@ -17,6 +17,7 @@ import {
   Images,
   Settings as SettingsIcon,
   ShieldCheck,
+  Smartphone,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -35,6 +36,10 @@ import {
 } from '@/components/ui/sidebar';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useBranding } from '@/components/branding-boot';
+import { useNotifications } from '@/lib/hooks/use-notifications';
+import { useCompanion } from '@/components/companion/companion-provider';
+import { PhoneLinkDialog } from '@/components/companion/phone-link-dialog';
+import { SidebarMenuBadge } from '@/components/ui/sidebar';
 
 interface NavLink {
   href: string;
@@ -81,6 +86,25 @@ export function AppSidebar() {
   const pathname = usePathname();
   const { clinician } = useAuth();
   const { orgName, logoDataUrl } = useBranding();
+  const { counts } = useNotifications();
+  const companion = useCompanion();
+
+  // Pending-action counters per nav item: dashboard carries the total,
+  // patients the review-attention subset, settings the admin's approval
+  // queue (0 for non-admins — the service gates it).
+  const badgeFor = (href: string): number => {
+    if (!counts) return 0;
+    switch (href) {
+      case '/':
+        return counts.total;
+      case '/patients':
+        return counts.reviewOverdue + counts.reviewDueSoon + counts.reviewStale;
+      case '/settings':
+        return counts.pendingSignups;
+      default:
+        return 0;
+    }
+  };
 
   return (
     <Sidebar collapsible="icon">
@@ -115,20 +139,49 @@ export function AppSidebar() {
             <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {section.items.map(({ href, label, icon: Icon }) => (
-                  <SidebarMenuItem key={href}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={isActive(pathname, href)}
-                      tooltip={label}
-                    >
-                      <Link href={href}>
-                        <Icon className="size-4" />
-                        <span>{label}</span>
-                      </Link>
-                    </SidebarMenuButton>
+                {section.items.map(({ href, label, icon: Icon }) => {
+                  const badge = badgeFor(href);
+                  return (
+                    <SidebarMenuItem key={href}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={isActive(pathname, href)}
+                        tooltip={label}
+                      >
+                        <Link href={href}>
+                          <Icon className="size-4" />
+                          <span>{label}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                      {badge > 0 && (
+                        <SidebarMenuBadge className="bg-primary/10 text-primary font-semibold">
+                          {badge > 99 ? '99+' : badge}
+                        </SidebarMenuBadge>
+                      )}
+                    </SidebarMenuItem>
+                  );
+                })}
+                {/* Phone link: companion session control, not a route. The
+                    dot is a live-session indicator (privacy state, not
+                    decoration) — it says the link is still open. */}
+                {section.label === 'Workspace' && (
+                  <SidebarMenuItem>
+                    <PhoneLinkDialog>
+                      <SidebarMenuButton tooltip="Phone link">
+                        <span className="relative">
+                          <Smartphone className="size-4" />
+                          {companion.active && (
+                            <span
+                              className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-primary"
+                              aria-label="Phone link session active"
+                            />
+                          )}
+                        </span>
+                        <span>Phone link</span>
+                      </SidebarMenuButton>
+                    </PhoneLinkDialog>
                   </SidebarMenuItem>
-                ))}
+                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

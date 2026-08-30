@@ -70,6 +70,18 @@ pub fn run() {
       sql: include_str!("../migrations/009_branding.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 10,
+      description: "reviews: patient review dates, alert windows",
+      sql: include_str!("../migrations/010_reviews.sql"),
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 11,
+      description: "photos: laterality (left/right side of the patient)",
+      sql: include_str!("../migrations/011_laterality.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory
@@ -166,6 +178,11 @@ pub fn run() {
       report::reveal_saved_report,
       remote_camera::start_remote_camera,
       remote_camera::stop_remote_camera,
+      remote_camera::remote_camera_active,
+      remote_camera::remote_camera_idle_ms,
+      remote_camera::update_remote_library,
+      remote_camera::clear_remote_library,
+      remote_camera::stage_remote_report,
       diagnostics::record_web_diagnostic,
       diagnostics::diagnostics_info,
       diagnostics::diagnostics_clear

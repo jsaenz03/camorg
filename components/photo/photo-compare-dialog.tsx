@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { Columns2, Layers, Loader2, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
-import { BodyPartLabels } from '@/types/body-part';
+import { bodyPartDisplayLabel } from '@/types/body-part';
 import { photoService } from '@/lib/services/photo-service';
 import { Button } from '@/components/ui/button';
 import {
@@ -42,7 +42,7 @@ interface PhotoCompareDialogProps {
 }
 
 function photoLabel(photo: PhotoRecord): string {
-  const part = BodyPartLabels[photo.bodyPart] ?? photo.bodyPart;
+  const part = bodyPartDisplayLabel(photo.bodyPart, photo.laterality);
   return `${format(photo.capturedAt, 'd MMM yyyy')} · ${part}${photo.subpart ? ` · ${photo.subpart}` : ''}`;
 }
 

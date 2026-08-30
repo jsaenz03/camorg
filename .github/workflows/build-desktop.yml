@@ -61,6 +61,9 @@ jobs:
       - name: Smoke tests (Playwright)
         run: npm test
 
+      - name: Phone companion page check (Playwright)
+        run: node scripts/check-phone-page.mjs
+
   build:
     needs: checks
     strategy:

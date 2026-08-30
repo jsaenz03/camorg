@@ -29,14 +29,21 @@ import { PageHeader } from '@/components/page-header';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
 import { StatsOverview } from '@/components/dashboard/stats-overview';
 import { ActivityCalendar } from '@/components/dashboard/activity-calendar';
+import { NeedsAttention } from '@/components/dashboard/needs-attention';
+import { RecentActions } from '@/components/dashboard/recent-actions';
 import { PhotosOverTimeChart } from '@/components/charts/photos-over-time-chart';
 import { PhotosByBodyPartChart } from '@/components/charts/photos-by-body-part-chart';
 import { PatientsGrowthChart } from '@/components/charts/patients-growth-chart';
+import { useNotifications } from '@/lib/hooks/use-notifications';
 import type { PhotoWithPatient } from '@/lib/hooks/use-all-photos';
 
 export default function HomePage() {
   const router = useRouter();
   const { clinician } = useAuth();
+  const {
+    items: attentionItems,
+    isLoading: isLoadingAttention,
+  } = useNotifications();
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [recentPhotos, setRecentPhotos] = useState<PhotoWithPatient[]>([]);
@@ -253,6 +260,14 @@ export default function HomePage() {
 
       {/* KPIs */}
       <StatsOverview patients={patients} photos={summaries} />
+
+      {/* Alerts (reviews due/overdue/stale, consent, approvals) + activity feed */}
+      <div className="mt-8 grid gap-4 lg:grid-cols-3">
+        <section className="lg:col-span-2">
+          <NeedsAttention items={attentionItems} isLoading={isLoadingAttention} />
+        </section>
+        <RecentActions />
+      </div>
 
       {/* Charts */}
       <div className="mt-8 grid gap-4 lg:grid-cols-3">

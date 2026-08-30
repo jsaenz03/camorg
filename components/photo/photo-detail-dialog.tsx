@@ -18,11 +18,16 @@ import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { ArchiveRestore, Loader2, PenLine, Save, Trash2 } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
-import { BodyPartLabels } from '@/types/body-part';
+import {
+  BILATERAL_BODY_PARTS,
+  bodyPartDisplayLabel,
+  type Laterality,
+} from '@/types/body-part';
 import { photoService } from '@/lib/services/photo-service';
 import { formatCaptureDate } from '@/lib/utils/date-formatting';
 import { NotFoundError } from '@/lib/validators/errors';
 import { PhotoViewer } from './photo-viewer';
+import { cn } from '@/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -70,6 +75,7 @@ export function PhotoDetailDialog({
   const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
 
   const [subpart, setSubpart] = useState('');
+  const [laterality, setLaterality] = useState<Laterality | null>(null);
   const [clinicalNotes, setClinicalNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -106,6 +112,7 @@ export function PhotoDetailDialog({
   useEffect(() => {
     if (!photo) return;
     setSubpart(photo.subpart ?? '');
+    setLaterality(photo.laterality);
     setClinicalNotes(photo.clinicalNotes ?? '');
     setConfirmDelete(false);
     setAnnotate(false);
@@ -113,7 +120,9 @@ export function PhotoDetailDialog({
 
   if (!photo) return null;
 
-  const photoAlt = `Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? `, ${photo.subpart}` : ''}`;
+  const isBilateral = BILATERAL_BODY_PARTS.has(photo.bodyPart);
+
+  const photoAlt = `Photo of ${bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}${photo.subpart ? `, ${photo.subpart}` : ''}`;
 
   // Annotating swaps the Radix dialog for a fullscreen overlay. The editor
   // portals its save-modal, option popovers and text input to document.body —
@@ -175,6 +184,7 @@ export function PhotoDetailDialog({
     setIsSaving(true);
     try {
       await photoService.updatePhoto(photo.id, {
+        laterality: isBilateral ? laterality : null,
         subpart: subpart.trim() || null,
         clinicalNotes: clinicalNotes.trim() || null,
       });
@@ -219,7 +229,9 @@ export function PhotoDetailDialog({
       <DialogContent className="max-w-4xl p-0 sm:max-w-4xl">
         <DialogHeader className="border-b p-4 sm:p-6">
           <DialogTitle className="flex flex-wrap items-center gap-2 pr-8 text-base">
-            <Badge variant="secondary">{BodyPartLabels[photo.bodyPart]}</Badge>
+            <Badge variant="secondary">
+              {bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}
+            </Badge>
             {photo.subpart && <Badge variant="outline">{photo.subpart}</Badge>}
             {photo.isDeleted && <Badge variant="destructive">Deleted</Badge>}
             <span className="text-muted-foreground font-normal">
@@ -268,10 +280,43 @@ export function PhotoDetailDialog({
               <dt className="text-muted-foreground">Captured</dt>
               <dd className="col-span-2">{formatCaptureDate(photo.capturedAt)}</dd>
               <dt className="text-muted-foreground">Body part</dt>
-              <dd className="col-span-2">{BodyPartLabels[photo.bodyPart]}</dd>
+              <dd className="col-span-2">{bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}</dd>
               <dt className="text-muted-foreground">File size</dt>
               <dd className="col-span-2">{(photo.fileSizeBytes / 1024).toFixed(1)} KB</dd>
             </dl>
+
+            {isBilateral && (
+              <div className="space-y-2">
+                <Label>Side</Label>
+                <div
+                  role="radiogroup"
+                  aria-label="Patient's side"
+                  className="flex w-fit gap-1 rounded-md border p-0.5"
+                >
+                  {(['left', 'right'] as Laterality[]).map((side) => (
+                    <button
+                      key={side}
+                      type="button"
+                      role="radio"
+                      aria-checked={laterality === side}
+                      disabled={isSaving || isDeleting}
+                      onClick={() => setLaterality(side)}
+                      className={cn(
+                        'rounded px-4 py-1.5 text-sm font-medium capitalize transition-colors',
+                        laterality === side
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {side}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  The patient&rsquo;s own {laterality ?? 'left/right'} side.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="photo-subpart">Subpart</Label>

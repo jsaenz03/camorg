@@ -139,6 +139,8 @@ export function AppSettingsPanel() {
           allowPublicSignup: s.allowPublicSignup,
           orgName: s.orgName,
           idleLockTimeoutMs: s.idleLockTimeoutMs,
+          reviewWarningDays: s.reviewWarningDays,
+          reviewStaleDays: s.reviewStaleDays,
         });
       })
       .catch((err) => toast.error(err instanceof Error ? err.message : 'Failed to load settings'));
@@ -154,6 +156,8 @@ export function AppSettingsPanel() {
         allowPublicSignup: updated.allowPublicSignup,
         orgName: updated.orgName,
         idleLockTimeoutMs: updated.idleLockTimeoutMs,
+        reviewWarningDays: updated.reviewWarningDays,
+        reviewStaleDays: updated.reviewStaleDays,
       });
       refreshBranding();
       toast.success('Settings saved');
@@ -325,6 +329,59 @@ export function AppSettingsPanel() {
                 </FormItem>
               )}
             />
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="reviewWarningDays"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Review warning window (days)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={365}
+                        value={field.value ?? ''}
+                        onChange={(e) => {
+                          const n = e.target.valueAsNumber;
+                          field.onChange(Number.isFinite(n) ? n : undefined);
+                        }}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Reviews alert this many days before the due date.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="reviewStaleDays"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Stale patient window (days)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={7}
+                        max={730}
+                        value={field.value ?? ''}
+                        onChange={(e) => {
+                          const n = e.target.valueAsNumber;
+                          field.onChange(Number.isFinite(n) ? n : undefined);
+                        }}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      A patient with photos but no review scheduled flags as
+                      stale after this many quiet days.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
             <Button type="submit" disabled={form.formState.isSubmitting}>
               {form.formState.isSubmitting && (
                 <Loader2 className="mr-2 size-4 animate-spin" />

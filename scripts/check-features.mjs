@@ -98,8 +98,8 @@ check(
   /'([0-9a-f]{64})'/.test(read('lib/licence/public-key.ts')),
 );
 check(
-  'patient-service guards all 4 mutations',
-  (read('lib/services/patient-service.ts').match(/await ensureWritable/g) || []).length === 4,
+  'patient-service guards all 5 mutations',
+  (read('lib/services/patient-service.ts').match(/await ensureWritable/g) || []).length === 5,
 );
 check(
   'photo-service guards all 5 mutations',
@@ -140,6 +140,129 @@ check(
   'dashboard layout gates on mustChangePasscode',
   /clinician\?\.mustChangePasscode/.test(read('app/(dashboard)/layout.tsx')),
 );
+
+// 11. Review scheduling: migration 010 carries the columns, the Rust shell
+//     registers it, the service maps them, and the dashboard reads the
+//     notification service for its attention panel.
+const reviewMigration = read('src-tauri/migrations/010_reviews.sql');
+for (const needle of [
+  'ALTER TABLE patients ADD COLUMN review_due_at',
+  'ALTER TABLE patients ADD COLUMN last_reviewed_at',
+  'ALTER TABLE settings ADD COLUMN review_warning_days',
+  'ALTER TABLE settings ADD COLUMN review_stale_days',
+]) {
+  check(`migration 010: ${needle}`, reviewMigration.includes(needle));
+}
+check(
+  'lib.rs registers migration 010',
+  /version:\s*10[\s\S]*?010_reviews\.sql/.test(read('src-tauri/src/lib.rs')),
+);
+for (const col of ['review_due_at', 'last_reviewed_at']) {
+  check(`patient-service selects p.${col}`, patientService.includes(`p.${col}`));
+}
+check(
+  'dashboard renders the attention panel',
+  read('app/(dashboard)/page.tsx').includes('NeedsAttention'),
+);
+check(
+  'sidebar carries pending-action counters',
+  read('components/app-sidebar.tsx').includes('SidebarMenuBadge'),
+);
+
+// 12. Phone companion (sidecar viewing): the Rust shell serves the pushed
+//     manifest + whitelisted photo files and registers the commands; the
+//     webview builds the access-filtered manifest, the dashboard owns the
+//     session, the sidebar opens the dialog, and a saved photo refreshes the
+//     manifest.
+const remoteCamera = read('src-tauri/src/remote_camera.rs');
+for (const needle of [
+  'fn handle_library',
+  'fn handle_image',
+  'is_safe_filename',
+  'pub fn remote_camera_active',
+  'pub fn update_remote_library',
+  'pub fn clear_remote_library',
+  "fetch('library')",
+  'screen-viewer',
+]) {
+  check(`remote_camera.rs: ${needle}`, remoteCamera.includes(needle));
+}
+const libRs = read('src-tauri/src/lib.rs');
+for (const cmd of [
+  'remote_camera::remote_camera_active',
+  'remote_camera::update_remote_library',
+  'remote_camera::clear_remote_library',
+]) {
+  check(`lib.rs registers ${cmd}`, libRs.includes(cmd));
+}
+check(
+  'companion service pushes manifest + filename whitelist',
+  /invoke\('update_remote_library'/.test(read('lib/services/companion-service.ts')),
+);
+check(
+  'dashboard layout mounts CompanionProvider',
+  read('app/(dashboard)/layout.tsx').includes('CompanionProvider'),
+);
+check(
+  'sidebar opens the phone link dialog',
+  read('components/app-sidebar.tsx').includes('PhoneLinkDialog'),
+);
+check(
+  'capture screen flags itself so photos are not handled twice',
+  read('components/camera/phone-camera-panel.tsx').includes('setCaptureScreenActive'),
+);
+check(
+  'capture page republishes the shared library after saving a photo',
+  read('app/(dashboard)/capture/page.tsx').includes('companionService.publish'),
+);
+
+// 13. Laterality (migration 011): column exists, the shell registers the
+//     migration, the schema validates it, both inserts write it, and the
+//     capture form + body map offer it (bilateral regions only).
+const latMigration = read('src-tauri/migrations/011_laterality.sql');
+check('migration 011: photos.laterality', latMigration.includes('ALTER TABLE photos ADD COLUMN laterality'));
+check('lib.rs registers migration 011', /version:\s*11[\s\S]*?011_laterality\.sql/.test(libRs));
+check('body-part exports BILATERAL_BODY_PARTS + labels', /BILATERAL_BODY_PARTS[\s\S]*bodyPartDisplayLabel/.test(read('types/body-part.ts')));
+const photoServiceSrc = read('lib/services/photo-service.ts');
+for (const needle of ['laterality, subpart, clinical_notes', 'validated.laterality ?? null', 'photo.laterality,']) {
+  check(`photo-service writes laterality: ${needle}`, photoServiceSrc.includes(needle));
+}
+check(
+  'capture form offers the side control',
+  /radiogroup[\s\S]*?Patient's side/.test(read('components/photo/photo-metadata-form.tsx')),
+);
+check(
+  'body map derives the patient side (front view mirrors)',
+  read('components/patient/body-map-picker.tsx').includes('patientSideOf'),
+);
+check(
+  'photo thumbnails carry the body-map badge',
+  read('components/photo/photo-card.tsx').includes('BodyMapBadge'),
+);
+
+// 14. Companion actions: the shell relays review/report requests, stages the
+//     report, tracks idle time; the provider listens and auto-ends.
+for (const needle of [
+  '"review"',
+  '"report-request"',
+  '"report"',
+  'fn stage_remote_report',
+  'fn remote_camera_idle_ms',
+  'allowed_patients',
+  'last_seen_ms',
+]) {
+  check(`remote_camera.rs: ${needle}`, remoteCamera.includes(needle));
+}
+check('lib.rs registers remote_camera::stage_remote_report', libRs.includes('remote_camera::stage_remote_report'));
+check('lib.rs registers remote_camera::remote_camera_idle_ms', libRs.includes('remote_camera::remote_camera_idle_ms'));
+check(
+  'companion service sends allowed patients + stages reports',
+  /allowedPatients[\s\S]*?stage_remote_report/.test(read('lib/services/companion-service.ts')),
+);
+const providerSrc = read('components/companion/companion-provider.tsx');
+for (const needle of ['companion-review-request', 'companion-report-request', 'remote_camera_idle_ms', 'IDLE_LIMIT_MS']) {
+  check(`companion provider: ${needle}`, providerSrc.includes(needle));
+}
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

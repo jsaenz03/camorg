@@ -34,5 +34,9 @@ export interface AppSettings {
   brandAccent: string | null;
   /** Business logo as an inline data URL; null keeps the built-in mark. */
   logoDataUrl: string | null;
+  /** Reviews alert this many days ahead of the due date. */
+  reviewWarningDays: number;
+  /** Photos but no review scheduled for this long flags the patient stale. */
+  reviewStaleDays: number;
   updatedAt: Date;
 }

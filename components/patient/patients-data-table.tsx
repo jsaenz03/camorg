@@ -14,6 +14,7 @@ import { format } from 'date-fns';
 import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import { formatDateOfBirth, formatRelativeTime } from '@/lib/utils/date-formatting';
+import { ReviewBadge } from '@/components/patient/review-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -93,7 +94,12 @@ export function PatientsDataTable({ patients, className }: PatientsDataTableProp
               onClick={() => router.push(`/patients/view?id=${patient.id}`)}
               className="cursor-pointer"
             >
-              <TableCell className="font-medium">{patient.name}</TableCell>
+              <TableCell className="font-medium">
+                <div className="flex items-center gap-2">
+                  <span>{patient.name}</span>
+                  <ReviewBadge patient={patient} />
+                </div>
+              </TableCell>
               <TableCell className="text-muted-foreground">
                 {formatDateOfBirth(patient.dateOfBirth) ?? '—'}
               </TableCell>

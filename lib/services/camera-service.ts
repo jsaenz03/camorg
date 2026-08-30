@@ -38,7 +38,7 @@ export class CameraService implements ICameraService {
     try {
       const permission = await navigator.permissions.query({ name: 'camera' as PermissionName });
       return permission.state as CameraPermissionState;
-    } catch (error) {
+    } catch {
       // Permissions API not supported or query failed
       return 'prompt';
     }

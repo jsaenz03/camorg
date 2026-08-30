@@ -14,14 +14,19 @@
 
 import { useState, type SVGProps } from 'react';
 import { PersonStanding } from 'lucide-react';
-import { BodyPart, type BodyPart as BodyPartType } from '@/types/body-part';
+import {
+  BodyPart,
+  BILATERAL_BODY_PARTS,
+  type BodyPart as BodyPartType,
+  type Laterality,
+} from '@/types/body-part';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
-type View = 'front' | 'back';
+export type View = 'front' | 'back';
 
-interface RegionDef {
+export interface RegionDef {
   part: BodyPartType;
   // Static geometry shared by both views where noted.
   props: Omit<SVGProps<SVGRectElement> & SVGProps<SVGEllipseElement>, 'ref'>;
@@ -31,7 +36,7 @@ interface RegionDef {
 // Front-view regions. Paint order matters: later shapes sit on top and win
 // pointer events (scalp strip and face oval over the head, chest/abdomen over
 // the trunk).
-const FRONT: RegionDef[] = [
+export const FRONT: RegionDef[] = [
   // head (outer)
   { part: BodyPart.HEAD, kind: 'ellipse', props: { cx: 100, cy: 46, rx: 26, ry: 32 } },
   // trunk
@@ -57,7 +62,7 @@ const FRONT: RegionDef[] = [
 ];
 
 // Back view: same limbs, BACK trunk, SCALP on the back of the head.
-const BACK: RegionDef[] = [
+export const BACK: RegionDef[] = [
   { part: BodyPart.HEAD, kind: 'ellipse', props: { cx: 100, cy: 46, rx: 26, ry: 32 } },
   { part: BodyPart.BACK, kind: 'rect', props: { x: 76, y: 84, width: 48, height: 84, rx: 10 } },
   { part: BodyPart.UPPER_ARM, kind: 'rect', props: { x: 48, y: 88, width: 20, height: 46, rx: 10 } },
@@ -76,42 +81,64 @@ const BACK: RegionDef[] = [
 ];
 
 // Neck: anatomical filler between head and trunk, selectable in both views.
-const NECK: RegionDef = { part: BodyPart.NECK, kind: 'rect', props: { x: 90, y: 74, width: 20, height: 14, rx: 5 } };
+export const NECK: RegionDef = { part: BodyPart.NECK, kind: 'rect', props: { x: 90, y: 74, width: 20, height: 14, rx: 5 } };
 
 // Stable id for a region: part + screen side. Derived from geometry because
 // array indices differ between the front and back views, so an index-based id
 // would jump to the opposite limb when the view flips.
-function regionId(part: BodyPartType, kind: 'rect' | 'ellipse', props: RegionDef['props']): string {
+export function regionId(part: BodyPartType, kind: 'rect' | 'ellipse', props: RegionDef['props']): string {
   const mid = kind === 'ellipse' ? Number(props.cx) : Number(props.x) + Number(props.width) / 2;
   const side = mid < 100 ? 'left' : mid > 100 ? 'right' : 'center';
   return `${part}-${side}`;
 }
 
+// The PATIENT's side of a region in the given view. The front view mirrors
+// (the patient's right limb is on the viewer's left); the back view does not.
+// Central regions (head, trunk) have no side.
+export function patientSideOf(regionKey: string, view: View): Laterality | 'center' {
+  const screenSide = regionKey.endsWith('-left')
+    ? 'left'
+    : regionKey.endsWith('-right')
+      ? 'right'
+      : 'center';
+  if (screenSide === 'center') return 'center';
+  if (view === 'front') return screenSide === 'left' ? 'right' : 'left';
+  return screenSide;
+}
+
 interface BodyMapPickerProps {
   value: BodyPartType | undefined;
-  onSelect: (part: BodyPartType) => void;
+  /** Currently chosen side, so only that half of a bilateral part highlights. */
+  laterality?: Laterality | null;
+  onSelect: (part: BodyPartType, laterality: Laterality | null) => void;
   disabled?: boolean;
 }
 
-export function BodyMapPicker({ value, onSelect, disabled }: BodyMapPickerProps) {
+export function BodyMapPicker({ value, laterality, onSelect, disabled }: BodyMapPickerProps) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>('front');
   // Which of a bilateral pair was last clicked, so only that side highlights.
-  // Null until the user clicks: a value arriving from the form carries no
-  // side, so both regions of that part highlight.
+  // The laterality prop narrows too once the form has it; `picked` covers the
+  // instant between click and form sync (and callers that don't track sides).
   const [picked, setPicked] = useState<{ part: BodyPartType; key: string } | null>(null);
   const regions = view === 'front' ? FRONT : BACK;
   const neckKey = regionId(NECK.part, NECK.kind, NECK.props);
 
   const handleSelect = (part: BodyPartType, key: string) => {
     setPicked({ part, key });
-    onSelect(part);
+    const side = patientSideOf(key, view);
+    onSelect(part, BILATERAL_BODY_PARTS.has(part) && side !== 'center' ? side : null);
   };
 
-  // A picked side only narrows the highlight while it belongs to the current
-  // value; any other part shows all of its regions.
-  const isSelected = (part: BodyPartType, key: string) =>
-    value === part && (picked?.part !== part || picked.key === key);
+  // A picked side (or the tracked laterality) only narrows the highlight
+  // while it belongs to the current value; any other part shows all regions.
+  const isSelected = (part: BodyPartType, key: string) => {
+    if (value !== part) return false;
+    if (!BILATERAL_BODY_PARTS.has(part)) return true;
+    if (laterality) return patientSideOf(key, view) === laterality;
+    if (picked?.part === part) return picked.key === key;
+    return true;
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -179,7 +206,7 @@ export function BodyMapPicker({ value, onSelect, disabled }: BodyMapPickerProps)
             variant={value === BodyPart.TORSO ? 'secondary' : 'ghost'}
             size="sm"
             className="text-xs"
-            onClick={() => onSelect(BodyPart.TORSO)}
+            onClick={() => onSelect(BodyPart.TORSO, null)}
           >
             Torso (general)
           </Button>

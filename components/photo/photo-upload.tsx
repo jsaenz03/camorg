@@ -117,6 +117,7 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
         imageBlob: currentFile,
         mimeType: currentFile.type as 'image/jpeg' | 'image/png' | 'image/heic' | 'image/webp',
         bodyPart: values.bodyPart,
+        laterality: values.laterality ?? null,
         subpart: values.subpart || null,
         clinicalNotes: values.clinicalNotes || null,
         // Fall back to the file's own timestamp (when it was taken), unless

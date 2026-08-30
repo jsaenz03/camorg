@@ -1,27 +1,46 @@
-// Phone-camera tether. A phone on the same Wi-Fi opens a pairing URL served
-// by this process, snaps the photo with its native camera app, and POSTs the
-// JPEG back; the bytes are forwarded to the webview as a Tauri event and flow
-// through the normal capture pipeline.
+// Phone-camera tether + companion viewer. A phone on the same Wi-Fi opens a
+// pairing URL served by this process, snaps the photo with its native camera
+// app, and POSTs the JPEG back; the bytes are forwarded to the webview as a
+// Tauri event and flow through the normal capture pipeline.
+//
+// The phone can also browse the signed-in clinician's library (patients and
+// photos) while the link is open, so the clinician can review photos with the
+// patient away from the desk. The webview owns all data decisions: it pushes
+// an access-filtered manifest plus an explicit filename whitelist via
+// update_remote_library, and this shell only ever serves files on that
+// whitelist from the photos directory. No DB access lives here. The phone can
+// additionally ask the desktop to mark a patient reviewed or prepare a case
+// report; both arrive as Tauri events, the webview does the work through the
+// normal services, and a finished report is staged back via
+// stage_remote_report for the phone to download.
 //
 // The phone page drives the native camera via <input capture> rather than
 // getUserMedia: camera capture needs a secure context, which plain LAN http
 // cannot offer on iOS/Android.
 
+use std::collections::HashSet;
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
+use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 use tiny_http::{Header, Method, Response, Server};
 
 const PHOTO_EVENT: &str = "remote-camera-photo";
 const STATUS_EVENT: &str = "remote-camera-status";
+const REVIEW_EVENT: &str = "companion-review-request";
+const REPORT_EVENT: &str = "companion-report-request";
 // Generous ceiling: a 12MP JPEG straight from a phone camera is ~4-8 MB.
 // ponytail: fixed cap, no streaming; raise if phones ever send RAW/HEIC.
 const MAX_BODY: usize = 25 * 1024 * 1024;
+// Phone control requests are tiny JSON ({"patientId":"<uuid>"}).
+const MAX_CONTROL_BODY: usize = 4 * 1024;
 
 #[derive(serde::Serialize)]
 pub struct RemoteCameraInfo {
@@ -38,13 +57,55 @@ struct RemoteCameraStatus {
   connected: bool,
 }
 
+/// Body of the phone's control requests (mark reviewed / prepare report).
+/// Serialized back out as the Tauri event payload (camelCase both ways).
+#[derive(serde::Serialize, Deserialize)]
+struct PatientRequest {
+  #[serde(rename = "patientId")]
+  patient_id: String,
+}
+
 struct RemoteCamera {
   shutdown: Arc<AtomicBool>,
   server: Arc<Server>,
   thread: Option<JoinHandle<()>>,
+  url: String,
+  /// Unix ms of the last authenticated request from the phone; the desktop
+  /// polls it to auto-end an abandoned session.
+  last_seen_ms: Arc<AtomicU64>,
+}
+
+/// What the phone may browse: a JSON manifest of access-filtered patients and
+/// photos, the photos directory to read bytes from, and the exact set of
+/// filenames those bytes may come from. Everything is pushed by the webview.
+struct LibraryState {
+  manifest_json: String,
+  photos_dir: PathBuf,
+  allowed_files: HashSet<String>,
+  allowed_patients: HashSet<String>,
 }
 
 static REMOTE_CAMERA: Mutex<Option<RemoteCamera>> = Mutex::new(None);
+static LIBRARY: Mutex<Option<LibraryState>> = Mutex::new(None);
+// The case report the webview has prepared for the phone, if any.
+static STAGED_REPORT: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Belt-and-braces filename gate alongside the whitelist: UUID-derived photo
+/// filenames are plain ASCII alphanumerics with dots, dashes, underscores.
+fn is_safe_filename(name: &str) -> bool {
+  !name.is_empty()
+    && !name.contains("..")
+    && name
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+}
+
+fn now_ms() -> u64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|d| d.as_millis() as u64)
+    .unwrap_or(0)
+}
 
 /// The LAN address a phone would use to reach this machine. A UDP "connect"
 /// selects the default-route interface without sending any packets.
@@ -60,6 +121,14 @@ fn content_type(value: &str) -> Header {
   Header::from_bytes(&b"Content-Type"[..], value.as_bytes()).expect("static header value")
 }
 
+fn content_disposition(value: &str) -> Header {
+  Header::from_bytes(&b"Content-Disposition"[..], value.as_bytes()).expect("static header value")
+}
+
+fn cache_control(value: &str) -> Header {
+  Header::from_bytes(&b"Cache-Control"[..], value.as_bytes()).expect("static header value")
+}
+
 fn respond_text(request: tiny_http::Request, status: u16, body: &str) {
   let _ = request.respond(
     Response::from_string(body)
@@ -68,33 +137,165 @@ fn respond_text(request: tiny_http::Request, status: u16, body: &str) {
   );
 }
 
-fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request) {
-  let url = request.url().to_string();
-  let prefix = format!("/t/{token}/");
-  if !url.starts_with(&prefix) {
+fn respond_json(request: tiny_http::Request, status: u16, body: String) {
+  let _ = request.respond(
+    Response::from_string(body)
+      .with_status_code(status)
+      .with_header(content_type("application/json")),
+  );
+}
+
+fn handle_library(request: tiny_http::Request) {
+  let manifest = LIBRARY
+    .lock()
+    .unwrap()
+    .as_ref()
+    .map(|lib| lib.manifest_json.clone())
+    .unwrap_or_else(|| "{\"viewing\":false}".to_string());
+  respond_json(request, 200, manifest);
+}
+
+fn handle_image(request: tiny_http::Request, filename: &str) {
+  // The whitelist is the authority; the charset check just keeps any weird
+  // bytes from ever reaching the filesystem layer.
+  let allowed = LIBRARY.lock().unwrap().as_ref().is_some_and(|lib| {
+    lib.allowed_files.contains(filename) && is_safe_filename(filename)
+  });
+  if !allowed {
     respond_text(request, 404, "Not found");
     return;
   }
+  let path = LIBRARY
+    .lock()
+    .unwrap()
+    .as_ref()
+    .map(|lib| lib.photos_dir.join(filename));
+  let Some(path) = path else {
+    respond_text(request, 404, "Not found");
+    return;
+  };
+  match std::fs::read(&path) {
+    Ok(bytes) => {
+      let _ = request.respond(
+        Response::from_data(bytes)
+          .with_header(content_type("image/jpeg"))
+          // Clinical images: keep them out of shared/proxy caches; an hour of
+          // private caching smooths library browsing without disk trails
+          // beyond the phone's own (private-mode-invisible) cache.
+          .with_header(cache_control("private, max-age=3600")),
+      );
+    }
+    Err(e) => {
+      crate::diagnostics::record(
+        crate::diagnostics::Level::Error,
+        "phone-camera",
+        &format!("Could not read photo file for the phone: {e}"),
+        None,
+      );
+      respond_text(request, 500, "Could not read photo");
+    }
+  }
+}
+
+/// Shared tail of the review / report control requests: read the small JSON
+/// body, gate the patient against the shared manifest, and relay it to the
+/// webview as a Tauri event. The actual work happens webview-side through the
+/// normal services (access checks, DB writes, report generation).
+fn handle_patient_request(app: &AppHandle, mut request: tiny_http::Request, event: &str) {
+  let outcome = (|| -> Result<(), (u16, &'static str)> {
+    if request.body_length().is_some_and(|len| len > MAX_CONTROL_BODY) {
+      return Err((413, "Request too large"));
+    }
+    let mut body = Vec::new();
+    let read = request
+      .as_reader()
+      .take(MAX_CONTROL_BODY as u64 + 1)
+      .read_to_end(&mut body);
+    if read.is_err() {
+      return Err((400, "Bad request"));
+    }
+    let parsed: PatientRequest =
+      serde_json::from_slice(&body).map_err(|_| (400, "Bad request"))?;
+    let allowed = LIBRARY
+      .lock()
+      .unwrap()
+      .as_ref()
+      .is_some_and(|lib| lib.allowed_patients.contains(&parsed.patient_id));
+    if !allowed {
+      return Err((404, "Not found"));
+    }
+    app
+      .emit(event, &parsed)
+      .map_err(|_| (500, "Could not reach the app"))?;
+    Ok(())
+  })();
+  match outcome {
+    Ok(()) => respond_text(request, 200, "ok"),
+    Err((status, msg)) => respond_text(request, status, msg),
+  }
+}
+
+fn handle_report_download(request: tiny_http::Request) {
+  let staged = STAGED_REPORT.lock().unwrap().clone();
+  let Some(path) = staged else {
+    respond_json(request, 404, "{\"ready\":false}".to_string());
+    return;
+  };
+  match std::fs::read(&path) {
+    Ok(bytes) => {
+      let _ = request.respond(
+        Response::from_data(bytes)
+          .with_header(content_type("application/pdf"))
+          .with_header(content_disposition("inline; filename=\"camog-case-report.pdf\""))
+          .with_header(cache_control("no-store")),
+      );
+    }
+    Err(_) => respond_json(request, 404, "{\"ready\":false}".to_string()),
+  }
+}
+
+fn handle_request(app: &AppHandle, token: &str, last_seen_ms: &AtomicU64, mut request: tiny_http::Request) {
+  let url = request.url().to_string();
+  let prefix = format!("/t/{token}/");
+  let path = match url.strip_prefix(&prefix) {
+    Some(path) => path,
+    None => {
+      respond_text(request, 404, "Not found");
+      return;
+    }
+  };
+  // Any authenticated request (photo grabs included) proves the phone is live.
+  last_seen_ms.store(now_ms(), Ordering::Relaxed);
 
   let method = request.method().clone();
-  if method == Method::Get && (url == prefix || url == format!("{prefix}index.html")) {
+  if method == Method::Get && (path.is_empty() || path == "index.html") {
     let _ = request.respond(
       Response::from_string(PAGE_HTML).with_header(content_type("text/html; charset=utf-8")),
     );
-  } else if method == Method::Get && url == format!("{prefix}logo.png") {
+  } else if method == Method::Get && path == "logo.png" {
     let _ = request.respond(
       Response::from_data(LOGO_PNG.to_vec()).with_header(content_type("image/png")),
     );
-  } else if method == Method::Get && url == format!("{prefix}hello") {
+  } else if method == Method::Get && path == "hello" {
     // Phone page pings on load so the desktop knows pairing succeeded.
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: true });
     respond_text(request, 200, "ok");
-  } else if method == Method::Post && url == format!("{prefix}bye") {
+  } else if method == Method::Get && path == "library" {
+    handle_library(request);
+  } else if method == Method::Get && path.starts_with("img/") {
+    handle_image(request, &path["img/".len()..]);
+  } else if method == Method::Get && path == "report" {
+    handle_report_download(request);
+  } else if method == Method::Post && path == "bye" {
     // Phone page beacons on hide/unload so the desktop can clear the
     // "connected" indicator instead of showing it forever.
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: false });
     respond_text(request, 200, "ok");
-  } else if method == Method::Post && url == format!("{prefix}photo") {
+  } else if method == Method::Post && path == "review" {
+    handle_patient_request(app, request, REVIEW_EVENT);
+  } else if method == Method::Post && path == "report-request" {
+    handle_patient_request(app, request, REPORT_EVENT);
+  } else if method == Method::Post && path == "photo" {
     if request.body_length().is_some_and(|len| len > MAX_BODY) {
       respond_text(request, 413, "Photo too large");
       return;
@@ -137,12 +338,13 @@ fn spawn_handler(
   app: AppHandle,
   server: Arc<Server>,
   token: String,
+  last_seen_ms: Arc<AtomicU64>,
   shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
   std::thread::spawn(move || {
     while !shutdown.load(Ordering::Relaxed) {
       match server.recv() {
-        Ok(request) => handle_request(&app, &token, request),
+        Ok(request) => handle_request(&app, &token, &last_seen_ms, request),
         // stop_remote_camera() unblocks the listener to wake us up.
         Err(_) => break,
       }
@@ -168,16 +370,27 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
     msg
   })?;
   let token = format!("{:016x}", rand::random::<u64>());
+  let url = format!("http://{ip}:{port}/t/{token}/");
   let server = Arc::new(server);
+  let last_seen_ms = Arc::new(AtomicU64::new(now_ms()));
 
   let shutdown = Arc::new(AtomicBool::new(false));
-  let thread = spawn_handler(app, Arc::clone(&server), token.clone(), Arc::clone(&shutdown));
+  let thread = spawn_handler(
+    app,
+    Arc::clone(&server),
+    token.clone(),
+    Arc::clone(&last_seen_ms),
+    Arc::clone(&shutdown),
+  );
 
   *REMOTE_CAMERA.lock().unwrap() = Some(RemoteCamera {
     shutdown,
     server,
     thread: Some(thread),
+    url: url.clone(),
+    last_seen_ms,
   });
+  *STAGED_REPORT.lock().unwrap() = None;
 
   // No token in diagnostics — the pairing URL is a secret.
   crate::diagnostics::record(
@@ -187,9 +400,7 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
     None,
   );
 
-  Ok(RemoteCameraInfo {
-    url: format!("http://{ip}:{port}/t/{token}/"),
-  })
+  Ok(RemoteCameraInfo { url })
 }
 
 #[tauri::command]
@@ -201,207 +412,130 @@ pub async fn stop_remote_camera() {
       let _ = thread.join();
     }
   }
+  *STAGED_REPORT.lock().unwrap() = None;
+}
+
+/// The pairing URL of the running link, if any. Lets a second surface (the
+/// capture screen's phone panel) reuse the live session instead of restarting
+/// it, which would invalidate the QR the phone may already have open.
+#[tauri::command]
+pub fn remote_camera_active() -> Option<RemoteCameraInfo> {
+  REMOTE_CAMERA
+    .lock()
+    .unwrap()
+    .as_ref()
+    .map(|rc| RemoteCameraInfo {
+      url: rc.url.clone(),
+    })
+}
+
+/// Milliseconds since the phone's last request, while a link is running. The
+/// desktop uses this to auto-end abandoned sessions.
+#[tauri::command]
+pub fn remote_camera_idle_ms() -> Option<u64> {
+  let remote_camera = REMOTE_CAMERA.lock().unwrap();
+  let rc = remote_camera.as_ref()?;
+  Some(now_ms().saturating_sub(rc.last_seen_ms.load(Ordering::Relaxed)))
+}
+
+/// The webview pushes the access-filtered library manifest, the exact set of
+/// photo files the phone may fetch, and the patient ids it may act on.
+/// Called when a companion session starts (and whenever the library should be
+/// refreshed while it is open).
+#[tauri::command]
+pub fn update_remote_library(
+  manifest_json: String,
+  photos_dir: String,
+  allowed_files: Vec<String>,
+  allowed_patients: Vec<String>,
+) -> Result<(), String> {
+  if !allowed_files.iter().all(|f| is_safe_filename(f)) {
+    return Err("Refusing unsafe photo filename".to_string());
+  }
+  *LIBRARY.lock().unwrap() = Some(LibraryState {
+    manifest_json,
+    photos_dir: PathBuf::from(photos_dir),
+    allowed_files: allowed_files.into_iter().collect(),
+    allowed_patients: allowed_patients.into_iter().collect(),
+  });
+  Ok(())
+}
+
+/// Drop everything shared with the phone (library + staged report): used when
+/// the share toggle goes off or the companion session ends.
+#[tauri::command]
+pub fn clear_remote_library() {
+  *LIBRARY.lock().unwrap() = None;
+  *STAGED_REPORT.lock().unwrap() = None;
+}
+
+/// Hand the phone a case report the webview has just generated.
+#[tauri::command]
+pub fn stage_remote_report(path: String) {
+  *STAGED_REPORT.lock().unwrap() = Some(PathBuf::from(path));
 }
 
 // 256px copy of the app logo (public/logo.png) so the phone page carries the
 // brand mark without shipping the 1024px original over the LAN.
 const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
 
-const PAGE_HTML: &str = r##"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0a0a0a">
-<title>Camog &middot; Phone camera</title>
-<style>
-  /* Camog dark theme — mirrors app/globals.css .dark tokens. */
-  :root {
-    color-scheme: dark;
-    --bg: #0a0a0a;
-    --card: #171717;
-    --fg: #fafafa;
-    --muted: #a1a1aa;
-    --border: rgba(255, 255, 255, 0.1);
-    --primary: #00aeb5;    /* oklch(0.68 0.12 200) */
-    --primary-fg: #001011; /* oklch(0.16 0.02 200) */
-    --success: #4ade80;
-    --error: #f87171;
-    --radius: 10px;        /* 0.625rem */
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; padding: 24px 16px; min-height: 100dvh;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    background: radial-gradient(70% 40% at 50% 0, rgba(0, 174, 181, 0.08), transparent 70%) var(--bg);
-    color: var(--fg);
-  }
-  header { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-  header img {
-    width: 56px; height: 56px; padding: 6px;
-    border-radius: 14px; border: 1px solid var(--border);
-    background: var(--card); object-fit: contain;
-  }
-  .wordmark { font-size: 20px; font-weight: 600; line-height: 1.2; text-align: center; }
-  .tagline { font-size: 13px; color: var(--muted); text-align: center; }
-  h1 { font-size: 20px; margin: 0; text-align: center; }
-  p { font-size: 15px; line-height: 1.5; color: var(--muted); margin: 0; text-align: center; max-width: 36ch; }
-  .check {
-    width: 64px; height: 64px; border-radius: 999px; color: var(--primary);
-    display: flex; align-items: center; justify-content: center;
-    background: rgba(0, 174, 181, 0.12);
-  }
-  .check svg { width: 30px; height: 30px; }
-  .btn {
-    display: block; width: 100%; max-width: 340px; padding: 15px; border: 0; border-radius: var(--radius);
-    font-size: 17px; font-weight: 600; text-align: center; cursor: pointer;
-    -webkit-user-select: none; user-select: none;
-  }
-  .btn:active { opacity: 0.85; }
-  .btn-primary { background: var(--primary); color: var(--primary-fg); }
-  .btn-secondary { background: #27272a; color: var(--fg); }
-  #screen-start, #screen-review, #screen-sent {
-    display: flex; flex-direction: column; align-items: center; gap: 14px;
-  }
-  #screen-start[hidden], #screen-review[hidden], #screen-sent[hidden] { display: none; }
-  #preview { max-width: 100%; max-height: 50dvh; border-radius: 12px; object-fit: contain; border: 1px solid var(--border); }
-  #error { color: var(--error); white-space: pre-line; }
-</style>
-</head>
-<body>
-  <header>
-    <img src="logo.png" alt="Camog">
-    <div>
-      <div class="wordmark">Camog</div>
-      <div class="tagline">Clinical Photos</div>
-    </div>
-  </header>
-  <div id="screen-start">
-    <p id="conn">Connecting to Camog&hellip;</p>
-    <label class="btn btn-primary" for="photo">Take photo</label>
-    <input id="photo" type="file" accept="image/*" capture="environment" hidden>
-  </div>
-  <div id="screen-review" hidden>
-    <h1>Use this photo?</h1>
-    <img id="preview" alt="Photo to send">
-    <button type="button" class="btn btn-primary" id="send">Send to Camog</button>
-    <button type="button" class="btn btn-secondary" id="retake">Retake</button>
-  </div>
-  <div id="screen-sent" hidden>
-    <div class="check" aria-hidden="true">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-    </div>
-    <h1>Photo sent</h1>
-    <p>Check Camog on your computer to add details and save it.</p>
-    <button type="button" class="btn btn-primary" id="another">Take another photo</button>
-  </div>
-  <p id="error"></p>
-<script>
-(function () {
-  'use strict';
-  var pending = null; // processed JPEG blob waiting to be sent
-
-  function $(id) { return document.getElementById(id); }
-  function show(screen) {
-    ['screen-start', 'screen-review', 'screen-sent'].forEach(function (s) {
-      $(s).hidden = s !== screen;
-    });
-  }
-  function fail(msg) { $('error').textContent = msg; }
-
-  // Relative URLs resolve under /t/<token>/, so the token never appears here.
-  fetch('hello').then(function () {
-    $('conn').textContent = 'Connected. Take the photo, review it, then send it.';
-    $('conn').style.color = '#4ade80';
-  }).catch(function () {
-    fail('Cannot reach Camog.\nMake sure the Camog app is open and your phone is on the same Wi-Fi.');
-  });
-
-  // Tell the desktop when the page goes away so it can clear "connected".
-  addEventListener('pagehide', function () { navigator.sendBeacon('bye'); });
-
-  $('photo').addEventListener('change', function () {
-    var file = this.files && this.files[0];
-    this.value = '';
-    if (!file) return;
-    fail('');
-    shrink(file).then(function (blob) {
-      pending = blob;
-      $('preview').src = URL.createObjectURL(blob);
-      show('screen-review');
-    }).catch(function () {
-      fail('Could not read that photo. Try again.');
-    });
-  });
-
-  $('retake').addEventListener('click', function () { show('screen-start'); });
-  $('another').addEventListener('click', function () { show('screen-start'); });
-
-  $('send').addEventListener('click', function () {
-    if (!pending) return;
-    var blob = pending;
-    pending = null;
-    fail('');
-    fetch('photo', { method: 'POST', body: blob }).then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      show('screen-sent');
-    }).catch(function () {
-      pending = blob;
-      fail('Could not send the photo.\nMake sure Camog is still showing the capture screen, then try again.');
-      show('screen-review');
-    });
-  });
-
-  // Re-encode to JPEG capped at 1920px, matching the desktop capture path.
-  function shrink(file) {
-    return decode(file).then(function (img) {
-      var w = img.naturalWidth || img.width;
-      var h = img.naturalHeight || img.height;
-      if (!w || !h) throw new Error('no dimensions');
-      var scale = Math.min(1, 1920 / Math.max(w, h));
-      var canvas = document.createElement('canvas');
-      canvas.width = Math.round(w * scale);
-      canvas.height = Math.round(h * scale);
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      if (img.close) img.close();
-      return new Promise(function (resolve, reject) {
-        canvas.toBlob(function (b) { b ? resolve(b) : reject(new Error('encode')); }, 'image/jpeg', 0.92);
-      });
-    });
-  }
-
-  function decode(file) {
-    if (window.createImageBitmap) {
-      return createImageBitmap(file, { imageOrientation: 'from-image' });
-    }
-    // ponytail: pre-2021 iOS Safari has no createImageBitmap; img decode applies EXIF anyway.
-    return new Promise(function (resolve, reject) {
-      var url = URL.createObjectURL(file);
-      var img = new Image();
-      img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
-      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('decode')); };
-      img.src = url;
-    });
-  }
-})();
-</script>
-</body>
-</html>
-"##;
+include!("remote_camera_page.rs");
 
 #[cfg(test)]
 mod tests {
-  use super::PAGE_HTML;
+  use super::{is_safe_filename, PAGE_HTML};
 
   // Guards the branded phone page: the logo route, wordmark, theme tokens,
-  // and the [hidden] override that keeps flex screens toggleable.
+  // and the [hidden] override that keeps screens toggleable.
   #[test]
   fn phone_page_carries_branding() {
     assert!(PAGE_HTML.contains(r#"src="logo.png""#));
     assert!(PAGE_HTML.contains(">Clinical Photos<"));
     assert!(PAGE_HTML.contains("--primary: #00aeb5"));
-    assert!(PAGE_HTML.contains("[hidden] { display: none; }"));
+    assert!(PAGE_HTML.contains("[hidden] { display: none !important; }"));
     assert!(PAGE_HTML.trim_end().ends_with("</html>"));
+  }
+
+  // The companion viewer surface: library tab, patient rows, viewer, and the
+  // manifest fetch that switches both on.
+  #[test]
+  fn phone_page_carries_library_viewer() {
+    assert!(PAGE_HTML.contains(r#"fetch('library')"#));
+    assert!(PAGE_HTML.contains("screen-patient"));
+    assert!(PAGE_HTML.contains("screen-viewer"));
+    assert!(PAGE_HTML.contains(r#"'img/' + e.p.id + '.thumb.jpg'"#));
+    assert!(PAGE_HTML.contains(r#"'img/' + e.p.id + '.jpg'"#));
+    assert!(PAGE_HTML.contains("Review overdue"));
+    assert!(PAGE_HTML.contains("No consent on record"));
+  }
+
+  // Companion extras: theme toggle, body-map thumbnail overlays, desktop-style
+  // compare (pickers + side/overlay), review and report actions, blur toggle.
+  #[test]
+  fn phone_page_carries_companion_extras() {
+    assert!(PAGE_HTML.contains("body.light"));
+    assert!(PAGE_HTML.contains("camog-theme"));
+    assert!(PAGE_HTML.contains("BODY_FRONT"));
+    assert!(PAGE_HTML.contains("screen-compare"));
+    assert!(PAGE_HTML.contains("cmp-left"));
+    assert!(PAGE_HTML.contains("cmp-overlay"));
+    assert!(PAGE_HTML.contains("cell-fig"));
+    assert!(PAGE_HTML.contains("'review'"));
+    assert!(PAGE_HTML.contains("'report-request'"));
+    assert!(PAGE_HTML.contains("blurred"));
+  }
+
+  // Trust boundary: only plain UUID-derived names may reach the filesystem.
+  #[test]
+  fn filename_gate() {
+    assert!(is_safe_filename("b7c9d1e2-3f4a-4b5c-8d6e-7f8a9b0c1d2e.jpg"));
+    assert!(is_safe_filename("b7c9d1e2.thumb.jpg"));
+    assert!(!is_safe_filename(""));
+    assert!(!is_safe_filename(".."));
+    assert!(!is_safe_filename("../secret.txt"));
+    assert!(!is_safe_filename("a/b.jpg"));
+    assert!(!is_safe_filename("a\\b.jpg"));
+    assert!(!is_safe_filename("photo name.jpg"));
+    assert!(!is_safe_filename("café.jpg"));
   }
 }

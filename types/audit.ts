@@ -11,13 +11,16 @@ export type AuditAction =
   | 'patient.archive'
   | 'patient.unarchive'
   | 'patient.consent'
+  | 'patient.review'
   | 'photo.create'
   | 'photo.update'
   | 'photo.delete'
   | 'photo.restore'
   | 'photo.annotate'
   | 'photo.export'
-  | 'backup.create';
+  | 'backup.create'
+  | 'companion.start'
+  | 'companion.stop';
 
 export interface AuditEntry {
   id: string;
@@ -40,6 +43,7 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'patient.archive': 'Archived patient',
   'patient.unarchive': 'Restored patient',
   'patient.consent': 'Recorded consent',
+  'patient.review': 'Scheduled / completed review',
   'photo.create': 'Added photo',
   'photo.update': 'Updated photo',
   'photo.delete': 'Deleted photo',
@@ -47,4 +51,6 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'photo.annotate': 'Annotated photo',
   'photo.export': 'Exported / printed photos',
   'backup.create': 'Created backup',
+  'companion.start': 'Opened phone link session',
+  'companion.stop': 'Closed phone link session',
 };

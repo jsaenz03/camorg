@@ -15,7 +15,7 @@ import { getDB } from '@/lib/db/database';
 import { accessService } from '@/lib/services/access-service';
 import { auditService } from '@/lib/services/audit-service';
 import { NotFoundError } from '@/lib/validators/errors';
-import { dobFromMs, dobToMs, parseDobInput } from '@/lib/utils/date-formatting';
+import { dateFromMs, dateToMs, dobFromMs, dobToMs, parseDobInput } from '@/lib/utils/date-formatting';
 import { ensureWritable } from '@/lib/licence/guard';
 
 // Column list used everywhere we SELECT patients, so the row mapper always
@@ -27,6 +27,7 @@ const PATIENT_COLUMNS = `
   p.is_archived, p.archived_at,
   p.owner_clinician_id, p.is_org_shared,
   p.consent_given_at, p.consent_scope, p.consent_expires_at,
+  p.review_due_at, p.last_reviewed_at,
   owner.display_name AS owner_name
 `;
 
@@ -50,6 +51,8 @@ function rowToPatient(row: Record<string, unknown>): Patient {
     consentGivenAt: row.consent_given_at != null ? new Date(row.consent_given_at as number) : null,
     consentScope: (row.consent_scope as Patient['consentScope']) ?? null,
     consentExpiresAt: row.consent_expires_at != null ? new Date(row.consent_expires_at as number) : null,
+    reviewDueAt: row.review_due_at != null ? dateFromMs(row.review_due_at as number) : null,
+    lastReviewedAt: row.last_reviewed_at != null ? new Date(row.last_reviewed_at as number) : null,
   };
 }
 
@@ -77,8 +80,9 @@ export class PatientService implements IPatientService {
       `INSERT INTO patients
          (id, name, normalized_name, dob, photo_count, deleted_photo_count,
           created_at, updated_at, last_photo_at, clinician_id,
-          is_archived, archived_at, owner_clinician_id, is_org_shared)
-       VALUES ($1, $2, $3, $4, 0, 0, $5, $5, NULL, $6, 0, NULL, $6, 0)`,
+          is_archived, archived_at, owner_clinician_id, is_org_shared,
+          review_due_at, last_reviewed_at)
+       VALUES ($1, $2, $3, $4, 0, 0, $5, $5, NULL, $6, 0, NULL, $6, 0, NULL, NULL)`,
       [id, validated.name, normalizedName, dobMs, nowMs, clinician.id],
     );
 
@@ -107,6 +111,8 @@ export class PatientService implements IPatientService {
       consentGivenAt: null,
       consentScope: null,
       consentExpiresAt: null,
+      reviewDueAt: null,
+      lastReviewedAt: null,
     };
   }
 
@@ -219,14 +225,16 @@ export class PatientService implements IPatientService {
     const consent = validated.consent;
     const consentGivenMs = consent.givenAt?.getTime() ?? null;
     const consentExpiryMs = consent.expiresAt?.getTime() ?? null;
+    const review = validated.review;
+    const reviewDueMs = review.dueAt ? dateToMs(review.dueAt) : null;
     const nowMs = Date.now();
 
     await db.execute(
       `UPDATE patients
          SET name = $1, normalized_name = $2, dob = $3,
              consent_given_at = $4, consent_scope = $5, consent_expires_at = $6,
-             updated_at = $7
-       WHERE id = $8`,
+             review_due_at = $7, updated_at = $8
+       WHERE id = $9`,
       [
         validated.name,
         normalizedName,
@@ -234,6 +242,7 @@ export class PatientService implements IPatientService {
         consentGivenMs,
         consent.scope,
         consentExpiryMs,
+        reviewDueMs,
         nowMs,
         id,
       ],
@@ -262,6 +271,16 @@ export class PatientService implements IPatientService {
       });
     }
 
+    if (reviewDueMs !== (prior.reviewDueAt?.getTime() ?? null)) {
+      void auditService.record('patient.review', {
+        entityType: 'patient',
+        entityId: id,
+        detail: review.dueAt
+          ? `review scheduled for ${review.dueAt.toISOString().slice(0, 10)}`
+          : 'review date cleared',
+      });
+    }
+
     return {
       ...prior,
       name: validated.name,
@@ -271,6 +290,45 @@ export class PatientService implements IPatientService {
       consentGivenAt: consent.givenAt,
       consentScope: consent.scope,
       consentExpiresAt: consent.expiresAt,
+      reviewDueAt: review.dueAt,
+    };
+  }
+
+  /**
+   * One-click "review done": stamp last_reviewed_at, clear (or replace) the
+   * due date. Distinct from updatePatient so the timeline header button and
+   * future bulk flows don't need to round-trip the whole patient form.
+   */
+  async markReviewed(id: string, nextDueAt: Date | null = null): Promise<Patient> {
+    await ensureWritable();
+    await accessService.assertCanManagePatient(id);
+    const db = await getDB();
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT ${PATIENT_COLUMNS} FROM patients p ${OWNER_JOIN} WHERE p.id = $1`,
+      [id],
+    );
+    if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
+
+    const nowMs = Date.now();
+    const reviewDueMs = nextDueAt ? dateToMs(nextDueAt) : null;
+    await db.execute(
+      `UPDATE patients SET last_reviewed_at = $1, review_due_at = $2, updated_at = $3 WHERE id = $4`,
+      [nowMs, reviewDueMs, nowMs, id],
+    );
+
+    void auditService.record('patient.review', {
+      entityType: 'patient',
+      entityId: id,
+      detail: nextDueAt
+        ? `reviewed; next due ${nextDueAt.toISOString().slice(0, 10)}`
+        : 'marked reviewed',
+    });
+
+    return {
+      ...rowToPatient(rows[0]),
+      lastReviewedAt: new Date(nowMs),
+      reviewDueAt: nextDueAt,
+      updatedAt: new Date(nowMs),
     };
   }
 

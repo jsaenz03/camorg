@@ -26,6 +26,9 @@ export interface AuditListOptions {
   limit?: number;
   /** Filter to one patient's history. */
   patientId?: string;
+  /** 'all' (default, admin-only) or 'mine' — the current clinician's own
+   *  entries, available to any signed-in user (dashboard activity feed). */
+  scope?: 'all' | 'mine';
 }
 
 class AuditService {
@@ -58,22 +61,41 @@ class AuditService {
     }
   }
 
-  /** Newest-first audit history. Admin-only. */
+  /** Newest-first audit history. 'all' is admin-only; 'mine' is per-user. */
   async list(options: AuditListOptions = {}): Promise<AuditEntry[]> {
-    const { limit = 100, patientId } = options;
+    const { limit = 100, patientId, scope = 'all' } = options;
     const { accessService } = await import('@/lib/services/access-service');
-    await accessService.requireAdmin();
+    if (scope === 'all') {
+      await accessService.requireAdmin();
+    }
 
     const db = await getDB();
-    const rows = patientId
-      ? await db.select<Record<string, unknown>[]>(
-          `SELECT * FROM audit_log WHERE patient_id = $1 ORDER BY created_at DESC LIMIT $2`,
-          [patientId, limit],
-        )
-      : await db.select<Record<string, unknown>[]>(
-          `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT $1`,
-          [limit],
-        );
+    let rows: Record<string, unknown>[];
+    if (patientId) {
+      // Patient-scoped history must stay behind the same access rule as the
+      // patient itself: admins see everything, others only patients they can
+      // open (inaccessible reads as empty, like the patient/photo services).
+      const admin = await accessService.isAdmin().catch(() => false);
+      if (!admin && !(await accessService.canAccessPatient(patientId))) {
+        return [];
+      }
+      rows = await db.select<Record<string, unknown>[]>(
+        `SELECT * FROM audit_log WHERE patient_id = $1 ORDER BY created_at DESC LIMIT $2`,
+        [patientId, limit],
+      );
+    } else if (scope === 'mine') {
+      const me = await accessService.getCurrentClinician();
+      if (!me) return [];
+      rows = await db.select<Record<string, unknown>[]>(
+        `SELECT * FROM audit_log WHERE clinician_id = $1 ORDER BY created_at DESC LIMIT $2`,
+        [me.id, limit],
+      );
+    } else {
+      rows = await db.select<Record<string, unknown>[]>(
+        `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT $1`,
+        [limit],
+      );
+    }
 
     return rows.map((row) => ({
       id: row.id as string,

@@ -54,6 +54,57 @@ export interface RemoteCameraStatusEvent {
   connected: boolean;      // True once the phone has loaded the pairing page
 }
 
+/**
+ * Companion viewing (the phone as a second screen)
+ *
+ * While the link is open, the webview pushes an access-filtered manifest of
+ * the signed-in clinician's library via `update_remote_library`; the phone
+ * fetches it at `/library` and photo bytes at `/img/<file>` (whitelisted
+ * filenames only). The phone mirrors what the clinician can see on the PC —
+ * no more, no less.
+ */
+
+/** A patient row on the phone's library list (minimal, JSON-safe). */
+export interface CompanionPatient {
+  id: string;
+  name: string;
+  photoCount: number;
+  lastPhotoAt: number | null;      // Unix ms of the most recent photo
+  consent: 'none' | 'valid' | 'expired';
+  review: 'none' | 'scheduled' | 'due-soon' | 'overdue' | 'stale';
+  reviewDueAt: number | null;      // Unix ms of the scheduled review
+}
+
+/** A photo row on the phone (bytes are served separately by filename). */
+export interface CompanionPhoto {
+  id: string;                      // Full image: /img/<id>.jpg, thumb: /img/<id>.thumb.jpg
+  patientId: string;
+  bodyPart: string;
+  bodyPartLabel: string;           // Human label resolved webview-side ("Left hand")
+  laterality: 'left' | 'right' | null;  // Patient's own side, for the body diagram
+  subpart: string | null;
+  notes: string | null;            // clinicalNotes
+  capturedAt: number;              // Unix ms
+}
+
+/** The manifest served to the phone at `/library`. */
+export interface CompanionLibrary {
+  viewing: boolean;
+  generatedAt: number;             // Unix ms
+  patients: CompanionPatient[];
+  photos: CompanionPhoto[];
+}
+
+/**
+ * Payload of the companion-review-request / companion-report-request events:
+ * the phone asked the desktop to act on a shared patient (mark reviewed /
+ * prepare case report). The shell has already checked the id against the
+ * shared manifest.
+ */
+export interface CompanionPatientRequestEvent {
+  patientId: string;
+}
+
 export interface ICameraService {
   /**
    * Checks if MediaDevices API is supported in current browser

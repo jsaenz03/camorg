@@ -38,6 +38,11 @@ export function applyBrand(primary: string | null, accent: string | null): void 
 interface Branding {
   orgName: string;
   logoDataUrl: string | null;
+  /** Review alert windows in days. They ride along on this provider (which
+   *  already reads the settings row once per load) so badges across the app
+   *  agree with the dashboard alerts without a second fetch. */
+  reviewWarningDays: number;
+  reviewStaleDays: number;
   /** Re-read the settings row (call after the admin edits branding). */
   refresh: () => void;
 }
@@ -45,6 +50,8 @@ interface Branding {
 const BrandingContext = createContext<Branding>({
   orgName: 'Camog',
   logoDataUrl: null,
+  reviewWarningDays: 7,
+  reviewStaleDays: 90,
   refresh: () => {},
 });
 
@@ -56,6 +63,8 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
   const [branding, setBranding] = useState<Omit<Branding, 'refresh'>>({
     orgName: 'Camog',
     logoDataUrl: null,
+    reviewWarningDays: 7,
+    reviewStaleDays: 90,
   });
 
   const refresh = useCallback(() => {
@@ -63,7 +72,12 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
       .getSettings()
       .then((s) => {
         applyBrand(s.brandPrimary, s.brandAccent);
-        setBranding({ orgName: s.orgName, logoDataUrl: s.logoDataUrl });
+        setBranding({
+          orgName: s.orgName,
+          logoDataUrl: s.logoDataUrl,
+          reviewWarningDays: s.reviewWarningDays,
+          reviewStaleDays: s.reviewStaleDays,
+        });
       })
       .catch(() => {});
   }, []);
