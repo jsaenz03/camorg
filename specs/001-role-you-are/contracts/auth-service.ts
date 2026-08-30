@@ -213,6 +213,14 @@ export interface IAuthService {
   setUserRole(id: string, role: Clinician['role']): Promise<Clinician>;
 
   /**
+   * Reset a clinician's forgotten passcode. Admin only, never self. Sets a
+   * generated temporary passcode (returned once, never stored in plaintext),
+   * forces a change at next sign in, and clears the recorded session. Role
+   * and active/pending state are untouched.
+   */
+  resetUserPasscode(id: string): Promise<{ clinician: Clinician; tempPasscode: string }>;
+
+  /**
    * Create an invitation. Admin only.
    * - `kind: 'token'` returns an Invitation with a one-time code the user
    *   enters at /signup.

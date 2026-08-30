@@ -9,6 +9,10 @@
  * - On success: refresh the auth context and redirect to /capture.
  * - Fresh install (zero users): shows a link to /signup, where the first
  *   account becomes the organisation administrator.
+ * - "Forgot passcode?" opens the factory-reset dialog — passcodes are only
+ *   stored as hashes on this device (no server, no email), so a lost
+ *   passcode means deleting all local data and setting up again. Members
+ *   should ask an admin to reset theirs from Settings → Users instead.
  * - Dev seed button: visible only when NODE_ENV=development AND zero users.
  */
 
@@ -36,6 +40,14 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Form,
   FormControl,
   FormField,
@@ -53,6 +65,9 @@ export default function LoginPage() {
   const [userCount, setUserCount] = useState<number | null>(null);
   const [countError, setCountError] = useState<string | null>(null);
   const [seeding, setSeeding] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [confirmPhrase, setConfirmPhrase] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   const isDev = process.env.NODE_ENV === 'development';
 
@@ -134,6 +149,24 @@ export default function LoginPage() {
       toast.error(err instanceof Error ? err.message : 'Reset failed');
     } finally {
       setSeeding(false);
+    }
+  }
+
+  // "Forgot passcode?" — factory reset with the typed confirmation phrase.
+  // resetApp itself re-checks the phrase, so a mismatch can never wipe data.
+  async function handleForgotReset() {
+    setResetting(true);
+    try {
+      await authService.resetApp(confirmPhrase);
+      setForgotOpen(false);
+      setConfirmPhrase('');
+      form.reset({ username: '', passcode: '', rememberMe: false, rememberLogin: false });
+      setUserCount(0);
+      toast.success('All data deleted. Create the first account to set up again.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Reset failed');
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -313,6 +346,9 @@ export default function LoginPage() {
             Sign up
           </Link>
         </Button>
+        <Button variant="link" size="sm" onClick={() => setForgotOpen(true)}>
+          Forgot passcode?
+        </Button>
         <p className="pt-1 text-center text-xs text-muted-foreground">
           <Link href="/legal#terms-of-service" className="underline-offset-2 hover:underline">
             Terms of Service
@@ -323,6 +359,63 @@ export default function LoginPage() {
           </Link>
         </p>
       </CardFooter>
+
+      <Dialog open={forgotOpen} onOpenChange={(open) => {
+        setForgotOpen(open);
+        if (!open) setConfirmPhrase('');
+      }}>
+        <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Reset Camog?</DialogTitle>
+          <DialogDescription>
+            Passcodes are stored only as secure hashes on this device — there is
+            no server or email address to send a recovery link to. The only way
+            back in without a passcode is a factory reset.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p className="text-muted-foreground">
+            This permanently deletes everything on this device: patients, photos,
+            users, settings, and backups stored in the photos folder. Your
+            licence activation is kept.{' '}
+            <span className="font-medium text-foreground">
+              If only a member forgot their passcode, an admin can reset it in
+              Settings → Users instead — no data is lost.
+            </span>
+          </p>
+          <div>
+            <label
+              htmlFor="forgot-confirm"
+              className="mb-2 block text-sm font-medium leading-none"
+            >
+              Type <span className="font-mono">DELETE ALL DATA</span> to confirm
+            </label>
+            <Input
+              id="forgot-confirm"
+              autoComplete="off"
+              placeholder="DELETE ALL DATA"
+              value={confirmPhrase}
+              onChange={(e) => setConfirmPhrase(e.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setForgotOpen(false)} disabled={resetting}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={confirmPhrase !== 'DELETE ALL DATA' || resetting}
+            onClick={() => {
+              void handleForgotReset();
+            }}
+          >
+            {resetting && <Loader2 className="mr-2 size-4 animate-spin" />}
+            Delete everything
+          </Button>
+        </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck, UserCircle } from 'lucide-react';
+import { Copy, KeyRound, Loader2, ShieldCheck, UserCircle } from 'lucide-react';
 
 import type { Clinician, ClinicianRole } from '@/types/clinician';
 import { authService } from '@/lib/services/auth-service';
@@ -30,6 +30,11 @@ import { Button } from '@/components/ui/button';
 
 export function UsersPanel({ currentUserId }: { currentUserId: string }) {
   const [users, setUsers] = useState<Clinician[] | null>(null);
+  // One-time temp passcode from the last reset — shown until dismissed.
+  const [revealedReset, setRevealedReset] = useState<{
+    username: string;
+    tempPasscode: string;
+  } | null>(null);
 
   useEffect(() => {
     void authService
@@ -63,6 +68,23 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
     }
   }
 
+  async function resetPasscode(u: Clinician) {
+    if (
+      !window.confirm(
+        `Reset ${u.displayName}'s passcode? You'll get a temporary passcode to share with them; they must choose a new one at next sign in.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const { clinician, tempPasscode } = await authService.resetUserPasscode(u.id);
+      setUsers((prev) => prev?.map((p) => (p.id === u.id ? clinician : p)) ?? null);
+      setRevealedReset({ username: clinician.username, tempPasscode });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Reset failed');
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -80,6 +102,39 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
           <p className="text-sm text-muted-foreground">No users yet.</p>
         ) : (
           <>
+            {revealedReset && (
+              <div className="mb-4 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
+                <p className="mb-1 font-medium">
+                  Temporary passcode for {revealedReset.username} (shown once):
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="rounded bg-background px-2 py-1 font-mono text-base tracking-widest">
+                    {revealedReset.tempPasscode}
+                  </code>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(revealedReset.tempPasscode);
+                      toast.success('Passcode copied');
+                    }}
+                  >
+                    <Copy className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setRevealedReset(null)}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+                <p className="mt-2 text-muted-foreground">
+                  They sign in with their username and this passcode, then choose
+                  a new one.
+                </p>
+              </div>
+            )}
             {users.some((u) => u.isPending && !u.isActive) && (
               <div className="mb-4 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
                 {users.filter((u) => u.isPending && !u.isActive).length} sign
@@ -136,6 +191,20 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
                     disabled={isSelf}
                   >
                     {u.isPending ? 'Approve' : u.isActive ? 'Deactivate' : 'Activate'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => resetPasscode(u)}
+                    disabled={isSelf}
+                    title={
+                      isSelf
+                        ? 'Use Profile → Change passcode for your own account'
+                        : "Issue a temporary passcode (they'll choose a new one at next sign in)"
+                    }
+                  >
+                    <KeyRound className="size-4" />
+                    Reset passcode
                   </Button>
                 </li>
               );

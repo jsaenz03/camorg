@@ -337,9 +337,11 @@ export class AuthService implements IAuthService {
       "SELECT * FROM settings WHERE id = 'app'",
     );
     if (!rows.length) {
+      // Mirror the seeded default (migrations 002 → 005/012): public signup
+      // open, so a codeless path exists even on a DB missing its settings row.
       return {
         sessionTimeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
-        allowPublicSignup: false,
+        allowPublicSignup: true,
         orgName: 'Camog',
         idleLockTimeoutMs: 300_000,
         brandPrimary: null,
@@ -713,11 +715,12 @@ export class AuthService implements IAuthService {
     // Full factory reset of org settings (incl. the storage override and the
     // business branding); the licence columns stay so a dev reset doesn't
     // force reactivation. allow_public_signup returns to the fresh-install
-    // default (invite-only, per migration 002) so a reset device behaves
-    // like a new one.
+    // default (open, per migrations 005/012) so a reset device behaves like a
+    // new one: anyone can request access, accounts stay pending until an
+    // admin approves them.
     await db.execute(
       `UPDATE settings
-          SET allow_public_signup = 0, org_name = 'Camog', photos_dir = NULL,
+          SET allow_public_signup = 1, org_name = 'Camog', photos_dir = NULL,
               brand_primary = NULL, brand_accent = NULL, logo_data_url = NULL, updated_at = $1
         WHERE id = 'app'`,
       [Date.now()],
@@ -813,6 +816,62 @@ export class AuthService implements IAuthService {
     if (!rows.length) throw new NotFoundError(`User not found: ${id}`);
     await db.execute('UPDATE clinicians SET role = $1 WHERE id = $2', [role, id]);
     return rowToClinician((await this.getClinicianRow(id))!);
+  }
+
+  /**
+   * Admin resets another clinician's forgotten passcode: sets a generated
+   * temporary passcode (policy-compliant, shown to the admin once), forces a
+   * change at next sign in, and clears the recorded session. Role, active and
+   * pending state are untouched — this is recovery, not a status change.
+   *
+   * ponytail: sessions live in the device's web storage, so the DB-side
+   * session clear only shows up as expired diagnostics; a signed-in session
+   * on another device dies with its own timeout (≤ the org auto-logout).
+   * Killing it server-side needs a per-user session-epoch column.
+   */
+  async resetUserPasscode(
+    id: string,
+  ): Promise<{ clinician: Clinician; tempPasscode: string }> {
+    const admin = await this.requireAdmin();
+    if (id === admin.id) {
+      throw new ValidationError('Use Profile → Change passcode to change your own passcode');
+    }
+    const db = await getDB();
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM clinicians WHERE id = $1',
+      [id],
+    );
+    if (!rows.length) throw new NotFoundError(`User not found: ${id}`);
+
+    // randomToken's alphabet has no I/O/0/1; regenerate in the rare case the
+    // draw missed letters or digits entirely.
+    let tempPasscode = randomToken(10);
+    while (!/[A-Z]/.test(tempPasscode) || !/[0-9]/.test(tempPasscode)) {
+      tempPasscode = randomToken(10);
+    }
+    const passcodeHash = await hashPasscode(tempPasscode);
+
+    await db.execute(
+      `UPDATE clinicians
+          SET passcode_hash = $1,
+              must_change_passcode = 1,
+              passcode_changed_at = $2,
+              session_expires_at = NULL
+        WHERE id = $3`,
+      [passcodeHash, Date.now(), id],
+    );
+
+    const { auditService } = await import('@/lib/services/audit-service');
+    void auditService.record('admin.passcode_reset', {
+      entityType: 'clinician',
+      entityId: id,
+      detail: rows[0].username as string,
+    });
+
+    return {
+      clinician: rowToClinician((await this.getClinicianRow(id))!),
+      tempPasscode,
+    };
   }
 
   // ---------- invitations ----------

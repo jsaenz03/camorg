@@ -6,6 +6,7 @@
 export type AuditAction =
   | 'auth.login'
   | 'auth.logout'
+  | 'admin.passcode_reset'
   | 'patient.create'
   | 'patient.update'
   | 'patient.archive'
@@ -38,6 +39,7 @@ export interface AuditEntry {
 export const AuditActionLabels: Record<AuditAction, string> = {
   'auth.login': 'Signed in',
   'auth.logout': 'Signed out',
+  'admin.passcode_reset': 'Reset a user passcode',
   'patient.create': 'Created patient',
   'patient.update': 'Updated patient',
   'patient.archive': 'Archived patient',

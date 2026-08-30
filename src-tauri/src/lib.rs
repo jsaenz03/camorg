@@ -82,6 +82,12 @@ pub fn run() {
       sql: include_str!("../migrations/011_laterality.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 12,
+      description: "auth: open public signup by default (invite codes optional)",
+      sql: include_str!("../migrations/012_open_signup_default.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory

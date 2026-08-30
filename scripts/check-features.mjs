@@ -129,8 +129,22 @@ check(
   /if \(validated\.kind === 'precreated'\) \{[\s\S]{0,200}createClinicianRow[\s\S]{0,300}mustChangePasscode: true/.test(authServiceSrc),
 );
 check(
-  'auth-service: factory reset restores the invite-only default',
-  /SET allow_public_signup = 0/.test(authServiceSrc),
+  'auth-service: factory reset restores the open-signup default',
+  /SET allow_public_signup = 1/.test(authServiceSrc),
+);
+check(
+  'auth-service: admin passcode reset sets temp passcode, must-change and clears the session',
+  /resetUserPasscode[\s\S]{0,1200}must_change_passcode = 1[\s\S]{0,300}session_expires_at = NULL/.test(
+    authServiceSrc,
+  ),
+);
+check(
+  'users-panel: per-user passcode reset with one-time reveal',
+  /resetUserPasscode/.test(read('components/settings/users-panel.tsx')),
+);
+check(
+  'login: forgot-passcode factory reset reachable in production',
+  /handleForgotReset[\s\S]{0,500}resetApp/.test(read('app/(auth)/login/page.tsx')),
 );
 check(
   'signup: invite-code entry reachable in both public and invite-only modes',
