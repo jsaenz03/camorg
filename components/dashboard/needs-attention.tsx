@@ -30,6 +30,10 @@ const KIND_ICON: Record<AttentionKind, LucideIcon> = {
   'review-overdue': CircleAlert,
   'review-due-soon': AlarmClock,
   'review-stale': Hourglass,
+  // Photo-scheduled reviews use the same due/overdue iconography; the
+  // item title says "Photo review" so the scope is clear.
+  'photo-review-overdue': CircleAlert,
+  'photo-review-due-soon': AlarmClock,
   'consent-expired': ShieldAlert,
   'signup-pending': UserPlus,
 };

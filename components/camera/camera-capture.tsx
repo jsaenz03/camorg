@@ -54,18 +54,19 @@ export function CameraCapture({
   const { stream, error, permission, isLoading, start, stop, switchCamera } = useCamera();
   const [currentFacingMode, setCurrentFacingMode] = useState<CameraFacingMode>(initialFacingMode);
   const [isCapturing, setIsCapturing] = useState(false);
-  const [phoneMode, setPhoneMode] = useState(false);
+  // Phone QR is the default landing — the built-in camera spins up only on an
+  // explicit switch (an always-on camera on every visit gets annoying fast).
+  const [phoneMode, setPhoneMode] = useState(true);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState('');
 
   /**
-   * Start camera on mount, honouring a previously chosen camera (e.g. a
-   * phone tethered as a USB webcam).
+   * Restore a previously chosen camera (e.g. a phone tethered as a USB
+   * webcam) for when the built-in flow is opened; the camera itself starts
+   * only via "Use built-in camera".
    */
   useEffect(() => {
-    const stored = window.localStorage.getItem(CAMERA_DEVICE_PREF) ?? '';
-    setDeviceId(stored);
-    start(initialFacingMode, constraintsFor(stored));
+    setDeviceId(window.localStorage.getItem(CAMERA_DEVICE_PREF) ?? '');
     return () => stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -191,7 +192,7 @@ export function CameraCapture({
               Use built-in camera
             </Button>
           </div>
-          <PhoneCameraPanel onPhotoCaptured={onPhotoCaptured} />
+          <PhoneCameraPanel />
         </div>
       </Card>
     );

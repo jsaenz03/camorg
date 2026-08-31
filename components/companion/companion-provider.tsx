@@ -3,8 +3,9 @@
  *
  * Owns the phone link session at app level: starts/stops the tether server,
  * publishes the shared library, tracks phone connectivity, and catches photos
- * the phone sends while the capture screen is not mounted (stashing them as
- * the capture draft with a toast, so a mid-consult snap is never lost).
+ * the phone sends while the capture screen is not mounted — they are staged
+ * in the pending-photos tray (pending-photo-service) with a toast, so a
+ * mid-consult snap is never lost.
  *
  * Mounted once in the dashboard layout; the sidebar entry and the Phone link
  * dialog both consume this context. Ending the session (or unmounting, e.g.
@@ -22,18 +23,16 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { setCaptureScreenActive, isCaptureScreenActive, companionService } from '@/lib/services/companion-service';
+import { useCapture } from '@/components/capture/capture-provider';
 import { auditService } from '@/lib/services/audit-service';
 import { patientService } from '@/lib/services/patient-service';
-import {
-  saveCaptureDraft,
-} from '@/lib/utils/capture-draft';
+import { storePendingPhoto, listPendingPhotos } from '@/lib/services/pending-photo-service';
+import { remotePhotoToCapturedPhoto } from '@/lib/services/camera-service';
 import type {
-  CapturedPhoto,
   CompanionPatientRequestEvent,
   RemoteCameraInfo,
   RemoteCameraPhotoEvent,
@@ -64,7 +63,7 @@ export function useCompanion(): CompanionContextValue {
 }
 
 export function CompanionProvider({ children }: { children: ReactNode }) {
-  const router = useRouter();
+  const { openCapture } = useCapture();
   const [active, setActive] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
   const [phoneConnected, setPhoneConnected] = useState(false);
@@ -142,31 +141,19 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
         async (event) => {
           if (isCaptureScreenActive()) return;
           try {
-            const { data } = event.payload;
-            const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-            const blob = new Blob([bytes], { type: 'image/jpeg' });
-            const bitmap = await createImageBitmap(blob);
-            const photo: CapturedPhoto = {
-              blob,
-              dataUrl: `data:image/jpeg;base64,${data}`,
-              width: bitmap.width,
-              height: bitmap.height,
-              capturedAt: new Date(),
-            };
-            if (!saveCaptureDraft(photo)) {
-              toast.error('Received a photo from your phone but could not store it locally.');
-              return;
-            }
-            // The library may gain the photo shortly; refresh the manifest so
-            // the phone's Library tab is current the next time it is opened.
-            if (stateRef.current.shareLibrary) {
-              void companionService.publish().catch(() => {});
-            }
+            const photo = await remotePhotoToCapturedPhoto(event.payload.data);
+            await storePendingPhoto(photo);
+            // Count the tray (not just this photo) so a burst of snaps reads
+            // correctly in one toast.
+            const waiting = (await listPendingPhotos().catch(() => [])).length;
             toast('Photo received from your phone', {
-              description: 'Open Capture on this computer to add details and save it.',
+              description:
+                waiting > 1
+                  ? `${waiting} photos are waiting in Capture for review.`
+                  : 'Open Capture to review and save it.',
               action: {
                 label: 'Review',
-                onClick: () => router.push('/capture'),
+                onClick: () => openCapture(),
               },
             });
           } catch (error) {
@@ -218,7 +205,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
       unlistenReview?.();
       unlistenReport?.();
     };
-  }, [active, router]);
+  }, [active, openCapture]);
 
   // Auto-end: if the phone has gone quiet for IDLE_LIMIT_MS, close the link
   // so the library is not shared to a phone left at home.

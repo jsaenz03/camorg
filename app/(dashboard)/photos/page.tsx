@@ -9,11 +9,11 @@
  */
 
 import { useMemo, useState } from 'react';
-import Link from 'next/link';
 import { Images, FilterX, Camera } from 'lucide-react';
 import { useAllPhotos } from '@/lib/hooks/use-all-photos';
 import { usePatients } from '@/lib/hooks/use-patients';
 import { useAuth } from '@/lib/auth/auth-context';
+import { useCapture } from '@/components/capture/capture-provider';
 import { BODY_PARTS, BodyPartLabels } from '@/types/body-part';
 import type { BodyPart } from '@/types/body-part';
 import type { PhotoRecord } from '@/types/photo';
@@ -36,6 +36,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function PhotosPage() {
   const { clinician } = useAuth();
+  const { openCapture } = useCapture();
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
   const [bodyPart, setBodyPart] = useState<BodyPart | 'all'>('all');
   const [patientId, setPatientId] = useState<string | 'all'>('all');
@@ -88,11 +89,9 @@ export default function PhotosPage() {
         title="Photos"
         description="Browse every capture across all patients."
         actions={
-          <Button asChild>
-            <Link href="/capture">
-              <Camera className="size-4" />
-              Capture
-            </Link>
+          <Button onClick={() => openCapture()}>
+            <Camera className="size-4" />
+            Capture
           </Button>
         }
       />
@@ -227,11 +226,9 @@ export default function PhotosPage() {
                     Clear filters
                   </Button>
                 ) : (
-                  <Button asChild>
-                    <Link href="/capture">
-                      <Camera className="size-4" />
-                      Capture photo
-                    </Link>
+                  <Button onClick={() => openCapture()}>
+                    <Camera className="size-4" />
+                    Capture photo
                   </Button>
                 )
               }
@@ -256,6 +253,7 @@ export default function PhotosPage() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onChanged={refresh}
+        onOpenPhoto={handlePhotoClick}
       />
     </div>
   );

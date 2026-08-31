@@ -32,7 +32,7 @@ test.describe('login screen', () => {
 
 test.describe('auth gate', () => {
   test('dashboard pages redirect to /login without a session', async ({ page }) => {
-    await page.goto('/capture');
+    await page.goto('/patients');
     await expect(page).toHaveURL(/\/login\/?$/, { timeout: 20_000 });
   });
 });

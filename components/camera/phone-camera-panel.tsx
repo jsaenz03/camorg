@@ -6,71 +6,33 @@
  * reuses a live session if there is one, otherwise asks the provider to
  * start it. The session deliberately outlives this screen — the sidebar
  * shows it and can end it — so the QR the phone scanned keeps working while
- * you move around the app. The photo arrives as a Tauri event and is
- * rebuilt into the same CapturedPhoto the built-in camera path produces, so
- * the save pipeline is unchanged.
+ * you move around the app. Photos the phone sends arrive as Tauri events
+ * handled by the capture dialog itself (see components/capture/capture-
+ * dialog.tsx), which rebuilds them into the same CapturedPhoto the built-in
+ * camera path produces.
  */
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Copy, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { setCaptureScreenActive, useCompanion } from '@/components/companion/companion-provider';
-import type {
-  CapturedPhoto,
-  RemoteCameraPhotoEvent,
-} from '@/specs/001-role-you-are/contracts/camera-service';
+import { useCompanion } from '@/components/companion/companion-provider';
 
-interface PhoneCameraPanelProps {
-  onPhotoCaptured: (photo: CapturedPhoto) => void;
-}
-
-export function PhoneCameraPanel({ onPhotoCaptured }: PhoneCameraPanelProps) {
+export function PhoneCameraPanel() {
   const { active: sessionActive, url, phoneConnected, start } = useCompanion();
   const [startError, setStartError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
-  // Keep the latest callback without restarting the session on parent re-renders.
-  const onPhotoCapturedRef = useRef(onPhotoCaptured);
-  onPhotoCapturedRef.current = onPhotoCaptured;
-
   useEffect(() => {
     let cancelled = false;
-    let unlistenPhoto: UnlistenFn | undefined;
 
-    // The provider's global listener defers to the capture screen while the
-    // panel is mounted, so a photo is never handled twice.
-    setCaptureScreenActive(true);
-
+    // One owner: if no Phone link is live, the provider starts (and from
+    // then on tracks) the session; if one is, we just ride on it.
     (async () => {
       try {
-        unlistenPhoto = await listen<RemoteCameraPhotoEvent>(
-          'remote-camera-photo',
-          async (event) => {
-            try {
-              const { data } = event.payload;
-              const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-              const blob = new Blob([bytes], { type: 'image/jpeg' });
-              const bitmap = await createImageBitmap(blob);
-              onPhotoCapturedRef.current({
-                blob,
-                dataUrl: `data:image/jpeg;base64,${data}`,
-                width: bitmap.width,
-                height: bitmap.height,
-                capturedAt: new Date(),
-              });
-            } catch (error) {
-              console.error('Failed to process photo from phone:', error);
-              toast.error('Received the photo from your phone but could not read it. Try again.');
-            }
-          }
-        );
-        // One owner: if no Phone link is live, the provider starts (and from
-        // then on tracks) the session; if one is, we just ride on it.
         if (!sessionActive) await start();
       } catch (error) {
         console.error('Failed to start phone camera link:', error);
@@ -82,8 +44,6 @@ export function PhoneCameraPanel({ onPhotoCaptured }: PhoneCameraPanelProps) {
 
     return () => {
       cancelled = true;
-      setCaptureScreenActive(false);
-      unlistenPhoto?.();
     };
   }, [attempt, sessionActive, start]);
 

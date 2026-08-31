@@ -19,6 +19,7 @@ import { BodyPartLabels } from '@/types/body-part';
 import { patientService } from '@/lib/services/patient-service';
 import { photoService, type PhotoSummary } from '@/lib/services/photo-service';
 import { useAuth } from '@/lib/auth/auth-context';
+import { useCapture } from '@/components/capture/capture-provider';
 import { formatRelativeTime } from '@/lib/utils/date-formatting';
 import { startOfDay, endOfDay } from 'date-fns';
 import { Button } from '@/components/ui/button';
@@ -40,6 +41,7 @@ import type { PhotoWithPatient } from '@/lib/hooks/use-all-photos';
 export default function HomePage() {
   const router = useRouter();
   const { clinician } = useAuth();
+  const { openCapture } = useCapture();
   const {
     items: attentionItems,
     isLoading: isLoadingAttention,
@@ -229,11 +231,9 @@ export default function HomePage() {
           title="No patients yet"
           description="Capture your first photo to create a patient record and start a timeline."
           action={
-            <Button asChild>
-              <Link href="/capture">
-                <Camera className="size-4" />
-                Capture first photo
-              </Link>
+            <Button onClick={() => openCapture()}>
+              <Camera className="size-4" />
+              Capture first photo
             </Button>
           }
         />
@@ -249,11 +249,9 @@ export default function HomePage() {
         title={greeting}
         description="Review activity or capture a new photo."
         actions={
-          <Button asChild>
-            <Link href="/capture">
-              <Camera className="size-4" />
-              Capture photo
-            </Link>
+          <Button onClick={() => openCapture()}>
+            <Camera className="size-4" />
+            Capture photo
           </Button>
         }
       />

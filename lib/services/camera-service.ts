@@ -442,3 +442,21 @@ export class CameraService implements ICameraService {
 
 // Export singleton instance
 export const cameraService = new CameraService();
+
+/**
+ * Rebuild a `remote-camera-photo` event payload (base64 JPEG from the phone)
+ * into the same CapturedPhoto the built-in camera path produces, so the save
+ * pipeline is unchanged.
+ */
+export async function remotePhotoToCapturedPhoto(data: string): Promise<CapturedPhoto> {
+  const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: 'image/jpeg' });
+  const bitmap = await createImageBitmap(blob);
+  return {
+    blob,
+    dataUrl: `data:image/jpeg;base64,${data}`,
+    width: bitmap.width,
+    height: bitmap.height,
+    capturedAt: new Date(),
+  };
+}

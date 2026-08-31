@@ -8,6 +8,7 @@
 import { PhotoRecord } from '@/types/photo';
 import type { PhotoRecordCreate, PhotoRecordUpdate } from '@/lib/validators/schemas';
 import { BodyPart } from '@/types/body-part';
+import type { PhotoReviewSummary } from '@/lib/services/photo-service';
 
 export interface IPhotoService {
   /**
@@ -70,6 +71,48 @@ export interface IPhotoService {
    * Note: imageBlob and capturedAt are immutable and cannot be updated
    */
   updatePhoto(id: string, data: PhotoRecordUpdate): Promise<PhotoRecord>;
+
+  /**
+   * One-click "review done" for a single photo (migration 013)
+   *
+   * @param id - Photo UUID
+   * @returns Promise resolving to updated PhotoRecord
+   * @throws NotFoundError if photo does not exist
+   * @throws PermissionDeniedError if the photo is soft-deleted
+   *
+   * Side effects:
+   * - Sets PhotoRecord.lastReviewedAt = now and clears PhotoRecord.reviewDueAt
+   * - Counts as the patient's review: stamps Patient.lastReviewedAt and
+   *   clears Patient.reviewDueAt (delegates to patientService.markReviewed)
+   * - Records a 'photo.review' audit entry
+   */
+  reviewPhoto(id: string): Promise<PhotoRecord>;
+
+  /**
+   * Every accessible photo with a scheduled review date, soonest first
+   * (migration 014). Excludes soft-deleted photos and archived patients.
+   *
+   * @returns Promise resolving to array of PhotoReviewSummary
+   */
+  getPhotosWithReviewDue(): Promise<PhotoReviewSummary[]>;
+
+  /**
+   * Distinct lesion series names in use for a patient (migration 013)
+   *
+   * @param patientId - Patient UUID
+   * @returns Promise resolving to sorted series names (may be empty)
+   */
+  getLesionGroups(patientId: string): Promise<string[]>;
+
+  /**
+   * A patient's active photos in one lesion series, oldest capture first
+   * (before → after order)
+   *
+   * @param patientId - Patient UUID
+   * @param group - Series name (exact, normalised form)
+   * @returns Promise resolving to array of PhotoRecords (may be empty)
+   */
+  getPhotosInGroup(patientId: string, group: string): Promise<PhotoRecord[]>;
 
   /**
    * Soft deletes a photo (sets isDeleted flag)

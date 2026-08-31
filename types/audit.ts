@@ -15,6 +15,7 @@ export type AuditAction =
   | 'patient.review'
   | 'photo.create'
   | 'photo.update'
+  | 'photo.review'
   | 'photo.delete'
   | 'photo.restore'
   | 'photo.annotate'
@@ -48,6 +49,7 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'patient.review': 'Scheduled / completed review',
   'photo.create': 'Added photo',
   'photo.update': 'Updated photo',
+  'photo.review': 'Marked photo reviewed',
   'photo.delete': 'Deleted photo',
   'photo.restore': 'Restored photo',
   'photo.annotate': 'Annotated photo',

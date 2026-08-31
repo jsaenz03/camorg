@@ -11,11 +11,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import { AlarmClock, Link2, Loader2 } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
 import { BodyPartLabels } from '@/types/body-part';
 import { Badge } from '@/components/ui/badge';
 import { BodyMapBadge } from '@/components/patient/body-map-badge';
+import { useBranding } from '@/components/branding-boot';
+import { photoReviewStatus } from '@/lib/utils/photo-review';
 import { photoService } from '@/lib/services/photo-service';
 import { formatCaptureDate, formatRelativeTime } from '@/lib/utils/date-formatting';
 import { cn } from '@/lib/utils';
@@ -47,6 +49,9 @@ export function PhotoCard({
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const { reviewWarningDays } = useBranding();
+  // Scheduled-review cue (dashboard alerts use the same derivation).
+  const reviewCue = photoReviewStatus(photo.reviewDueAt, { warningDays: reviewWarningDays });
 
   useEffect(() => {
     let mounted = true;
@@ -122,10 +127,40 @@ export function PhotoCard({
           />
         )}
 
-        {/* Soft-deleted marker (visible when the preference shows deleted photos) */}
-        {photo.isDeleted && (
-          <span className="absolute left-2 top-2 rounded-md bg-destructive px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-            Deleted
+        {/* Top-left markers: soft-deleted (visible when the preference shows
+            deleted photos), lesion-series badge, and the scheduled-review cue. */}
+        {(photo.isDeleted || photo.lesionGroup || (reviewCue !== 'none' && !photo.isDeleted)) && (
+          <span className="pointer-events-none absolute left-2 top-2 flex max-w-[75%] flex-col items-start gap-1">
+            {photo.isDeleted && (
+              <span className="rounded-md bg-destructive px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                Deleted
+              </span>
+            )}
+            {photo.lesionGroup && (
+              <span
+                className="inline-flex max-w-full items-center gap-1 rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground"
+                title={`Lesion series: ${photo.lesionGroup}`}
+              >
+                <Link2 className="size-3 shrink-0" />
+                <span className="truncate">{photo.lesionGroup}</span>
+              </span>
+            )}
+            {!photo.isDeleted && reviewCue !== 'none' && (
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white',
+                  reviewCue === 'overdue' ? 'bg-destructive' : 'bg-amber-500',
+                )}
+                title={
+                  reviewCue === 'overdue'
+                    ? 'Photo review overdue — on the dashboard alert list'
+                    : 'Photo review coming up — on the dashboard alert list'
+                }
+              >
+                <AlarmClock className="size-3 shrink-0" />
+                {reviewCue === 'overdue' ? 'Review overdue' : 'Review due'}
+              </span>
+            )}
           </span>
         )}
 

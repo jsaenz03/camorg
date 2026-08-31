@@ -12,14 +12,19 @@
 
 import type { Patient } from '@/types/patient';
 import { consentStatus, reviewStatus } from '@/types/patient';
+import { photoReviewStatus } from '@/lib/utils/photo-review';
+import { bodyPartDisplayLabel } from '@/types/body-part';
 import { formatDistanceToNow } from 'date-fns';
 import { patientService } from '@/lib/services/patient-service';
+import { photoService, type PhotoReviewSummary } from '@/lib/services/photo-service';
 import { getDB } from '@/lib/db/database';
 
 export type AttentionKind =
   | 'review-overdue'
   | 'review-due-soon'
   | 'review-stale'
+  | 'photo-review-overdue'
+  | 'photo-review-due-soon'
   | 'consent-expired'
   | 'signup-pending';
 
@@ -39,6 +44,8 @@ export interface NotificationCounts {
   reviewOverdue: number;
   reviewDueSoon: number;
   reviewStale: number;
+  photoReviewOverdue: number;
+  photoReviewDueSoon: number;
   consentExpired: number;
   /** Awaiting-approval accounts; always 0 for non-admins. */
   pendingSignups: number;
@@ -62,6 +69,8 @@ export function countsFromItems(items: AttentionItem[]): NotificationCounts {
     reviewOverdue: 0,
     reviewDueSoon: 0,
     reviewStale: 0,
+    photoReviewOverdue: 0,
+    photoReviewDueSoon: 0,
     consentExpired: 0,
     pendingSignups: 0,
     total: items.length,
@@ -77,6 +86,12 @@ export function countsFromItems(items: AttentionItem[]): NotificationCounts {
       case 'review-stale':
         counts.reviewStale++;
         break;
+      case 'photo-review-overdue':
+        counts.photoReviewOverdue++;
+        break;
+      case 'photo-review-due-soon':
+        counts.photoReviewDueSoon++;
+        break;
       case 'consent-expired':
         counts.consentExpired++;
         break;
@@ -91,8 +106,9 @@ export function countsFromItems(items: AttentionItem[]): NotificationCounts {
 class NotificationService {
   /** All current attention items, worst severity first. */
   async getAttentionItems(): Promise<AttentionItem[]> {
-    const [patients, windows] = await Promise.all([
+    const [patients, photoReviews, windows] = await Promise.all([
       patientService.getAllPatients(),
+      photoService.getPhotosWithReviewDue(),
       this.getReviewWindows(),
     ]);
 
@@ -101,6 +117,12 @@ class NotificationService {
 
     for (const p of patients) {
       items.push(...this.patientItems(p, windows, now));
+    }
+
+    // Scheduled per-photo reviews (migration 014), same derived alerting
+    // as patient reviews but scoped to one photo / body part.
+    for (const photo of photoReviews) {
+      items.push(...this.photoReviewItems(photo, windows.warningDays, now));
     }
 
     // Pending signups are an admin-only, org-level item.
@@ -199,6 +221,47 @@ class NotificationService {
     }
 
     return items;
+  }
+
+  /** One alert per photo whose scheduled review is due soon or overdue. */
+  private photoReviewItems(
+    photo: PhotoReviewSummary,
+    warningDays: number,
+    now: Date,
+  ): AttentionItem[] {
+    const status = photoReviewStatus(photo.reviewDueAt, { warningDays, now });
+    if (status === 'none') return [];
+
+    const href = `/patients/view?id=${photo.patientId}`;
+    // "Left cheek · mole" — the spot the alert is about.
+    const spot =
+      bodyPartDisplayLabel(photo.bodyPart, photo.laterality) +
+      (photo.subpart ? ` · ${photo.subpart}` : '');
+
+    if (status === 'overdue') {
+      return [
+        {
+          id: `photo-review-overdue:${photo.id}`,
+          kind: 'photo-review-overdue',
+          severity: 'critical',
+          title: `Photo review overdue — ${photo.patientName}`,
+          detail: `${spot} · was due ${formatDistanceToNow(photo.reviewDueAt, { addSuffix: true })}.`,
+          date: photo.reviewDueAt,
+          href,
+        },
+      ];
+    }
+    return [
+      {
+        id: `photo-review-due-soon:${photo.id}`,
+        kind: 'photo-review-due-soon',
+        severity: 'warning',
+        title: `Photo review coming up — ${photo.patientName}`,
+        detail: `${spot} · scheduled ${formatDistanceToNow(photo.reviewDueAt, { addSuffix: true })}.`,
+        date: photo.reviewDueAt,
+        href,
+      },
+    ];
   }
 
   /**

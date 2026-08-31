@@ -102,8 +102,8 @@ check(
   (read('lib/services/patient-service.ts').match(/await ensureWritable/g) || []).length === 5,
 );
 check(
-  'photo-service guards all 5 mutations',
-  (read('lib/services/photo-service.ts').match(/await ensureWritable/g) || []).length === 5,
+  'photo-service guards all 6 mutations',
+  (read('lib/services/photo-service.ts').match(/await ensureWritable/g) || []).length === 6,
 );
 
 // 9. Shipped legal docs (public/legal) must stay byte-identical to legal/.
@@ -183,6 +183,77 @@ check(
   read('components/app-sidebar.tsx').includes('SidebarMenuBadge'),
 );
 
+// 11b. Per-photo review + lesion series (migration 013): the columns exist,
+//      the Rust shell registers the migration, photo-service maps them, and
+//      reviewing a photo stamps the patient's review via markReviewed.
+const photoReviewMigration = read('src-tauri/migrations/013_photo_review_series.sql');
+for (const needle of [
+  'ALTER TABLE photos ADD COLUMN last_reviewed_at',
+  'ALTER TABLE photos ADD COLUMN lesion_group',
+]) {
+  check(`migration 013: ${needle}`, photoReviewMigration.includes(needle));
+}
+check(
+  'lib.rs registers migration 013',
+  /version:\s*13[\s\S]*?013_photo_review_series\.sql/.test(read('src-tauri/src/lib.rs')),
+);
+const reviewSeriesServiceSrc = read('lib/services/photo-service.ts');
+for (const col of ['last_reviewed_at', 'lesion_group']) {
+  check(`photo-service handles ${col}`, reviewSeriesServiceSrc.includes(col));
+}
+check(
+  'photo-service reviewPhoto stamps the patient review too',
+  /async reviewPhoto[\s\S]{0,900}patientService\.markReviewed/.test(reviewSeriesServiceSrc),
+);
+const photoDialogSrc = read('components/photo/photo-detail-dialog.tsx');
+for (const needle of [
+  'reviewPhoto',
+  'BodyMapBadge',
+  'getLesionGroups',
+  'getPhotosInGroup',
+]) {
+  check(`edit-photo dialog wires ${needle}`, photoDialogSrc.includes(needle));
+}
+
+// 11c. Scheduled photo reviews (migration 014): the column exists, the Rust
+//      shell registers the migration, the service surfaces the due set, the
+//      dashboard alert list carries photo-review items end to end, and the
+//      edit-photo dialog offers the date input.
+const photoDueMigration = read('src-tauri/migrations/014_photo_review_due.sql');
+check(
+  'migration 014: ALTER TABLE photos ADD COLUMN review_due_at',
+  photoDueMigration.includes('ALTER TABLE photos ADD COLUMN review_due_at'),
+);
+check(
+  'lib.rs registers migration 014',
+  /version:\s*14[\s\S]*?014_photo_review_due\.sql/.test(read('src-tauri/src/lib.rs')),
+);
+check(
+  'photo-service exposes getPhotosWithReviewDue',
+  read('lib/services/photo-service.ts').includes('getPhotosWithReviewDue'),
+);
+const notificationSrc = read('lib/services/notification-service.ts');
+for (const needle of [
+  'photo-review-overdue',
+  'photo-review-due-soon',
+  'photoReviewStatus',
+  'getPhotosWithReviewDue',
+]) {
+  check(`notification-service wires ${needle}`, notificationSrc.includes(needle));
+}
+const needsAttentionSrc = read('components/dashboard/needs-attention.tsx');
+for (const kind of ['photo-review-overdue', 'photo-review-due-soon']) {
+  check(`needs-attention maps ${kind}`, needsAttentionSrc.includes(`'${kind}'`));
+}
+check(
+  'edit-photo dialog offers the next review date input',
+  photoDialogSrc.includes('photo-review-due'),
+);
+check(
+  'photo cards show the scheduled-review cue',
+  /photoReviewStatus/.test(read('components/photo/photo-card.tsx')),
+);
+
 // 12. Phone companion (sidecar viewing): the Rust shell serves the pushed
 //     manifest + whitelisted photo files and registers the commands; the
 //     webview builds the access-filtered manifest, the dashboard owns the
@@ -223,11 +294,11 @@ check(
 );
 check(
   'capture screen flags itself so photos are not handled twice',
-  read('components/camera/phone-camera-panel.tsx').includes('setCaptureScreenActive'),
+  read('components/capture/capture-dialog.tsx').includes('setCaptureScreenActive'),
 );
 check(
-  'capture page republishes the shared library after saving a photo',
-  read('app/(dashboard)/capture/page.tsx').includes('companionService.publish'),
+  'capture dialog republishes the shared library after saving a photo',
+  read('components/capture/capture-dialog.tsx').includes('companionService.publish'),
 );
 
 // 13. Laterality (migration 011): column exists, the shell registers the

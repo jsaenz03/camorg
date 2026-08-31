@@ -103,8 +103,11 @@ hooks are agnostic to the storage backend.
 into a second screen for the signed-in clinician:
 
 - **Camera** — the original tethered capture: snap on the phone, review and
-  save on the desktop. If a photo arrives while you are away from the Capture
-  screen, Camog stashes it as the capture draft and offers a "Review" jump.
+  save on the desktop. Capture opens as a dialog over whatever page you are
+  on (a patient's timeline prefills their details), and photos that arrive
+  while no capture is open (or while another photo is mid-review) are staged
+  in a "From your phone" tray inside it — open each one to save it or delete
+  it, and anything left unclaimed for a week is dropped automatically.
 - **Library** (toggleable, on by default) — the phone mirrors what you can
   open on the PC: searchable patient list with review/consent flags,
   per-patient photo grids, and a full-screen viewer with swipe navigation,

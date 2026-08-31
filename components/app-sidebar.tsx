@@ -38,6 +38,7 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { useBranding } from '@/components/branding-boot';
 import { useNotifications } from '@/lib/hooks/use-notifications';
 import { useCompanion } from '@/components/companion/companion-provider';
+import { useCapture } from '@/components/capture/capture-provider';
 import { PhoneLinkDialog } from '@/components/companion/phone-link-dialog';
 import { SidebarMenuBadge } from '@/components/ui/sidebar';
 
@@ -50,10 +51,7 @@ interface NavLink {
 const NAV_SECTIONS: { label: string; items: NavLink[] }[] = [
   {
     label: 'Workspace',
-    items: [
-      { href: '/', label: 'Dashboard', icon: Aperture },
-      { href: '/capture', label: 'Capture', icon: Camera },
-    ],
+    items: [{ href: '/', label: 'Dashboard', icon: Aperture }],
   },
   {
     label: 'Library',
@@ -88,6 +86,7 @@ export function AppSidebar() {
   const { orgName, logoDataUrl } = useBranding();
   const { counts } = useNotifications();
   const companion = useCompanion();
+  const { openCapture } = useCapture();
 
   // Pending-action counters per nav item: dashboard carries the total,
   // patients the review-attention subset, settings the admin's approval
@@ -98,7 +97,13 @@ export function AppSidebar() {
       case '/':
         return counts.total;
       case '/patients':
-        return counts.reviewOverdue + counts.reviewDueSoon + counts.reviewStale;
+        return (
+          counts.reviewOverdue +
+          counts.reviewDueSoon +
+          counts.reviewStale +
+          counts.photoReviewOverdue +
+          counts.photoReviewDueSoon
+        );
       case '/settings':
         return counts.pendingSignups;
       default:
@@ -161,6 +166,19 @@ export function AppSidebar() {
                     </SidebarMenuItem>
                   );
                 })}
+                {/* Capture: opens the capture dialog in place — no route to
+                    navigate away to. */}
+                {section.label === 'Workspace' && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      onClick={() => openCapture()}
+                      tooltip="Capture"
+                    >
+                      <Camera className="size-4" />
+                      <span>Capture</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
                 {/* Phone link: companion session control, not a route. The
                     dot is a live-session indicator (privacy state, not
                     decoration) — it says the link is still open. */}

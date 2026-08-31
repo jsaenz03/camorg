@@ -23,6 +23,17 @@ export interface PhotoSummary {
   isDeleted: boolean;
 }
 
+/** Photo with a scheduled review date, for the dashboard alert list. */
+export interface PhotoReviewSummary {
+  id: string;
+  patientId: string;
+  patientName: string;
+  bodyPart: BodyPart;
+  laterality: Laterality | null;
+  subpart: string | null;
+  reviewDueAt: Date;
+}
+
 import type { IPhotoService } from '@/specs/001-role-you-are/contracts/photo-service';
 import { photoRecordCreateSchema, photoRecordUpdateSchema } from '@/lib/validators/schemas';
 import { getDB, photoPath, getPhotosDir } from '@/lib/db/database';
@@ -33,6 +44,7 @@ import { patientService } from '@/lib/services/patient-service';
 import { subpartService } from '@/lib/services/subpart-service';
 import { accessService } from '@/lib/services/access-service';
 import { auditService } from '@/lib/services/audit-service';
+import { normalizeLesionGroup } from '@/lib/utils/lesion-group';
 import { writeFile, readFile } from '@tauri-apps/plugin-fs';
 import {
   NotFoundError,
@@ -62,6 +74,11 @@ function rowToPhoto(row: Record<string, unknown>): PhotoRecord {
     laterality: (row.laterality as Laterality | null) ?? null,
     subpart: (row.subpart as string | null) ?? null,
     clinicalNotes: (row.clinical_notes as string | null) ?? null,
+    reviewDueAt:
+      row.review_due_at != null ? new Date(row.review_due_at as number) : null,
+    lastReviewedAt:
+      row.last_reviewed_at != null ? new Date(row.last_reviewed_at as number) : null,
+    lesionGroup: (row.lesion_group as string | null) ?? null,
     capturedAt: new Date(row.captured_at as number),
     createdAt: new Date(row.created_at as number),
     updatedAt: new Date(row.updated_at as number),
@@ -198,6 +215,9 @@ export class PhotoService implements IPhotoService {
         laterality: validated.laterality ?? null,
         subpart: validated.subpart || null,
         clinicalNotes: validated.clinicalNotes || null,
+        reviewDueAt: null,
+        lastReviewedAt: null,
+        lesionGroup: null,
         capturedAt: validated.capturedAt,
         createdAt: now,
         updatedAt: now,
@@ -290,18 +310,28 @@ export class PhotoService implements IPhotoService {
       validated.subpart !== undefined ? validated.subpart : photo.subpart;
     const updatedNotes =
       validated.clinicalNotes !== undefined ? validated.clinicalNotes : photo.clinicalNotes;
+    // Series names go through the shared normaliser so a stray space can't
+    // fragment "Left cheek mole" into two groups.
+    const updatedLesionGroup =
+      validated.lesionGroup !== undefined
+        ? normalizeLesionGroup(validated.lesionGroup)
+        : photo.lesionGroup;
+    const updatedReviewDueAt =
+      validated.reviewDueAt !== undefined ? validated.reviewDueAt : photo.reviewDueAt;
     const nowMs = Date.now();
 
     await db.execute(
       `UPDATE photos
-         SET laterality = $1, subpart = $2, clinical_notes = $3, updated_at = $4
-       WHERE id = $5`,
-      [updatedLaterality, updatedSubpart ?? null, updatedNotes ?? null, nowMs, id]
+         SET laterality = $1, subpart = $2, clinical_notes = $3, lesion_group = $4,
+             review_due_at = $5, updated_at = $6
+       WHERE id = $7`,
+      [updatedLaterality, updatedSubpart ?? null, updatedNotes ?? null, updatedLesionGroup, updatedReviewDueAt?.getTime() ?? null, nowMs, id]
     );
 
     const auditParts = [
       updatedLaterality ?? photo.bodyPart,
       ...(updatedSubpart ? [updatedSubpart] : []),
+      ...(updatedLesionGroup ? [`series: ${updatedLesionGroup}`] : []),
     ];
     void auditService.record('photo.update', {
       entityType: 'photo',
@@ -309,6 +339,18 @@ export class PhotoService implements IPhotoService {
       patientId: photo.patientId,
       detail: auditParts.join(' · '),
     });
+
+    // Schedule changes get their own review entry (mirrors the patient flow).
+    if (updatedReviewDueAt?.getTime() !== (photo.reviewDueAt?.getTime() ?? null)) {
+      void auditService.record('photo.review', {
+        entityType: 'photo',
+        entityId: id,
+        patientId: photo.patientId,
+        detail: updatedReviewDueAt
+          ? `review scheduled for ${updatedReviewDueAt.toISOString().slice(0, 10)}`
+          : 'review date cleared',
+      });
+    }
 
     // Record subpart usage if changed and provided.
     if (validated.subpart && validated.subpart !== photo.subpart) {
@@ -320,8 +362,121 @@ export class PhotoService implements IPhotoService {
       laterality: updatedLaterality,
       subpart: updatedSubpart,
       clinicalNotes: updatedNotes,
+      lesionGroup: updatedLesionGroup,
+      reviewDueAt: updatedReviewDueAt,
       updatedAt: new Date(nowMs),
     };
+  }
+
+  /**
+   * One-click "review done" for a single photo: stamps the photo's own
+   * last_reviewed_at, clears its scheduled review date, AND counts as the
+   * patient's review (stamps patients.last_reviewed_at and clears the due
+   * date via patientService.markReviewed, which keeps its audit entry).
+   * Mirrors the patient timeline header button so both flows land in the
+   * same state.
+   */
+  async reviewPhoto(id: string): Promise<PhotoRecord> {
+    await ensureWritable();
+    const db = await getDB();
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM photos WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
+    const photo = rowToPhoto(rows[0]);
+    await accessService.assertCanManagePatient(photo.patientId);
+    if (photo.isDeleted) {
+      throw new PermissionDeniedError('Restore this photo before reviewing it.');
+    }
+
+    const nowMs = Date.now();
+    await db.execute(
+      `UPDATE photos SET last_reviewed_at = $1, review_due_at = NULL, updated_at = $2 WHERE id = $3`,
+      [nowMs, nowMs, id]
+    );
+
+    await patientService.markReviewed(photo.patientId);
+
+    void auditService.record('photo.review', {
+      entityType: 'photo',
+      entityId: id,
+      patientId: photo.patientId,
+      detail: `reviewed photo${photo.lesionGroup ? ` (${photo.lesionGroup})` : ''}`,
+    });
+
+    return {
+      ...photo,
+      lastReviewedAt: new Date(nowMs),
+      reviewDueAt: null,
+      updatedAt: new Date(nowMs),
+    };
+  }
+
+  /**
+   * Every accessible photo with a scheduled review date, soonest first.
+   * Feeds the dashboard alert list (due-soon / overdue derivation happens
+   * at read time in lib/utils/photo-review.ts). Archived patients and
+   * soft-deleted photos are excluded, matching the patient alert flow.
+   */
+  async getPhotosWithReviewDue(): Promise<PhotoReviewSummary[]> {
+    const db = await getDB();
+    // Bind 1: the access filter's clinician id (no condition binds here).
+    const access = await accessService.getAccessiblePatientFilter(1);
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT ph.id, ph.patient_id, ph.body_part, ph.laterality, ph.subpart,
+              ph.review_due_at, p.name AS patient_name
+         FROM photos ph
+         JOIN patients p ON p.id = ph.patient_id
+        WHERE ph.is_deleted = 0 AND ph.review_due_at IS NOT NULL AND p.is_archived = 0
+        ${access.sql}
+        ORDER BY ph.review_due_at ASC`,
+      access.binds,
+    );
+    return rows.map((row) => ({
+      id: row.id as string,
+      patientId: row.patient_id as string,
+      patientName: (row.patient_name as string) ?? 'Unknown patient',
+      bodyPart: row.body_part as BodyPart,
+      laterality: (row.laterality as Laterality | null) ?? null,
+      subpart: (row.subpart as string | null) ?? null,
+      reviewDueAt: new Date(row.review_due_at as number),
+    }));
+  }
+
+  /**
+   * Distinct lesion series names in use for a patient (label order).
+   * Includes series whose photos are soft-deleted so a series survives a
+   * restore-heavy workflow; empty series can't exist (labels live on photos).
+   */
+  async getLesionGroups(patientId: string): Promise<string[]> {
+    if (!(await accessService.canAccessPatient(patientId))) return [];
+    const db = await getDB();
+    const rows = await db.select<{ lesion_group: string | null }[]>(
+      `SELECT DISTINCT lesion_group FROM photos
+        WHERE patient_id = $1 AND lesion_group IS NOT NULL`,
+      [patientId]
+    );
+    return rows
+      .map((r) => r.lesion_group)
+      .filter((g): g is string => g != null && g.length > 0)
+      .sort((a, b) => a.localeCompare(b));
+  }
+
+  /**
+   * A patient's photos in one lesion series, oldest capture first — the
+   * before→after order the series exists to show.
+   */
+  async getPhotosInGroup(patientId: string, group: string): Promise<PhotoRecord[]> {
+    if (!(await accessService.canAccessPatient(patientId))) return [];
+    const db = await getDB();
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT * FROM photos
+        WHERE patient_id = $1 AND lesion_group = $2 AND is_deleted = 0
+        ORDER BY captured_at ASC`,
+      [patientId, group]
+    );
+    return rows.map(rowToPhoto);
   }
 
   /**
@@ -358,8 +513,8 @@ export class PhotoService implements IPhotoService {
       `INSERT INTO photos
          (id, patient_id, image_path, thumbnail_path, original_file_name,
           mime_type, file_size_bytes, body_part, laterality, subpart, clinical_notes,
-          captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 0, NULL)`,
+          lesion_group, captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 0, NULL)`,
       [
         newId,
         photo.patientId,
@@ -372,6 +527,7 @@ export class PhotoService implements IPhotoService {
         photo.laterality,
         photo.subpart,
         photo.clinicalNotes,
+        photo.lesionGroup,
         photo.capturedAt.getTime(),
         nowMs,
         nowMs,
@@ -392,6 +548,9 @@ export class PhotoService implements IPhotoService {
       id: newId,
       mimeType,
       fileSizeBytes: annotated.size,
+      // A fresh copy is unreviewed and unscheduled even if the source was.
+      lastReviewedAt: null,
+      reviewDueAt: null,
       createdAt: new Date(nowMs),
       updatedAt: new Date(nowMs),
       isDeleted: false,

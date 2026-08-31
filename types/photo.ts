@@ -23,6 +23,12 @@ export interface PhotoRecord {
   subpart: string | null; // Custom anatomical detail (optional)
   clinicalNotes: string | null; // Free-text clinical observations (optional)
 
+  // Review + series (migrations 013/014)
+  reviewDueAt: Date | null; // Next scheduled review date for this photo; null = none set
+  lastReviewedAt: Date | null; // When a clinician last marked this photo reviewed
+  lesionGroup: string | null; // Free-text series name; photos sharing it on the
+  // same patient form a before/after lesion series
+
   // Timestamps
   capturedAt: Date; // When photo was taken (camera timestamp)
   createdAt: Date; // When record was created in system

@@ -22,9 +22,9 @@
 
 ---
 
-## Step 3: Capture — webcam, paired phone, body map (0:11–0:20)
-**What to show**: Open Capture, webcam live; start the phone link, scan the QR once, then snap from the phone — the pairing survives navigating pages; tap the body map to tag the body part.
-**Talking points**: "Capture from your webcam — or pair your phone once and shoot from it, with optional access to the shared library. Tap the body map to tag exactly where."
+## Step 3: Capture — paired phone, webcam, body map (0:11–0:20)
+**What to show**: Open Capture from the sidebar — the pairing QR pops up in place; from a patient's timeline, Capture opens prefilled with their details. Switch to the built-in camera for a live webcam snap, then back to the phone, scan the QR once and shoot from it — the pairing survives navigating pages; tap the body map to tag the body part.
+**Talking points**: "Capture straight from a paired phone — or switch to the webcam — with optional access to the shared library. Tap the body map to tag exactly where."
 
 ---
 

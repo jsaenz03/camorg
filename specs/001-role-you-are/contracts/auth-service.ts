@@ -260,10 +260,12 @@ export interface IAuthService {
 
   /**
    * Idempotent dev seed. Only runs when zero clinicians exist. Creates an
-   * `admin` / `devpass123` account with `must_change_passcode = true`.
-   * Throws if users already exist.
+   * admin account from CAMOG_BOOTSTRAP_ADMIN_* env vars, falling back to
+   * `admin` / `devpass123`, with `must_change_passcode = true` unless the
+   * env opts out. Returns the credentials actually seeded. Throws if users
+   * already exist.
    */
-  seedDevAdmin(): Promise<void>;
+  seedDevAdmin(): Promise<{ username: string; passcode: string }>;
 }
 
 /**

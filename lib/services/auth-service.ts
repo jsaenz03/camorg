@@ -1049,11 +1049,17 @@ export class AuthService implements IAuthService {
    * admin from those credentials. Idempotent — no-op once any user exists, or
    * if the env vars aren't set.
    *
-   * Designed to run on DB open so a fresh install always has a working login
+   * Dev-only: refuses in production builds. NEXT_PUBLIC_ vars are inlined from
+   * .env at build time, so a prod build with .env present would otherwise bake
+   * a shared known passcode into the shipped bundle and auto-create that
+   * account on first run of every install.
+   *
+   * Designed to run on DB open so a fresh dev DB always has a working login
    * without a UI button. Passcode is hashed with the same PBKDF2 as every other
    * account; nothing plaintext is stored.
    */
   async bootstrapFromEnv(): Promise<void> {
+    if (process.env.NODE_ENV === 'production') return; // dev-only bootstrap
     const username = process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_USERNAME;
     const passcode = process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_PASSCODE;
     if (!username || !passcode) return; // bootstrap disabled — no-op
@@ -1077,9 +1083,14 @@ export class AuthService implements IAuthService {
   /**
    * Dev-only seed. Prefers env credentials (CAMOG_BOOTSTRAP_ADMIN_*) so a team
    * can share a known dev login; falls back to admin/devpass123. Refuses if any
-   * user already exists. For a fresh start, call resetApp first.
+   * user already exists, and refuses outright in production builds. For a fresh
+   * start, call resetApp first.
    */
-  async seedDevAdmin(): Promise<void> {
+  async seedDevAdmin(): Promise<{ username: string; passcode: string }> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Dev seed is disabled in production builds');
+    }
+
     const count = await this.countUsers();
     if (count > 0) {
       throw new AlreadyExistsError('Users already exist; dev seed refused');
@@ -1099,6 +1110,7 @@ export class AuthService implements IAuthService {
       mustChangePasscode:
         process.env.NEXT_PUBLIC_CAMOG_BOOTSTRAP_ADMIN_MUST_CHANGE !== 'false',
     });
+    return { username, passcode };
   }
 
   /**

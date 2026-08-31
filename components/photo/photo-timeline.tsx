@@ -44,15 +44,26 @@ export function PhotoTimeline({
   showFilter = true,
 }: PhotoTimelineProps) {
   const [bodyPartFilter, setBodyPartFilter] = useState<BodyPart | 'all'>('all');
+  const [seriesFilter, setSeriesFilter] = useState<string | 'all'>('all');
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
+
+  // Lesion series present in the (already access-filtered) photo set.
+  const seriesOptions = useMemo(
+    () =>
+      [...new Set(photos.map((p) => p.lesionGroup).filter((g): g is string => !!g))].sort(
+        (a, b) => a.localeCompare(b),
+      ),
+    [photos],
+  );
 
   const filteredPhotos = useMemo(() => {
     return photos.filter((photo) => {
       if (bodyPartFilter !== 'all' && photo.bodyPart !== bodyPartFilter) return false;
+      if (seriesFilter !== 'all' && photo.lesionGroup !== seriesFilter) return false;
       if (selectedDate && !isSameDay(photo.capturedAt, selectedDate)) return false;
       return true;
     });
-  }, [photos, bodyPartFilter, selectedDate]);
+  }, [photos, bodyPartFilter, seriesFilter, selectedDate]);
 
   if (photos.length === 0) {
     return (
@@ -64,7 +75,10 @@ export function PhotoTimeline({
     );
   }
 
-  if (filteredPhotos.length === 0 && (bodyPartFilter !== 'all' || selectedDate)) {
+  const hasActiveFilters =
+    bodyPartFilter !== 'all' || seriesFilter !== 'all' || selectedDate !== undefined;
+
+  if (filteredPhotos.length === 0 && hasActiveFilters) {
     return (
       <div className="space-y-4">
         {showFilter && (
@@ -73,6 +87,9 @@ export function PhotoTimeline({
             onBodyPartChange={setBodyPartFilter}
             selectedDate={selectedDate}
             onDateChange={setSelectedDate}
+            series={seriesFilter}
+            onSeriesChange={setSeriesFilter}
+            seriesOptions={seriesOptions}
             count={0}
           />
         )}
@@ -86,6 +103,7 @@ export function PhotoTimeline({
               size="sm"
               onClick={() => {
                 setBodyPartFilter('all');
+                setSeriesFilter('all');
                 setSelectedDate(undefined);
               }}
             >
@@ -105,6 +123,9 @@ export function PhotoTimeline({
           onBodyPartChange={setBodyPartFilter}
           selectedDate={selectedDate}
           onDateChange={setSelectedDate}
+          series={seriesFilter}
+          onSeriesChange={setSeriesFilter}
+          seriesOptions={seriesOptions}
           count={filteredPhotos.length}
         />
       )}
@@ -118,15 +139,21 @@ function FilterBar({
   onBodyPartChange,
   selectedDate,
   onDateChange,
+  series,
+  onSeriesChange,
+  seriesOptions,
   count,
 }: {
   bodyPart: BodyPart | 'all';
   onBodyPartChange: (next: BodyPart | 'all') => void;
   selectedDate?: Date;
   onDateChange: (next: Date | undefined) => void;
+  series: string | 'all';
+  onSeriesChange: (next: string | 'all') => void;
+  seriesOptions: string[];
   count: number;
 }) {
-  const hasFilters = bodyPart !== 'all' || selectedDate !== undefined;
+  const hasFilters = bodyPart !== 'all' || series !== 'all' || selectedDate !== undefined;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -158,6 +185,22 @@ function FilterBar({
           </PopoverContent>
         </Popover>
 
+        {seriesOptions.length > 0 && (
+          <Select value={series} onValueChange={onSeriesChange}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Lesion series" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All lesion series</SelectItem>
+              {seriesOptions.map((name) => (
+                <SelectItem key={name} value={name}>
+                  {name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         <Select value={bodyPart} onValueChange={(v) => onBodyPartChange(v as BodyPart | 'all')}>
           <SelectTrigger className="w-[180px]">
             <SelectValue placeholder="Body part" />
@@ -178,6 +221,7 @@ function FilterBar({
             size="sm"
             onClick={() => {
               onBodyPartChange('all');
+              onSeriesChange('all');
               onDateChange(undefined);
             }}
           >

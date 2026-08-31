@@ -36,6 +36,10 @@ export const photoRecordUpdateSchema = z.object({
   laterality: lateralitySchema.optional(),
   subpart: z.string().max(100, 'Subpart must be 100 characters or less').optional().nullable(),
   clinicalNotes: z.string().max(2000, 'Clinical notes must be 2000 characters or less').optional().nullable(),
+  lesionGroup: z.string().max(100, 'Series name must be 100 characters or less').optional().nullable(),
+  // Day-precision local midnight from the date input; past dates allowed —
+  // that's exactly how a scheduled photo review becomes overdue.
+  reviewDueAt: z.date().nullable().optional(),
 });
 
 export type PhotoRecordCreate = z.infer<typeof photoRecordCreateSchema>;

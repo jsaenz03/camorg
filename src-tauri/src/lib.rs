@@ -88,6 +88,18 @@ pub fn run() {
       sql: include_str!("../migrations/012_open_signup_default.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 13,
+      description: "photos: per-photo review stamps + lesion series grouping",
+      sql: include_str!("../migrations/013_photo_review_series.sql"),
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 14,
+      description: "photos: scheduled review dates (dashboard alerts per photo)",
+      sql: include_str!("../migrations/014_photo_review_due.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory

@@ -24,6 +24,7 @@ import { PhotoTimeline } from '@/components/photo/photo-timeline';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
 import { PhotoCompareDialog } from '@/components/photo/photo-compare-dialog';
 import { PhotoUpload } from '@/components/photo/photo-upload';
+import { useCapture } from '@/components/capture/capture-provider';
 import { ReviewBadge } from '@/components/patient/review-badge';
 import { EmptyState } from '@/components/empty-state';
 import { PageHeader } from '@/components/page-header';
@@ -70,6 +71,7 @@ function PatientTimelineView() {
   const patientId = searchParams.get('id') as string;
   const { clinician } = useAuth();
   const { reviewWarningDays, reviewStaleDays } = useBranding();
+  const { openCapture } = useCapture();
   const [isMarkingReviewed, setIsMarkingReviewed] = useState(false);
 
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -283,11 +285,19 @@ function PatientTimelineView() {
               </Link>
             </Button>
             <PhotoUpload patient={patient} onSaved={handleUploadSaved} />
-            <Button asChild>
-              <Link href={`/capture?patient=${encodeURIComponent(patient.name)}`}>
-                <Camera className="size-4" />
-                Capture
-              </Link>
+            <Button
+              onClick={() =>
+                openCapture({
+                  patientName: patient.name,
+                  patientDob: patient.dateOfBirth
+                    ? format(patient.dateOfBirth, 'd/M/yyyy')
+                    : undefined,
+                  onSaved: handleUploadSaved,
+                })
+              }
+            >
+              <Camera className="size-4" />
+              Capture
             </Button>
           </div>
         }
@@ -330,6 +340,7 @@ function PatientTimelineView() {
         onOpenChange={setDialogOpen}
         onChanged={handleDialogChanged}
         onDeleted={handleDialogDeleted}
+        onOpenPhoto={handlePhotoClick}
       />
 
       <PhotoCompareDialog

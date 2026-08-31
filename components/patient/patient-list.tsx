@@ -71,10 +71,29 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
     </Tabs>
   );
 
+  // The toolbar stays mounted in one place across every list state. The
+  // search input used to live in per-branch JSX, so flipping between
+  // results / no-results remounted it mid-typing — focus fell to the page
+  // body and the next Delete keypress became WKWebView's history-back,
+  // yanking the user off the page (to the old /capture route) mid-search.
+  const toolbar = (
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      {SearchInput}
+      {patients.length > 0 && (
+        <div className="flex items-center gap-3">
+          <p className="hidden text-sm text-muted-foreground sm:block">
+            {patients.length} {patients.length === 1 ? 'patient' : 'patients'}
+          </p>
+          {ViewToggle}
+        </div>
+      )}
+    </div>
+  );
+
   if (isLoading && patients.length === 0) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between gap-4">{SearchInput}</div>
+        {toolbar}
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3, 4, 5, 6].map((i) => (
             <Skeleton key={i} className="h-32 w-full" />
@@ -87,7 +106,7 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
   if (error) {
     return (
       <div className="space-y-4">
-        {SearchInput}
+        {toolbar}
         <EmptyState
           icon={AlertCircle}
           tone="destructive"
@@ -98,27 +117,18 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
     );
   }
 
-  if (patients.length === 0 && !searchTerm) {
+  if (patients.length === 0) {
     return (
       <div className="space-y-4">
-        {SearchInput}
+        {toolbar}
         <EmptyState
-          icon={Users}
-          title="No patients yet"
-          description="Patients will appear here after capturing your first photo"
-        />
-      </div>
-    );
-  }
-
-  if (patients.length === 0 && searchTerm) {
-    return (
-      <div className="space-y-4">
-        {SearchInput}
-        <EmptyState
-          icon={SearchX}
-          title="No patients found"
-          description={`No patients match "${searchTerm}"`}
+          icon={searchTerm ? SearchX : Users}
+          title={searchTerm ? 'No patients found' : 'No patients yet'}
+          description={
+            searchTerm
+              ? `No patients match "${searchTerm}"`
+              : 'Patients will appear here after capturing your first photo'
+          }
         />
       </div>
     );
@@ -126,16 +136,7 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        {SearchInput}
-        <div className="flex items-center gap-3">
-          <p className="hidden text-sm text-muted-foreground sm:block">
-            {patients.length} {patients.length === 1 ? 'patient' : 'patients'}
-          </p>
-          {ViewToggle}
-        </div>
-      </div>
-
+      {toolbar}
       {view === 'grid' ? (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {patients.map((patient) => (

@@ -189,9 +189,10 @@ class CompanionService {
 
 export const companionService = new CompanionService();
 
-// Whether the capture screen's phone panel is mounted (and therefore already
-// handling remote-camera-photo events). The companion provider's global
-// listener defers to it so a photo is never handled twice.
+// Whether the capture screen is mounted (and therefore already handling
+// remote-camera-photo events — either straight into the form or into its
+// pending tray). The companion provider's global listener defers to it so a
+// photo is never handled twice.
 let captureScreenActive = false;
 
 export function setCaptureScreenActive(active: boolean): void {

@@ -124,10 +124,10 @@ export default function LoginPage() {
   async function handleSeed() {
     setSeeding(true);
     try {
-      await authService.seedDevAdmin();
-      toast.success('Dev admin created. Username: admin · Passcode: devpass123');
-      form.setValue('username', 'admin');
-      form.setValue('passcode', 'devpass123');
+      const { username, passcode } = await authService.seedDevAdmin();
+      toast.success(`Dev admin created. Username: ${username} · Passcode: ${passcode}`);
+      form.setValue('username', username);
+      form.setValue('passcode', passcode);
       setUserCount(1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Seed failed');
@@ -140,10 +140,10 @@ export default function LoginPage() {
     setSeeding(true);
     try {
       await authService.resetApp('DELETE ALL DATA');
-      await authService.seedDevAdmin();
-      toast.success('Reset complete. Dev admin recreated. Username: admin · Passcode: devpass123');
-      form.setValue('username', 'admin');
-      form.setValue('passcode', 'devpass123');
+      const { username, passcode } = await authService.seedDevAdmin();
+      toast.success(`Reset complete. Dev admin recreated. Username: ${username} · Passcode: ${passcode}`);
+      form.setValue('username', username);
+      form.setValue('passcode', passcode);
       setUserCount(1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Reset failed');
