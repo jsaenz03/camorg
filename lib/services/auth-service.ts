@@ -29,6 +29,9 @@ import type { IAuthService, SessionInfo } from '@/specs/001-role-you-are/contrac
 import { getDB, ensureBootstrapped } from '@/lib/db/database';
 import { resolveRegistrationMode } from '@/lib/services/registration-policy';
 import { hashPasscode, verifyPasscode, randomToken } from '@/lib/utils/crypto';
+// Approvals/settings changes move the alert counts (pending signups, review
+// windows) — refetch the sidebar/dashboard counters immediately.
+import { notifyAttentionChanged } from '@/lib/services/attention-events';
 import {
   NotAuthenticatedError,
   PermissionDeniedError,
@@ -396,6 +399,8 @@ export class AuthService implements IAuthService {
         next.updatedAt.getTime(),
       ],
     );
+    // The warning/stale windows redefine when alerts are due — refresh now.
+    notifyAttentionChanged();
     return next;
   }
 
@@ -800,6 +805,7 @@ export class AuthService implements IAuthService {
       'UPDATE clinicians SET is_active = $1, is_pending = 0, session_expires_at = NULL WHERE id = $2',
       [active ? 1 : 0, id],
     );
+    notifyAttentionChanged();
     return rowToClinician((await this.getClinicianRow(id))!);
   }
 

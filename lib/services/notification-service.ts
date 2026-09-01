@@ -53,15 +53,11 @@ export interface NotificationCounts {
 }
 
 /** Fired on window whenever a review-affecting action lands, so open
- *  consumers (sidebar, dashboard) refetch immediately instead of waiting
- *  for their poll tick. */
-export const ATTENTION_CHANGED_EVENT = 'camog:attention-changed';
-
-export function notifyAttentionChanged(): void {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event(ATTENTION_CHANGED_EVENT));
-  }
-}
+ * consumers (sidebar, dashboard) refetch immediately instead of waiting
+ * for their poll tick. Defined in attention-events.ts (dependency-free) so
+ * the services that mutate count-affecting rows can fire it too; every
+ * service mutation below ends with a notify call. */
+export { ATTENTION_CHANGED_EVENT, notifyAttentionChanged } from '@/lib/services/attention-events';
 
 /** Counter totals for the sidebar badges, derived from the item list. */
 export function countsFromItems(items: AttentionItem[]): NotificationCounts {

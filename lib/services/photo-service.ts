@@ -38,6 +38,9 @@ import type { IPhotoService } from '@/specs/001-role-you-are/contracts/photo-ser
 import { photoRecordCreateSchema, photoRecordUpdateSchema } from '@/lib/validators/schemas';
 import { getDB, photoPath, getPhotosDir } from '@/lib/db/database';
 import { ensureWritable } from '@/lib/licence/guard';
+// Every mutating method below ends with notifyAttentionChanged() so the
+// sidebar/dashboard alert counters refetch the moment a change lands.
+import { notifyAttentionChanged } from '@/lib/services/attention-events';
 import { join } from '@tauri-apps/api/path';
 import { compressImage, generateThumbnail } from '@/lib/utils/image-processing';
 import { patientService } from '@/lib/services/patient-service';
@@ -211,6 +214,8 @@ export class PhotoService implements IPhotoService {
       if (validated.subpart) {
         await subpartService.recordUsage(validated.bodyPart, validated.subpart);
       }
+
+      notifyAttentionChanged();
 
       return {
         id,
@@ -397,6 +402,8 @@ export class PhotoService implements IPhotoService {
       await subpartService.recordUsage(updatedBodyPart, validated.subpart);
     }
 
+    notifyAttentionChanged();
+
     return {
       ...photo,
       bodyPart: updatedBodyPart,
@@ -449,6 +456,8 @@ export class PhotoService implements IPhotoService {
       patientId: photo.patientId,
       detail: `reviewed photo${photo.lesionGroup ? ` (${photo.lesionGroup})` : ''}`,
     });
+
+    notifyAttentionChanged();
 
     return {
       ...photo,
@@ -593,6 +602,8 @@ export class PhotoService implements IPhotoService {
       detail: `annotated copy ${newId}`,
     });
 
+    notifyAttentionChanged();
+
     return {
       ...photo,
       id: newId,
@@ -636,6 +647,7 @@ export class PhotoService implements IPhotoService {
       entityId: id,
       patientId: photo.patientId,
     });
+    notifyAttentionChanged();
   }
 
   /**
@@ -667,6 +679,8 @@ export class PhotoService implements IPhotoService {
       entityId: id,
       patientId: photo.patientId,
     });
+
+    notifyAttentionChanged();
 
     return { ...photo, isDeleted: false, deletedAt: null, updatedAt: new Date(nowMs) };
   }

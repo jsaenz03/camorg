@@ -17,6 +17,9 @@ import { auditService } from '@/lib/services/audit-service';
 import { NotFoundError } from '@/lib/validators/errors';
 import { dateFromMs, dateToMs, dobFromMs, dobToMs, parseDobInput } from '@/lib/utils/date-formatting';
 import { ensureWritable } from '@/lib/licence/guard';
+// Every mutating method below ends with notifyAttentionChanged() so the
+// sidebar/dashboard alert counters refetch the moment a change lands.
+import { notifyAttentionChanged } from '@/lib/services/attention-events';
 
 // Column list used everywhere we SELECT patients, so the row mapper always
 // gets every field it expects. Aliased as `p` so the access filter's correlated
@@ -91,6 +94,8 @@ export class PatientService implements IPatientService {
       entityId: id,
       detail: validated.name,
     });
+
+    notifyAttentionChanged();
 
     return {
       id,
@@ -281,6 +286,8 @@ export class PatientService implements IPatientService {
       });
     }
 
+    notifyAttentionChanged();
+
     return {
       ...prior,
       name: validated.name,
@@ -293,7 +300,6 @@ export class PatientService implements IPatientService {
       reviewDueAt: review.dueAt,
     };
   }
-
   /**
    * One-click "review done": stamp last_reviewed_at, clear (or replace) the
    * due date. Distinct from updatePatient so the timeline header button and
@@ -324,6 +330,8 @@ export class PatientService implements IPatientService {
         : 'marked reviewed',
     });
 
+    notifyAttentionChanged();
+
     return {
       ...rowToPatient(rows[0]),
       lastReviewedAt: new Date(nowMs),
@@ -348,6 +356,7 @@ export class PatientService implements IPatientService {
       [nowMs, nowMs, id],
     );
     void auditService.record('patient.archive', { entityType: 'patient', entityId: id });
+    notifyAttentionChanged();
   }
 
   async unarchivePatient(id: string): Promise<Patient> {
@@ -371,6 +380,8 @@ export class PatientService implements IPatientService {
       [nowMs, id],
     );
     void auditService.record('patient.unarchive', { entityType: 'patient', entityId: id });
+
+    notifyAttentionChanged();
 
     return { ...patient, isArchived: false, archivedAt: null, updatedAt: new Date(nowMs) };
   }
