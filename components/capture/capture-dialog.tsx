@@ -333,6 +333,10 @@ function CaptureFlow({
         laterality: formData.laterality ?? null,
         subpart: formData.subpart || null,
         clinicalNotes: formData.clinicalNotes || null,
+        pinX: formData.pinX ?? null,
+        pinY: formData.pinY ?? null,
+        pinSpace: formData.pinSpace ?? null,
+        pinView: formData.pinView ?? null,
         capturedAt: formData.capturedAt ?? capturedPhoto.capturedAt,
       });
 

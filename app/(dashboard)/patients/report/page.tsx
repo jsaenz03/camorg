@@ -19,7 +19,10 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import { consentStatus, ConsentScopeLabels } from '@/types/patient';
-import { BodyPartLabels } from '@/types/body-part';
+import { BodyPartLabels, bodyPartSurfaceLabel, type BodyPart, type Laterality, type Pinpoint } from '@/types/body-part';
+import { BodyMapBadge } from '@/components/patient/body-map-badge';
+import { PinMarker } from '@/components/patient/body-map-picker';
+import { PartDetailDiagram, hasPartDetail } from '@/components/patient/part-detail-diagram';
 import { patientService } from '@/lib/services/patient-service';
 import { photoService } from '@/lib/services/photo-service';
 import { auditService } from '@/lib/services/audit-service';
@@ -35,8 +38,20 @@ interface ReportPhoto {
   path: string;
   capturedAt: Date;
   bodyPart: string;
+  /** Raw enum key so the body-map diagram can highlight the right region. */
+  bodyPartKey: BodyPart;
+  laterality: Laterality | null;
+  /** Saved pinpoint X on either diagram; the space says which one it lives on. */
+  pin: Pinpoint | null;
   subpart: string | null;
   clinicalNotes: string | null;
+}
+
+/** "Left hand" — side prefixed onto the display label for paired regions. */
+function siteLabel(photo: Pick<ReportPhoto, 'bodyPart' | 'laterality'>): string {
+  return photo.laterality
+    ? `${photo.laterality === 'left' ? 'Left' : 'Right'} ${photo.bodyPart}`
+    : photo.bodyPart;
 }
 
 function errorText(e: unknown): string {
@@ -112,6 +127,12 @@ function ReportView() {
               path,
               capturedAt: r.capturedAt,
               bodyPart: BodyPartLabels[r.bodyPart] ?? r.bodyPart,
+              bodyPartKey: r.bodyPart,
+              laterality: r.laterality,
+              pin:
+                r.pinX != null && r.pinY != null && r.pinSpace != null
+                  ? { x: r.pinX, y: r.pinY, space: r.pinSpace, view: r.pinView ?? 'front' }
+                  : null,
               subpart: r.subpart,
               clinicalNotes: r.clinicalNotes,
             });
@@ -209,7 +230,13 @@ function ReportView() {
           photos: photos.map((p) => ({
             path: p.path,
             capturedLabel: format(p.capturedAt, 'dd/MM/yyyy'),
-            bodyPart: p.bodyPart,
+            bodyPart: siteLabel(p),
+            bodyPartKey: p.bodyPartKey,
+            laterality: p.laterality,
+            pinX: p.pin?.x ?? null,
+            pinY: p.pin?.y ?? null,
+            pinSpace: p.pin?.space ?? null,
+            pinView: p.pin?.view ?? null,
             subpart: p.subpart,
             clinicalNotes: p.clinicalNotes,
           })),
@@ -364,10 +391,45 @@ function ReportView() {
                   <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
                     Photo {i + 1} of {photos.length}
                   </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {photo.bodyPart}
-                    {photo.subpart ? ` · ${photo.subpart}` : ''}
-                  </p>
+                  <div className="mt-2 flex items-start gap-3">
+                    <span
+                      className="shrink-0 rounded-sm border border-zinc-200 bg-white p-1"
+                      title={`Body map — ${siteLabel(photo)}`}
+                      aria-hidden="true"
+                    >
+                      <BodyMapBadge
+                        bodyPart={photo.bodyPartKey}
+                        laterality={photo.laterality}
+                        pin={photo.pin?.space === 'body' ? photo.pin : null}
+                        className="block h-24 w-[60px]"
+                      />
+                    </span>
+                    {photo.pin?.space === 'part' && hasPartDetail(photo.bodyPartKey) && (
+                      <span
+                        className="shrink-0 rounded-sm border border-zinc-200 bg-white p-1"
+                        title={`Exact spot — ${bodyPartSurfaceLabel(photo.bodyPartKey, photo.laterality, photo.pin.view)}`}
+                        aria-hidden="true"
+                      >
+                        <svg viewBox="0 0 200 320" className="block h-24 w-[60px]" focusable="false">
+                          <PartDetailDiagram
+                            part={photo.bodyPartKey}
+                            side={photo.laterality}
+                            view={photo.pin.view}
+                            tone="on-light"
+                          />
+                          <PinMarker pin={photo.pin} />
+                        </svg>
+                      </span>
+                    )}
+                    <p className="text-sm font-medium">
+                      {siteLabel(photo)}
+                      {photo.subpart ? (
+                        <span className="mt-0.5 block text-xs font-normal text-zinc-500">
+                          {photo.subpart}
+                        </span>
+                      ) : null}
+                    </p>
+                  </div>
                   {photo.clinicalNotes ? (
                     <>
                       <p className="mt-3 text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">

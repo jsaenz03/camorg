@@ -76,6 +76,11 @@ const photoMetadataFormSchema = z.object({
     .max(100, 'Subpart must be 100 characters or less')
     .optional()
     .or(z.literal('')),
+  /** Exact X mark from the body map: normalized 0..1 + which diagram + face. */
+  pinX: z.number().min(0).max(1).optional(),
+  pinY: z.number().min(0).max(1).optional(),
+  pinSpace: z.enum(['body', 'part']).optional(),
+  pinView: z.enum(['front', 'back']).optional(),
   clinicalNotes: z
     .string()
     .max(2000, 'Clinical notes must be 2000 characters or less')
@@ -115,6 +120,10 @@ export function PhotoMetadataForm({
       bodyPart: defaultValues?.bodyPart || undefined,
       laterality: defaultValues?.laterality,
       subpart: defaultValues?.subpart || '',
+      pinX: defaultValues?.pinX,
+      pinY: defaultValues?.pinY,
+      pinSpace: defaultValues?.pinSpace,
+      pinView: defaultValues?.pinView,
       clinicalNotes: defaultValues?.clinicalNotes || '',
     },
   });
@@ -129,6 +138,23 @@ export function PhotoMetadataForm({
     }
   }, [bodyPartValue, form]);
 
+  // The X mark belongs to the part (and its diagram) it was placed on — drop
+  // it whenever the part or side changes outside the body map.
+  const clearPin = () => {
+    form.setValue('pinX', undefined, { shouldDirty: true });
+    form.setValue('pinY', undefined, { shouldDirty: true });
+    form.setValue('pinSpace', undefined, { shouldDirty: true });
+    form.setValue('pinView', undefined, { shouldDirty: true });
+  };
+  const pinX = form.watch('pinX');
+  const pinY = form.watch('pinY');
+  const pinSpace = form.watch('pinSpace');
+  const pinView = form.watch('pinView');
+  const activePin =
+    pinX !== undefined && pinY !== undefined && pinSpace !== undefined
+      ? { x: pinX, y: pinY, space: pinSpace, view: pinView ?? 'front' }
+      : null;
+
   const handleSubmit = (data: PhotoMetadataFormValues) => {
     // Transform empty strings to null for optional fields
     const transformedData = {
@@ -136,6 +162,10 @@ export function PhotoMetadataForm({
       laterality: isBilateral ? (data.laterality ?? null) : null,
       subpart: data.subpart === '' ? null : data.subpart,
       clinicalNotes: data.clinicalNotes === '' ? null : data.clinicalNotes,
+      pinX: data.pinX ?? null,
+      pinY: data.pinY ?? null,
+      pinSpace: data.pinSpace ?? null,
+      pinView: data.pinView ?? null,
     };
     onSubmit(transformedData as PhotoMetadataFormValues);
   };
@@ -206,7 +236,10 @@ export function PhotoMetadataForm({
               </FormLabel>
               <div className="flex gap-2">
                 <Select
-                  onValueChange={field.onChange}
+                  onValueChange={(v) => {
+                    field.onChange(v);
+                    clearPin();
+                  }}
                   value={field.value ?? ''}
                   disabled={isSubmitting}
                 >
@@ -229,6 +262,13 @@ export function PhotoMetadataForm({
                 <BodyMapPicker
                   value={field.value}
                   laterality={form.watch('laterality') ?? null}
+                  pin={activePin}
+                  onPinChange={(p) => {
+                    form.setValue('pinX', p?.x, { shouldDirty: true });
+                    form.setValue('pinY', p?.y, { shouldDirty: true });
+                    form.setValue('pinSpace', p?.space, { shouldDirty: true });
+                    form.setValue('pinView', p?.view, { shouldDirty: true });
+                  }}
                   onSelect={(part, side) => {
                     field.onChange(part);
                     form.setValue('laterality', side ?? undefined, { shouldDirty: true });
@@ -262,7 +302,10 @@ export function PhotoMetadataForm({
                         role="radio"
                         aria-checked={field.value === side}
                         disabled={isSubmitting}
-                        onClick={() => field.onChange(side)}
+                        onClick={() => {
+                          field.onChange(side);
+                          clearPin();
+                        }}
                         className={cn(
                           'rounded px-4 py-1.5 text-sm font-medium capitalize transition-colors',
                           field.value === side

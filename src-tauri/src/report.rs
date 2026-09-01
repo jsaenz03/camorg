@@ -4,7 +4,7 @@
 // local photos directory and writes the PDF to a user-chosen path.
 
 use krilla::color::rgb;
-use krilla::geom::{PathBuilder, Point, Rect, Size, Transform};
+use krilla::geom::{Path, PathBuilder, Point, Rect, Size, Transform};
 use krilla::image::Image;
 use krilla::metadata::Metadata;
 use krilla::num::NormalizedF32;
@@ -91,6 +91,27 @@ pub struct ReportPhoto {
   /// Pre-formatted dd/MM/yyyy capture date.
   pub captured_label: String,
   pub body_part: String,
+  /// Raw body-part enum key ("hand") so the PDF can draw the matching
+  /// body-map highlight. Absent on callers predating the diagram.
+  #[serde(default)]
+  pub body_part_key: Option<String>,
+  /// Patient's own side for paired regions.
+  #[serde(default)]
+  pub laterality: Option<String>,
+  /// Pinpoint X (normalized 0..1) plus which diagram it belongs to: "body"
+  /// (the whole-map print silhouette) or "part" (the zoomed detail diagram,
+  /// where the X actually means something at lesion scale).
+  #[serde(default)]
+  pub pin_x: Option<f32>,
+  #[serde(default)]
+  pub pin_y: Option<f32>,
+  /// "body" | "part"; absent means the pin is only half-specified and is dropped.
+  #[serde(default)]
+  pub pin_space: Option<String>,
+  /// Which face of hands/feet the X was marked on ("front" | "back"); read
+  /// as "front" when absent.
+  #[serde(default)]
+  pub pin_view: Option<String>,
   #[serde(default)]
   pub subpart: Option<String>,
   #[serde(default)]
@@ -223,6 +244,10 @@ fn fill(color: rgb::Color) -> Fill {
 }
 
 fn text(s: &mut Surface, x: f32, baseline: f32, face: &Face, size: f32, str: &str, color: rgb::Color) {
+  // Text paints with fill AND stroke when a stroke is left set (krilla's
+  // combined-paint rule): clear the stroke so path drawing (e.g. the red
+  // pinpoint X) can never bleed into following text.
+  s.set_stroke(None);
   s.set_fill(Some(fill(color)));
   s.draw_text(
     Point::from_xy(x, baseline),
@@ -259,6 +284,7 @@ struct LabelStyle<'a> {
 
 fn tracked(s: &mut Surface, x: f32, baseline: f32, style: &LabelStyle, str: &str) {
   let (face, size, color, tracking) = (style.face, style.size, style.color, style.tracking);
+  s.set_stroke(None);
   s.set_fill(Some(fill(color)));
   let mut cx = x;
   for ch in str.chars() {
@@ -307,6 +333,468 @@ fn rect_outline(s: &mut Surface, rect: Rect, color: rgb::Color, width: f32) {
       ..Default::default()
     }));
     s.draw_path(&path);
+  }
+}
+
+// ---- body map diagram ----
+
+// The print body map draws the same 200x320 silhouette as the app badge,
+// scaled into the caption column. Geometry mirrors FRONT/BACK in
+// body-map-picker.tsx (paint order matters: face and scalp sit over the head).
+const BODY_MAP_H: f32 = 76.0;
+const BODY_MAP_W: f32 = BODY_MAP_H * 200.0 / 320.0;
+// Gap between the body map and the zoomed part detail diagram beside it.
+const DETAIL_GAP: f32 = 14.0;
+
+enum MapShape {
+  Rect { x: f32, y: f32, w: f32, h: f32, r: f32 },
+  Ellipse { cx: f32, cy: f32, rx: f32, ry: f32 },
+}
+
+struct MapRegion {
+  part: &'static str,
+  shape: MapShape,
+}
+
+const NECK_MAP: MapRegion = MapRegion {
+  part: "neck",
+  shape: MapShape::Rect { x: 90.0, y: 74.0, w: 20.0, h: 14.0, r: 5.0 },
+};
+
+const FRONT_MAP: &[MapRegion] = &[
+  MapRegion { part: "head", shape: MapShape::Ellipse { cx: 100.0, cy: 46.0, rx: 26.0, ry: 32.0 } },
+  MapRegion { part: "chest", shape: MapShape::Rect { x: 76.0, y: 84.0, w: 48.0, h: 38.0, r: 10.0 } },
+  MapRegion { part: "abdomen", shape: MapShape::Rect { x: 78.0, y: 124.0, w: 44.0, h: 44.0, r: 10.0 } },
+  MapRegion { part: "upper_arm", shape: MapShape::Rect { x: 48.0, y: 88.0, w: 20.0, h: 46.0, r: 10.0 } },
+  MapRegion { part: "upper_arm", shape: MapShape::Rect { x: 132.0, y: 88.0, w: 20.0, h: 46.0, r: 10.0 } },
+  MapRegion { part: "forearm", shape: MapShape::Rect { x: 46.0, y: 138.0, w: 18.0, h: 44.0, r: 9.0 } },
+  MapRegion { part: "forearm", shape: MapShape::Rect { x: 136.0, y: 138.0, w: 18.0, h: 44.0, r: 9.0 } },
+  MapRegion { part: "hand", shape: MapShape::Ellipse { cx: 55.0, cy: 194.0, rx: 11.0, ry: 13.0 } },
+  MapRegion { part: "hand", shape: MapShape::Ellipse { cx: 145.0, cy: 194.0, rx: 11.0, ry: 13.0 } },
+  MapRegion { part: "thigh", shape: MapShape::Rect { x: 78.0, y: 172.0, w: 20.0, h: 56.0, r: 10.0 } },
+  MapRegion { part: "thigh", shape: MapShape::Rect { x: 102.0, y: 172.0, w: 20.0, h: 56.0, r: 10.0 } },
+  MapRegion { part: "leg", shape: MapShape::Rect { x: 78.0, y: 232.0, w: 18.0, h: 52.0, r: 9.0 } },
+  MapRegion { part: "leg", shape: MapShape::Rect { x: 104.0, y: 232.0, w: 18.0, h: 52.0, r: 9.0 } },
+  MapRegion { part: "foot", shape: MapShape::Ellipse { cx: 84.0, cy: 296.0, rx: 11.0, ry: 9.0 } },
+  MapRegion { part: "foot", shape: MapShape::Ellipse { cx: 116.0, cy: 296.0, rx: 11.0, ry: 9.0 } },
+  MapRegion { part: "face", shape: MapShape::Ellipse { cx: 100.0, cy: 54.0, rx: 17.0, ry: 21.0 } },
+  MapRegion { part: "scalp", shape: MapShape::Rect { x: 82.0, y: 14.0, w: 36.0, h: 12.0, r: 6.0 } },
+];
+
+const BACK_MAP: &[MapRegion] = &[
+  MapRegion { part: "head", shape: MapShape::Ellipse { cx: 100.0, cy: 46.0, rx: 26.0, ry: 32.0 } },
+  MapRegion { part: "back", shape: MapShape::Rect { x: 76.0, y: 84.0, w: 48.0, h: 84.0, r: 10.0 } },
+  MapRegion { part: "upper_arm", shape: MapShape::Rect { x: 48.0, y: 88.0, w: 20.0, h: 46.0, r: 10.0 } },
+  MapRegion { part: "upper_arm", shape: MapShape::Rect { x: 132.0, y: 88.0, w: 20.0, h: 46.0, r: 10.0 } },
+  MapRegion { part: "forearm", shape: MapShape::Rect { x: 46.0, y: 138.0, w: 18.0, h: 44.0, r: 9.0 } },
+  MapRegion { part: "forearm", shape: MapShape::Rect { x: 136.0, y: 138.0, w: 18.0, h: 44.0, r: 9.0 } },
+  MapRegion { part: "hand", shape: MapShape::Ellipse { cx: 55.0, cy: 194.0, rx: 11.0, ry: 13.0 } },
+  MapRegion { part: "hand", shape: MapShape::Ellipse { cx: 145.0, cy: 194.0, rx: 11.0, ry: 13.0 } },
+  MapRegion { part: "thigh", shape: MapShape::Rect { x: 78.0, y: 172.0, w: 20.0, h: 56.0, r: 10.0 } },
+  MapRegion { part: "thigh", shape: MapShape::Rect { x: 102.0, y: 172.0, w: 20.0, h: 56.0, r: 10.0 } },
+  MapRegion { part: "leg", shape: MapShape::Rect { x: 78.0, y: 232.0, w: 18.0, h: 52.0, r: 9.0 } },
+  MapRegion { part: "leg", shape: MapShape::Rect { x: 104.0, y: 232.0, w: 18.0, h: 52.0, r: 9.0 } },
+  MapRegion { part: "foot", shape: MapShape::Ellipse { cx: 84.0, cy: 296.0, rx: 11.0, ry: 9.0 } },
+  MapRegion { part: "foot", shape: MapShape::Ellipse { cx: 116.0, cy: 296.0, rx: 11.0, ry: 9.0 } },
+  MapRegion { part: "scalp", shape: MapShape::Ellipse { cx: 100.0, cy: 40.0, rx: 18.0, ry: 16.0 } },
+];
+
+/// Rounded-rect outline in local coordinates (kappa-approximated corners).
+fn push_rounded_rect(pb: &mut PathBuilder, x: f32, y: f32, w: f32, h: f32, r: f32) {
+  let kappa = 0.552_284_7;
+  let (rx, ry) = (r.min(w / 2.0), r.min(h / 2.0));
+  let (hx, hy) = (kappa * rx, kappa * ry);
+  let (x1, y1) = (x + w, y + h);
+  pb.move_to(x + rx, y);
+  pb.line_to(x1 - rx, y);
+  pb.cubic_to(x1 - rx + hx, y, x1, y + ry - hy, x1, y + ry);
+  pb.line_to(x1, y1 - ry);
+  pb.cubic_to(x1, y1 - ry + hy, x1 - rx + hx, y1, x1 - rx, y1);
+  pb.line_to(x + rx, y1);
+  pb.cubic_to(x + rx - hx, y1, x, y1 - ry + hy, x, y1 - ry);
+  pb.line_to(x, y + ry);
+  pb.cubic_to(x, y + ry - hy, x + rx - hx, y, x + rx, y);
+  pb.close();
+}
+
+/// Ellipse outline in local coordinates (kappa-approximated).
+fn push_ellipse(pb: &mut PathBuilder, cx: f32, cy: f32, rx: f32, ry: f32) {
+  let kappa = 0.552_284_7;
+  pb.move_to(cx + rx, cy);
+  pb.cubic_to(cx + rx, cy + kappa * ry, cx + kappa * rx, cy + ry, cx, cy + ry);
+  pb.cubic_to(cx - kappa * rx, cy + ry, cx - rx, cy + kappa * ry, cx - rx, cy);
+  pb.cubic_to(cx - rx, cy - kappa * ry, cx - kappa * rx, cy - ry, cx, cy - ry);
+  pb.cubic_to(cx + kappa * rx, cy - ry, cx + rx, cy - kappa * ry, cx + rx, cy);
+  pb.close();
+}
+
+/// One cubic-corner rounded/straight outline, already scaled into page points.
+fn map_shape_path(shape: &MapShape, dx: f32, dy: f32, k: f32) -> Option<Path> {
+  let mut pb = PathBuilder::new();
+  match *shape {
+    MapShape::Rect { x, y, w, h, r } => {
+      push_rounded_rect(&mut pb, dx + x * k, dy + y * k, w * k, h * k, r * k);
+    }
+    MapShape::Ellipse { cx, cy, rx, ry } => {
+      push_ellipse(&mut pb, dx + cx * k, dy + cy * k, rx * k, ry * k);
+    }
+  }
+  pb.finish()
+}
+
+/// Does this silhouette region carry the highlight for the photo's site?
+/// The front view mirrors (patient's right limb is on the viewer's left).
+fn region_matches(
+  region: &MapRegion,
+  body_part: &str,
+  laterality: Option<&str>,
+  view: &str,
+) -> bool {
+  if region.part != body_part {
+    return false;
+  }
+  let bilateral = matches!(
+    body_part,
+    "upper_arm" | "forearm" | "hand" | "thigh" | "leg" | "foot"
+  );
+  if !bilateral || laterality.is_none() {
+    return true;
+  }
+  let mid_x = match region.shape {
+    MapShape::Rect { x, w, .. } => x + w / 2.0,
+    MapShape::Ellipse { cx, .. } => cx,
+  };
+  let screen_left = mid_x < 100.0;
+  let patient_left = if view == "front" { !screen_left } else { screen_left };
+  patient_left == (laterality == Some("left"))
+}
+
+fn draw_body_map(
+  s: &mut Surface,
+  dx: f32,
+  dy: f32,
+  body_part: &str,
+  laterality: Option<&str>,
+  pin: Option<(f32, f32)>,
+) {
+  let view = if matches!(body_part, "back" | "scalp") { "back" } else { "front" };
+  let regions: &[MapRegion] = if view == "back" { &BACK_MAP } else { &FRONT_MAP };
+  let k = BODY_MAP_H / 320.0;
+
+  let draw_region = |s: &mut Surface, region: &MapRegion, hit: bool| {
+    let Some(path) = map_shape_path(&region.shape, dx, dy, k) else {
+      return;
+    };
+    // Fill and stroke in separate draws: setting both makes krilla emit the
+    // combined "B" operator, which the content guard bans (stale-fill bug).
+    s.set_fill(Some(fill(if hit { teal() } else { hairline_color() })));
+    s.set_stroke(None);
+    s.draw_path(&path);
+    s.set_fill(None);
+    s.set_stroke(Some(Stroke {
+      paint: sub_color().into(),
+      width: 0.5,
+      ..Default::default()
+    }));
+    s.draw_path(&path);
+  };
+
+  draw_region(s, &NECK_MAP, region_matches(&NECK_MAP, body_part, laterality, view));
+  for region in regions {
+    let hit = region_matches(region, body_part, laterality, view);
+    draw_region(s, region, hit);
+  }
+
+  // The pinpoint X, only for whole-map marks (bigger than the app badge's
+  // relative X so it stays legible at print size).
+  if let Some((px, py)) = pin {
+    draw_pin_x(s, dx + px * 200.0 * k, dy + py * 320.0 * k, k);
+  }
+}
+
+/// The print X marker (alert red, oversized relative to the app badge so it
+/// stays legible on paper), centred on the given page point.
+fn draw_pin_x(s: &mut Surface, gx: f32, gy: f32, k: f32) {
+  let span = 14.0 * k;
+  let mut pb = PathBuilder::new();
+  pb.move_to(gx - span, gy - span);
+  pb.line_to(gx + span, gy + span);
+  pb.move_to(gx - span, gy + span);
+  pb.line_to(gx + span, gy - span);
+  if let Some(path) = pb.finish() {
+    s.set_fill(None);
+    s.set_stroke(Some(Stroke {
+      paint: alert_color().into(),
+      width: 2.2,
+      ..Default::default()
+    }));
+    s.draw_path(&path);
+  }
+}
+
+// ---- part detail diagram ----
+
+// The zoomed per-part diagram from the edit-photo modal (its second chip),
+// transcribed 1:1 from DETAIL_DIAGRAMS in part-detail-diagram.tsx. Same
+// 200x320 space as the body map so pinpoints read identically; every drawing
+// shows the patient's LEFT side and is mirrored for the right. Filled shapes
+// are the silhouette, Hint* the lighter anatomy guides.
+enum DetailShape {
+  FillRect { x: f32, y: f32, w: f32, h: f32, r: f32 },
+  FillEllipse { cx: f32, cy: f32, rx: f32, ry: f32 },
+  /// Ellipse rotated `deg` degrees about its centre (hand thumbs).
+  FillEllipseRot { cx: f32, cy: f32, rx: f32, ry: f32, deg: f32 },
+  HintEllipse { cx: f32, cy: f32, rx: f32, ry: f32 },
+  HintLine { x1: f32, y1: f32, x2: f32, y2: f32 },
+  /// Quadratic curve: M(x0,y0) Q(cx,cy) (x1,y1).
+  HintQuad { x0: f32, y0: f32, cx: f32, cy: f32, x1: f32, y1: f32 },
+}
+
+const DETAIL_HEAD: &[DetailShape] = &[
+  DetailShape::FillEllipse { cx: 100.0, cy: 150.0, rx: 68.0, ry: 92.0 },
+  DetailShape::FillRect { x: 82.0, y: 232.0, w: 36.0, h: 52.0, r: 12.0 },
+];
+
+const DETAIL_FACE: &[DetailShape] = &[
+  DetailShape::FillEllipse { cx: 100.0, cy: 160.0, rx: 64.0, ry: 88.0 },
+  DetailShape::HintEllipse { cx: 74.0, cy: 132.0, rx: 8.0, ry: 8.0 },
+  DetailShape::HintEllipse { cx: 126.0, cy: 132.0, rx: 8.0, ry: 8.0 },
+  DetailShape::HintLine { x1: 100.0, y1: 148.0, x2: 100.0, y2: 180.0 },
+  DetailShape::HintLine { x1: 74.0, y1: 208.0, x2: 126.0, y2: 208.0 },
+];
+
+const DETAIL_SCALP: &[DetailShape] = &[
+  DetailShape::FillEllipse { cx: 100.0, cy: 170.0, rx: 74.0, ry: 102.0 },
+  DetailShape::HintQuad { x0: 36.0, y0: 130.0, cx: 100.0, cy: 62.0, x1: 164.0, y1: 130.0 },
+  DetailShape::HintQuad { x0: 52.0, y0: 100.0, cx: 100.0, cy: 48.0, x1: 148.0, y1: 100.0 },
+];
+
+const DETAIL_NECK: &[DetailShape] = &[
+  DetailShape::FillEllipse { cx: 100.0, cy: 66.0, rx: 56.0, ry: 46.0 },
+  DetailShape::FillRect { x: 62.0, y: 98.0, w: 76.0, h: 186.0, r: 30.0 },
+];
+
+const DETAIL_CHEST: &[DetailShape] = &[
+  DetailShape::FillRect { x: 40.0, y: 58.0, w: 120.0, h: 192.0, r: 24.0 },
+  DetailShape::HintLine { x1: 54.0, y1: 88.0, x2: 94.0, y2: 100.0 },
+  DetailShape::HintLine { x1: 146.0, y1: 88.0, x2: 106.0, y2: 100.0 },
+  DetailShape::HintLine { x1: 100.0, y1: 100.0, x2: 100.0, y2: 180.0 },
+];
+
+const DETAIL_ABDOMEN: &[DetailShape] = &[
+  DetailShape::FillRect { x: 45.0, y: 48.0, w: 110.0, h: 222.0, r: 24.0 },
+  DetailShape::HintLine { x1: 100.0, y1: 108.0, x2: 100.0, y2: 252.0 },
+  DetailShape::HintLine { x1: 45.0, y1: 180.0, x2: 155.0, y2: 180.0 },
+];
+
+const DETAIL_BACK: &[DetailShape] = &[
+  DetailShape::FillRect { x: 40.0, y: 55.0, w: 120.0, h: 210.0, r: 24.0 },
+  DetailShape::HintLine { x1: 100.0, y1: 80.0, x2: 100.0, y2: 246.0 },
+  DetailShape::HintEllipse { cx: 66.0, cy: 128.0, rx: 18.0, ry: 28.0 },
+  DetailShape::HintEllipse { cx: 134.0, cy: 128.0, rx: 18.0, ry: 28.0 },
+];
+
+const DETAIL_UPPER_ARM: &[DetailShape] = &[
+  DetailShape::FillEllipse { cx: 100.0, cy: 52.0, rx: 46.0, ry: 34.0 },
+  DetailShape::FillRect { x: 68.0, y: 70.0, w: 64.0, h: 200.0, r: 30.0 },
+  DetailShape::HintLine { x1: 80.0, y1: 252.0, x2: 120.0, y2: 252.0 },
+];
+
+const DETAIL_FOREARM: &[DetailShape] = &[
+  DetailShape::FillEllipse { cx: 100.0, cy: 44.0, rx: 38.0, ry: 26.0 },
+  DetailShape::FillRect { x: 72.0, y: 60.0, w: 56.0, h: 202.0, r: 26.0 },
+  DetailShape::HintLine { x1: 82.0, y1: 242.0, x2: 82.0, y2: 260.0 },
+  DetailShape::HintLine { x1: 118.0, y1: 242.0, x2: 118.0, y2: 260.0 },
+];
+
+const DETAIL_HAND_BACK: &[DetailShape] = &[
+  DetailShape::FillRect { x: 61.0, y: 78.0, w: 17.0, h: 72.0, r: 8.0 },
+  DetailShape::FillRect { x: 82.0, y: 66.0, w: 17.0, h: 84.0, r: 8.0 },
+  DetailShape::FillRect { x: 103.0, y: 60.0, w: 17.0, h: 90.0, r: 8.0 },
+  DetailShape::FillRect { x: 124.0, y: 72.0, w: 17.0, h: 78.0, r: 8.0 },
+  DetailShape::FillRect { x: 60.0, y: 142.0, w: 82.0, h: 100.0, r: 22.0 },
+  DetailShape::FillEllipseRot { cx: 156.0, cy: 190.0, rx: 16.0, ry: 30.0, deg: 30.0 },
+  DetailShape::FillRect { x: 76.0, y: 236.0, w: 50.0, h: 48.0, r: 16.0 },
+  DetailShape::HintEllipse { cx: 69.5, cy: 87.0, rx: 4.5, ry: 6.0 },
+  DetailShape::HintEllipse { cx: 90.5, cy: 75.0, rx: 4.5, ry: 6.0 },
+  DetailShape::HintEllipse { cx: 111.5, cy: 69.0, rx: 4.5, ry: 6.0 },
+  DetailShape::HintEllipse { cx: 132.5, cy: 81.0, rx: 4.5, ry: 6.0 },
+];
+
+const DETAIL_HAND_PALM: &[DetailShape] = &[
+  DetailShape::FillRect { x: 61.0, y: 72.0, w: 17.0, h: 78.0, r: 8.0 },
+  DetailShape::FillRect { x: 82.0, y: 60.0, w: 17.0, h: 90.0, r: 8.0 },
+  DetailShape::FillRect { x: 103.0, y: 66.0, w: 17.0, h: 84.0, r: 8.0 },
+  DetailShape::FillRect { x: 124.0, y: 78.0, w: 17.0, h: 72.0, r: 8.0 },
+  DetailShape::FillRect { x: 60.0, y: 142.0, w: 82.0, h: 100.0, r: 22.0 },
+  DetailShape::FillEllipseRot { cx: 44.0, cy: 190.0, rx: 16.0, ry: 30.0, deg: -30.0 },
+  DetailShape::FillRect { x: 76.0, y: 236.0, w: 50.0, h: 48.0, r: 16.0 },
+  DetailShape::HintQuad { x0: 132.0, y0: 176.0, cx: 100.0, cy: 192.0, x1: 68.0, y1: 176.0 },
+  DetailShape::HintQuad { x0: 130.0, y0: 208.0, cx: 98.0, cy: 224.0, x1: 70.0, y1: 206.0 },
+  DetailShape::HintQuad { x0: 64.0, y0: 182.0, cx: 68.0, cy: 226.0, x1: 96.0, y1: 242.0 },
+];
+
+const DETAIL_THIGH: &[DetailShape] = &[
+  DetailShape::FillEllipse { cx: 100.0, cy: 44.0, rx: 48.0, ry: 34.0 },
+  DetailShape::FillRect { x: 64.0, y: 64.0, w: 72.0, h: 216.0, r: 32.0 },
+  DetailShape::HintLine { x1: 80.0, y1: 266.0, x2: 120.0, y2: 266.0 },
+];
+
+const DETAIL_LEG: &[DetailShape] = &[
+  DetailShape::FillEllipse { cx: 100.0, cy: 40.0, rx: 36.0, ry: 26.0 },
+  DetailShape::FillRect { x: 72.0, y: 56.0, w: 56.0, h: 204.0, r: 26.0 },
+  DetailShape::HintLine { x1: 82.0, y1: 244.0, x2: 82.0, y2: 260.0 },
+  DetailShape::HintLine { x1: 118.0, y1: 244.0, x2: 118.0, y2: 262.0 },
+];
+
+const DETAIL_FOOT_SOLE: &[DetailShape] = &[
+  DetailShape::FillRect { x: 59.0, y: 84.0, w: 82.0, h: 204.0, r: 28.0 },
+  DetailShape::HintEllipse { cx: 68.0, cy: 83.0, rx: 10.5, ry: 10.5 },
+  DetailShape::HintEllipse { cx: 83.0, cy: 78.0, rx: 8.5, ry: 8.5 },
+  DetailShape::HintEllipse { cx: 101.0, cy: 77.0, rx: 9.0, ry: 9.0 },
+  DetailShape::HintEllipse { cx: 119.0, cy: 78.0, rx: 8.5, ry: 8.5 },
+  DetailShape::HintEllipse { cx: 134.0, cy: 87.0, rx: 8.0, ry: 8.0 },
+];
+
+const DETAIL_FOOT_TOP: &[DetailShape] = &[
+  DetailShape::FillRect { x: 59.0, y: 84.0, w: 82.0, h: 204.0, r: 28.0 },
+  DetailShape::FillEllipse { cx: 66.0, cy: 87.0, rx: 8.0, ry: 8.0 },
+  DetailShape::FillEllipse { cx: 81.0, cy: 78.0, rx: 8.5, ry: 8.5 },
+  DetailShape::FillEllipse { cx: 99.0, cy: 77.0, rx: 9.0, ry: 9.0 },
+  DetailShape::FillEllipse { cx: 117.0, cy: 78.0, rx: 8.5, ry: 8.5 },
+  DetailShape::FillEllipse { cx: 132.0, cy: 83.0, rx: 10.5, ry: 10.5 },
+  DetailShape::HintEllipse { cx: 66.0, cy: 82.0, rx: 2.8, ry: 2.8 },
+  DetailShape::HintEllipse { cx: 81.0, cy: 72.5, rx: 3.0, ry: 3.0 },
+  DetailShape::HintEllipse { cx: 99.0, cy: 71.0, rx: 3.2, ry: 3.2 },
+  DetailShape::HintEllipse { cx: 117.0, cy: 72.5, rx: 3.0, ry: 3.0 },
+  DetailShape::HintEllipse { cx: 132.0, cy: 75.5, rx: 3.6, ry: 3.6 },
+];
+
+/// Shapes for one part; `view` picks the face for hands (palm/back of hand)
+/// and feet (top/sole). Empty for parts without a detail diagram (torso).
+fn detail_shapes(part: &str, view: &str) -> &'static [DetailShape] {
+  match (part, view) {
+    ("head", _) => DETAIL_HEAD,
+    ("face", _) => DETAIL_FACE,
+    ("scalp", _) => DETAIL_SCALP,
+    ("neck", _) => DETAIL_NECK,
+    ("chest", _) => DETAIL_CHEST,
+    ("abdomen", _) => DETAIL_ABDOMEN,
+    ("back", _) => DETAIL_BACK,
+    ("upper_arm", _) => DETAIL_UPPER_ARM,
+    ("forearm", _) => DETAIL_FOREARM,
+    ("hand", "back") => DETAIL_HAND_BACK,
+    ("hand", _) => DETAIL_HAND_PALM,
+    ("thigh", _) => DETAIL_THIGH,
+    ("leg", _) => DETAIL_LEG,
+    ("foot", "back") => DETAIL_FOOT_SOLE,
+    ("foot", _) => DETAIL_FOOT_TOP,
+    _ => &[],
+  }
+}
+
+fn detail_shape_path(shape: &DetailShape) -> Option<Path> {
+  let mut pb = PathBuilder::new();
+  let rotated = match *shape {
+    DetailShape::FillRect { x, y, w, h, r } => {
+      push_rounded_rect(&mut pb, x, y, w, h, r);
+      None
+    }
+    DetailShape::FillEllipse { cx, cy, rx, ry } => {
+      push_ellipse(&mut pb, cx, cy, rx, ry);
+      None
+    }
+    // Thumbs are ellipses spun about their centre: build at the origin,
+    // rotate, then move into place (SVG rotate(deg cx cy)).
+    DetailShape::FillEllipseRot { cx, cy, rx, ry, deg } => {
+      push_ellipse(&mut pb, 0.0, 0.0, rx, ry);
+      Some((deg, cx, cy))
+    }
+    DetailShape::HintEllipse { cx, cy, rx, ry } => {
+      push_ellipse(&mut pb, cx, cy, rx, ry);
+      None
+    }
+    DetailShape::HintLine { x1, y1, x2, y2 } => {
+      pb.move_to(x1, y1);
+      pb.line_to(x2, y2);
+      None
+    }
+    DetailShape::HintQuad { x0, y0, cx, cy, x1, y1 } => {
+      pb.move_to(x0, y0);
+      pb.quad_to(cx, cy, x1, y1);
+      None
+    }
+  };
+  let mut path = pb.finish()?;
+  if let Some((deg, cx, cy)) = rotated {
+    path = path.transform(Transform::from_rotate(deg))?;
+    path = path.transform(Transform::from_translate(cx, cy))?;
+  }
+  Some(path)
+}
+
+/// The zoomed part diagram beside the body map, at the same print size. The
+/// X lands here (not on the small map) when the pin is part-space. The
+/// patient's RIGHT mirrors the drawing inside the 200-wide diagram space
+/// before it scales onto the page.
+fn draw_part_detail(
+  s: &mut Surface,
+  dx: f32,
+  dy: f32,
+  part: &str,
+  laterality: Option<&str>,
+  view: &str,
+  pin: Option<(f32, f32)>,
+) {
+  let shapes = detail_shapes(part, view);
+  if shapes.is_empty() {
+    return;
+  }
+  let k = BODY_MAP_H / 320.0;
+  let page = if laterality == Some("right") {
+    Transform::from_row(-k, 0.0, 0.0, k, dx + 200.0 * k, dy)
+  } else {
+    Transform::from_row(k, 0.0, 0.0, k, dx, dy)
+  };
+
+  for shape in shapes {
+    let Some(path) = detail_shape_path(shape) else { continue };
+    let Some(path) = path.transform(page) else { continue };
+    match shape {
+      // Silhouette: fill + outline in separate draws (combined fill+stroke
+      // trips the content guard, as in draw_body_map).
+      DetailShape::FillRect { .. }
+      | DetailShape::FillEllipse { .. }
+      | DetailShape::FillEllipseRot { .. } => {
+        s.set_fill(Some(fill(hairline_color())));
+        s.set_stroke(None);
+        s.draw_path(&path);
+        s.set_fill(None);
+        s.set_stroke(Some(Stroke {
+          paint: sub_color().into(),
+          width: 0.5,
+          ..Default::default()
+        }));
+        s.draw_path(&path);
+      }
+      DetailShape::HintEllipse { .. } | DetailShape::HintLine { .. } | DetailShape::HintQuad { .. } => {
+        s.set_fill(None);
+        s.set_stroke(Some(Stroke {
+          paint: faint().into(),
+          width: 0.5,
+          ..Default::default()
+        }));
+        s.draw_path(&path);
+      }
+    }
+  }
+
+  if let Some((px, py)) = pin {
+    let gx = match laterality {
+      Some("right") => dx + (1.0 - px) * 200.0 * k,
+      _ => dx + px * 200.0 * k,
+    };
+    draw_pin_x(s, gx, dy + py * 320.0 * k, k);
   }
 }
 
@@ -468,6 +956,9 @@ fn image_display_size(pd: &PhotoDraw) -> (f32, f32) {
 fn measure_caption(pd: &PhotoDraw, fonts: &Fonts) -> f32 {
   let mut h = 26.0; // date line + photo index line
   h += 18.0; // body site line
+  if pd.photo.body_part_key.is_some() {
+    h += 13.0 + BODY_MAP_H + 6.0; // body map label + diagram + gap
+  }
   if has_notes(pd) {
     h += 18.0; // notes label line
     let lines = wrap_text(pd.photo.clinical_notes.as_deref().unwrap_or(""), &fonts.regular, 9.0, CAPTION_W);
@@ -509,6 +1000,37 @@ fn draw_caption(s: &mut Surface, fig: &Figure, fonts: &Fonts, y_top: f32) -> f32
   };
   text(s, CAPTION_X, cy, &fonts.medium, 10.0, &site, body_color());
   cy += 18.0;
+  if let Some(key) = pd.photo.body_part_key.as_deref() {
+    tracked(s, CAPTION_X, cy, &fonts.micro(), "BODY MAP");
+    cy += 13.0;
+    let pin = match (pd.photo.pin_x, pd.photo.pin_y, pd.photo.pin_space.as_deref()) {
+      (Some(x), Some(y), Some(space)) => Some((x, y, space)),
+      _ => None,
+    };
+    let laterality = pd.photo.laterality.as_deref();
+    draw_body_map(
+      s,
+      CAPTION_X,
+      cy,
+      key,
+      laterality,
+      match pin {
+        Some((x, y, "body")) => Some((x, y)),
+        _ => None,
+      },
+    );
+    // The zoomed part diagram beside it, X included — the modal's second
+    // chip. A detail-space X means nothing on the small map, so it only
+    // lands here (draw_part_detail skips parts without a diagram).
+    if let Some((x, y)) = match pin {
+      Some((x, y, "part")) => Some((x, y)),
+      _ => None,
+    } {
+      let view = pd.photo.pin_view.as_deref().unwrap_or("front");
+      draw_part_detail(s, CAPTION_X + BODY_MAP_W + DETAIL_GAP, cy, key, laterality, view, Some((x, y)));
+    }
+    cy += BODY_MAP_H + 6.0;
+  }
   if has_notes(pd) {
     tracked(s, CAPTION_X, cy, &fonts.micro(), "NOTES");
     cy += 13.0;
@@ -787,17 +1309,57 @@ mod tests {
   }
 
   #[test]
+  fn detail_diagram_tables_cover_every_part_with_a_zoom_view() {
+    // Every part except the chip-only torso has a diagram on both faces, and
+    // hands/feet draw distinct palm/back (top/sole) shapes — matching
+    // hasPartDetail in part-detail-diagram.tsx.
+    for part in [
+      "head", "face", "scalp", "neck", "chest", "abdomen", "back", "upper_arm",
+      "forearm", "hand", "thigh", "leg", "foot",
+    ] {
+      assert!(!detail_shapes(part, "front").is_empty(), "{part} front is empty");
+      assert!(!detail_shapes(part, "back").is_empty(), "{part} back is empty");
+    }
+    assert!(detail_shapes("torso", "front").is_empty());
+    assert!(detail_shapes("nonsense", "front").is_empty());
+    // The two-faced parts branch per face; the rest share one table.
+    assert!(!std::ptr::eq(detail_shapes("hand", "front"), detail_shapes("hand", "back")));
+    assert!(!std::ptr::eq(detail_shapes("foot", "front"), detail_shapes("foot", "back")));
+    assert!(std::ptr::eq(detail_shapes("face", "front"), detail_shapes("face", "back")));
+    // Every shape in every table builds into a path.
+    for part in ["head", "hand", "foot", "back"] {
+      for view in ["front", "back"] {
+        for shape in detail_shapes(part, view) {
+          assert!(detail_shape_path(shape).is_some(), "{part}/{view} shape failed");
+        }
+      }
+    }
+  }
+
+  #[test]
   fn renders_multipage_pdf_with_stable_pagination() {
     let sample = include_bytes!("../testdata/sample.jpg");
     let photo_meta: Vec<ReportPhoto> = (0..7)
-      .map(|i| ReportPhoto {
-        path: format!("/tmp/photo-{i}.jpg"),
-        captured_label: format!("0{i}/03/2024"),
-        body_part: String::from("Face"),
-        subpart: Some(String::from("Cheek")),
-        clinical_notes: Some(String::from(
-          "Review photo. Border appears stable compared with the previous capture; no ulceration.",
-        )),
+      .map(|i| {
+        // Photo 0 is a right hand marked on the back-of-hand detail diagram,
+        // exercising the part detail table, the mirroring and the X in the
+        // exact-spot path; the rest are plain face photos.
+        let hand = i == 0;
+        ReportPhoto {
+          path: format!("/tmp/photo-{i}.jpg"),
+          captured_label: format!("{:02}/03/2024", i + 1),
+          body_part: String::from(if hand { "Right hand" } else { "Face" }),
+          body_part_key: Some(String::from(if hand { "hand" } else { "face" })),
+          laterality: hand.then(|| String::from("right")),
+          pin_x: hand.then_some(0.55),
+          pin_y: hand.then_some(0.6),
+          pin_space: hand.then(|| String::from("part")),
+          pin_view: hand.then(|| String::from("back")),
+          subpart: Some(String::from(if hand { "Dorsum" } else { "Cheek" })),
+          clinical_notes: Some(String::from(
+            "Review photo. Border appears stable compared with the previous capture; no ulceration.",
+          )),
+        }
       })
       .collect();
     let photos: Vec<PhotoDraw> = photo_meta

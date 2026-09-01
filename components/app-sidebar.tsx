@@ -12,12 +12,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Aperture,
-  Camera,
   Users,
   Images,
   Settings as SettingsIcon,
   ShieldCheck,
-  Smartphone,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -37,9 +35,6 @@ import {
 import { useAuth } from '@/lib/auth/auth-context';
 import { useBranding } from '@/components/branding-boot';
 import { useNotifications } from '@/lib/hooks/use-notifications';
-import { useCompanion } from '@/components/companion/companion-provider';
-import { useCapture } from '@/components/capture/capture-provider';
-import { PhoneLinkDialog } from '@/components/companion/phone-link-dialog';
 import { SidebarMenuBadge } from '@/components/ui/sidebar';
 
 interface NavLink {
@@ -85,8 +80,6 @@ export function AppSidebar() {
   const { clinician } = useAuth();
   const { orgName, logoDataUrl } = useBranding();
   const { counts } = useNotifications();
-  const companion = useCompanion();
-  const { openCapture } = useCapture();
 
   // Pending-action counters per nav item: dashboard carries the total,
   // patients the review-attention subset, settings the admin's approval
@@ -166,40 +159,6 @@ export function AppSidebar() {
                     </SidebarMenuItem>
                   );
                 })}
-                {/* Capture: opens the capture dialog in place — no route to
-                    navigate away to. */}
-                {section.label === 'Workspace' && (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      onClick={() => openCapture()}
-                      tooltip="Capture"
-                    >
-                      <Camera className="size-4" />
-                      <span>Capture</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )}
-                {/* Phone link: companion session control, not a route. The
-                    dot is a live-session indicator (privacy state, not
-                    decoration) — it says the link is still open. */}
-                {section.label === 'Workspace' && (
-                  <SidebarMenuItem>
-                    <PhoneLinkDialog>
-                      <SidebarMenuButton tooltip="Phone link">
-                        <span className="relative">
-                          <Smartphone className="size-4" />
-                          {companion.active && (
-                            <span
-                              className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-primary"
-                              aria-label="Phone link session active"
-                            />
-                          )}
-                        </span>
-                        <span>Phone link</span>
-                      </SidebarMenuButton>
-                    </PhoneLinkDialog>
-                  </SidebarMenuItem>
-                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

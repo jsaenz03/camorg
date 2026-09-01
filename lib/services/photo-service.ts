@@ -11,7 +11,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { PhotoRecord } from '@/types/photo';
 import type { PhotoRecordCreate, PhotoRecordUpdate } from '@/lib/validators/schemas';
-import type { BodyPart, Laterality } from '@/types/body-part';
+import { BILATERAL_BODY_PARTS, type BodyPart, type BodyView, type Laterality, type PinpointSpace } from '@/types/body-part';
 
 /** Lightweight photo row for aggregates (KPIs, charts, calendars). */
 export interface PhotoSummary {
@@ -74,6 +74,10 @@ function rowToPhoto(row: Record<string, unknown>): PhotoRecord {
     laterality: (row.laterality as Laterality | null) ?? null,
     subpart: (row.subpart as string | null) ?? null,
     clinicalNotes: (row.clinical_notes as string | null) ?? null,
+    pinX: (row.pin_x as number | null) ?? null,
+    pinY: (row.pin_y as number | null) ?? null,
+    pinSpace: (row.pin_space as PinpointSpace | null) ?? null,
+    pinView: (row.pin_view as BodyView | null) ?? null,
     reviewDueAt:
       row.review_due_at != null ? new Date(row.review_due_at as number) : null,
     lastReviewedAt:
@@ -167,8 +171,9 @@ export class PhotoService implements IPhotoService {
         `INSERT INTO photos
            (id, patient_id, image_path, thumbnail_path, original_file_name,
             mime_type, file_size_bytes, body_part, laterality, subpart, clinical_notes,
+            pin_x, pin_y, pin_space, pin_view,
             captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 0, NULL)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 0, NULL)`,
         [
           id,
           validated.patientId,
@@ -181,6 +186,10 @@ export class PhotoService implements IPhotoService {
           validated.laterality ?? null,
           validated.subpart ?? null,
           validated.clinicalNotes ?? null,
+          validated.pinX ?? null,
+          validated.pinY ?? null,
+          validated.pinSpace ?? null,
+          validated.pinView ?? null,
           capturedMs,
           nowMs,
           nowMs,
@@ -215,6 +224,10 @@ export class PhotoService implements IPhotoService {
         laterality: validated.laterality ?? null,
         subpart: validated.subpart || null,
         clinicalNotes: validated.clinicalNotes || null,
+        pinX: validated.pinX ?? null,
+        pinY: validated.pinY ?? null,
+        pinSpace: validated.pinSpace ?? null,
+        pinView: validated.pinView ?? null,
         reviewDueAt: null,
         lastReviewedAt: null,
         lesionGroup: null,
@@ -289,7 +302,8 @@ export class PhotoService implements IPhotoService {
   }
 
   /**
-   * Updates photo metadata (notes and subpart only).
+   * Updates photo metadata (body part, side, notes, subpart, series, schedule,
+   * and the body-map pinpoint X).
    */
   async updatePhoto(id: string, data: PhotoRecordUpdate): Promise<PhotoRecord> {
     await ensureWritable();
@@ -304,8 +318,13 @@ export class PhotoService implements IPhotoService {
     const photo = rowToPhoto(rows[0]);
     await accessService.assertCanManagePatient(photo.patientId);
 
-    const updatedLaterality =
-      validated.laterality !== undefined ? validated.laterality : photo.laterality;
+    const updatedBodyPart = validated.bodyPart ?? photo.bodyPart;
+    const bodyPartChanged = updatedBodyPart !== photo.bodyPart;
+    // A side only makes sense on paired regions — moving the photo to a
+    // central part (or leaving it on one) never keeps a stale laterality.
+    const updatedLaterality = BILATERAL_BODY_PARTS.has(updatedBodyPart)
+      ? validated.laterality !== undefined ? validated.laterality : photo.laterality
+      : null;
     const updatedSubpart =
       validated.subpart !== undefined ? validated.subpart : photo.subpart;
     const updatedNotes =
@@ -318,18 +337,39 @@ export class PhotoService implements IPhotoService {
         : photo.lesionGroup;
     const updatedReviewDueAt =
       validated.reviewDueAt !== undefined ? validated.reviewDueAt : photo.reviewDueAt;
+    // The X belongs to the diagram it was marked on: an explicit pin wins
+    // (including explicit null = clear), moving the photo to a different part
+    // clears the old mark (its coordinates mean nothing on the new diagram),
+    // otherwise keep it.
+    const updatedPinX = validated.pinX !== undefined ? validated.pinX : bodyPartChanged ? null : photo.pinX;
+    const updatedPinY = validated.pinY !== undefined ? validated.pinY : bodyPartChanged ? null : photo.pinY;
+    const updatedPinSpace = validated.pinSpace !== undefined ? validated.pinSpace : bodyPartChanged ? null : photo.pinSpace;
+    const updatedPinView = validated.pinView !== undefined ? validated.pinView : bodyPartChanged ? null : photo.pinView;
     const nowMs = Date.now();
 
     await db.execute(
       `UPDATE photos
-         SET laterality = $1, subpart = $2, clinical_notes = $3, lesion_group = $4,
-             review_due_at = $5, updated_at = $6
-       WHERE id = $7`,
-      [updatedLaterality, updatedSubpart ?? null, updatedNotes ?? null, updatedLesionGroup, updatedReviewDueAt?.getTime() ?? null, nowMs, id]
+         SET body_part = $1, laterality = $2, subpart = $3, clinical_notes = $4, lesion_group = $5,
+             review_due_at = $6, pin_x = $7, pin_y = $8, pin_space = $9, pin_view = $10, updated_at = $11
+       WHERE id = $12`,
+      [
+        updatedBodyPart,
+        updatedLaterality,
+        updatedSubpart ?? null,
+        updatedNotes ?? null,
+        updatedLesionGroup,
+        updatedReviewDueAt?.getTime() ?? null,
+        updatedPinX,
+        updatedPinY,
+        updatedPinSpace,
+        updatedPinView,
+        nowMs,
+        id,
+      ]
     );
 
     const auditParts = [
-      updatedLaterality ?? photo.bodyPart,
+      `${updatedBodyPart}${updatedLaterality ? ` (${updatedLaterality})` : ''}`,
       ...(updatedSubpart ? [updatedSubpart] : []),
       ...(updatedLesionGroup ? [`series: ${updatedLesionGroup}`] : []),
     ];
@@ -354,16 +394,21 @@ export class PhotoService implements IPhotoService {
 
     // Record subpart usage if changed and provided.
     if (validated.subpart && validated.subpart !== photo.subpart) {
-      await subpartService.recordUsage(photo.bodyPart, validated.subpart);
+      await subpartService.recordUsage(updatedBodyPart, validated.subpart);
     }
 
     return {
       ...photo,
+      bodyPart: updatedBodyPart,
       laterality: updatedLaterality,
       subpart: updatedSubpart,
       clinicalNotes: updatedNotes,
       lesionGroup: updatedLesionGroup,
       reviewDueAt: updatedReviewDueAt,
+      pinX: updatedPinX,
+      pinY: updatedPinY,
+      pinSpace: updatedPinSpace,
+      pinView: updatedPinView,
       updatedAt: new Date(nowMs),
     };
   }
@@ -513,8 +558,9 @@ export class PhotoService implements IPhotoService {
       `INSERT INTO photos
          (id, patient_id, image_path, thumbnail_path, original_file_name,
           mime_type, file_size_bytes, body_part, laterality, subpart, clinical_notes,
-          lesion_group, captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 0, NULL)`,
+          lesion_group, pin_x, pin_y, pin_space, pin_view,
+          captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 0, NULL)`,
       [
         newId,
         photo.patientId,
@@ -528,6 +574,10 @@ export class PhotoService implements IPhotoService {
         photo.subpart,
         photo.clinicalNotes,
         photo.lesionGroup,
+        photo.pinX,
+        photo.pinY,
+        photo.pinSpace,
+        photo.pinView,
         photo.capturedAt.getTime(),
         nowMs,
         nowMs,

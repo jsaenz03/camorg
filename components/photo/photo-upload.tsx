@@ -120,6 +120,10 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
         laterality: values.laterality ?? null,
         subpart: values.subpart || null,
         clinicalNotes: values.clinicalNotes || null,
+        pinX: values.pinX ?? null,
+        pinY: values.pinY ?? null,
+        pinSpace: values.pinSpace ?? null,
+        pinView: values.pinView ?? null,
         // Fall back to the file's own timestamp (when it was taken), unless
         // the form back-dates it.
         capturedAt: values.capturedAt ?? new Date(currentFile.lastModified || Date.now()),

@@ -29,10 +29,19 @@ export const photoRecordCreateSchema = z.object({
   laterality: lateralitySchema.optional(),
   subpart: z.string().max(100, 'Subpart must be 100 characters or less').optional().nullable(),
   clinicalNotes: z.string().max(2000, 'Clinical notes must be 2000 characters or less').optional().nullable(),
+  // Body-map X mark: normalized 0..1 within 'pinSpace' ('body' | 'part');
+  // 'pinView' records which face (front/back) was marked — palm vs back of hand.
+  pinX: z.number().min(0).max(1).optional().nullable(),
+  pinY: z.number().min(0).max(1).optional().nullable(),
+  pinSpace: z.enum(['body', 'part']).optional().nullable(),
+  pinView: z.enum(['front', 'back']).optional().nullable(),
   capturedAt: z.date().refine((d) => d.getTime() <= Date.now(), 'Capture date cannot be in the future'),
 });
 
 export const photoRecordUpdateSchema = z.object({
+  bodyPart: z.nativeEnum(BodyPart, {
+    message: 'Invalid body part',
+  }).optional(),
   laterality: lateralitySchema.optional(),
   subpart: z.string().max(100, 'Subpart must be 100 characters or less').optional().nullable(),
   clinicalNotes: z.string().max(2000, 'Clinical notes must be 2000 characters or less').optional().nullable(),
@@ -40,6 +49,12 @@ export const photoRecordUpdateSchema = z.object({
   // Day-precision local midnight from the date input; past dates allowed —
   // that's exactly how a scheduled photo review becomes overdue.
   reviewDueAt: z.date().nullable().optional(),
+  // Body-map X mark: normalized 0..1 within 'pinSpace' ('body' | 'part');
+  // 'pinView' records which face (front/back) was marked — palm vs back of hand.
+  pinX: z.number().min(0).max(1).optional().nullable(),
+  pinY: z.number().min(0).max(1).optional().nullable(),
+  pinSpace: z.enum(['body', 'part']).optional().nullable(),
+  pinView: z.enum(['front', 'back']).optional().nullable(),
 });
 
 export type PhotoRecordCreate = z.infer<typeof photoRecordCreateSchema>;

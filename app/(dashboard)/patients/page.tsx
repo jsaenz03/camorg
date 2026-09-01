@@ -2,19 +2,57 @@
  * Patients List Page
  *
  * Searchable grid of patients. Entry point for User Story 2.
+ * Also loads the per-photo review schedule so each patient row/card can show
+ * how many of its photos are due for review (indicator only — a failed fetch
+ * just hides the counters).
  */
 
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { PatientList } from '@/components/patient/patient-list';
 import { PageHeader } from '@/components/page-header';
 import { usePatients } from '@/lib/hooks/use-patients';
+import { useBranding } from '@/components/branding-boot';
+import { photoService } from '@/lib/services/photo-service';
+import { photoReviewStatus } from '@/lib/utils/photo-review';
+import type { DueReviewCounts } from '@/components/patient/photo-review-due-badge';
 
 export default function PatientsPage() {
   const { patients, isLoading, error, search } = usePatients({
     includeArchived: false,
   });
+  const { reviewWarningDays } = useBranding();
+  const [dueByPatient, setDueByPatient] = useState<Map<string, DueReviewCounts>>(
+    () => new Map(),
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    photoService
+      .getPhotosWithReviewDue()
+      .then((reviews) => {
+        if (!mounted) return;
+        const counts = new Map<string, DueReviewCounts>();
+        for (const review of reviews) {
+          const status = photoReviewStatus(review.reviewDueAt, {
+            warningDays: reviewWarningDays,
+          });
+          if (status === 'none') continue;
+          const entry = counts.get(review.patientId) ?? { due: 0, overdue: 0 };
+          entry.due += 1;
+          if (status === 'overdue') entry.overdue += 1;
+          counts.set(review.patientId, entry);
+        }
+        setDueByPatient(counts);
+      })
+      .catch(() => {
+        if (mounted) setDueByPatient(new Map());
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [reviewWarningDays]);
 
   const handleSearch = useCallback(
     (term: string) => {
@@ -35,6 +73,7 @@ export default function PatientsPage() {
         isLoading={isLoading}
         error={error}
         onSearch={handleSearch}
+        dueByPatient={dueByPatient}
       />
     </div>
   );

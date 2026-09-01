@@ -6,25 +6,37 @@
  * Clickable anatomical diagram that sets the body part. Front view covers the
  * anterior regions; back view adds BACK and posterior SCALP. The diagram is a
  * deliberately simple geometric silhouette (no external assets) — precision
- * comes from the subpart text field, this just beats a flat dropdown.
+ * comes from the subpart text field and the pinpoint X, this just beats a flat
+ * dropdown.
  *
  * Regions map 1:1 onto the BodyPart enum; TORSO is offered as a chip because
  * it overlaps the trunk regions rather than owning area of its own.
+ *
+ * Two-level pinpointing: clicking a region selects the part (same mapping as
+ * ever) AND drops an X at the exact click point, then opens that part's zoomed
+ * detail diagram where a second click refines the X (see part-detail-diagram).
+ * The pin's normalized coordinates ride along via onPinChange; 'space' records
+ * which diagram they belong to.
  */
 
 import { useState, type SVGProps } from 'react';
-import { PersonStanding } from 'lucide-react';
+import { ArrowLeft, PersonStanding } from 'lucide-react';
 import {
   BodyPart,
   BILATERAL_BODY_PARTS,
+  SURFACE_LABELS,
+  bodyPartSurfaceLabel,
   type BodyPart as BodyPartType,
+  type BodyView,
   type Laterality,
+  type Pinpoint,
 } from '@/types/body-part';
+import { PartDetailDiagram, hasPartDetail } from '@/components/patient/part-detail-diagram';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
-export type View = 'front' | 'back';
+export type View = BodyView;
 
 export interface RegionDef {
   part: BodyPartType;
@@ -92,6 +104,46 @@ export function regionId(part: BodyPartType, kind: 'rect' | 'ellipse', props: Re
   return `${part}-${side}`;
 }
 
+/** Center of a region in normalized diagram coordinates (keyboard fallback). */
+function regionCenter(def: RegionDef): { x: number; y: number } {
+  const p = def.props;
+  return def.kind === 'ellipse'
+    ? { x: Number(p.cx) / 200, y: Number(p.cy) / 320 }
+    : { x: (Number(p.x) + Number(p.width) / 2) / 200, y: (Number(p.y) + Number(p.height) / 2) / 320 };
+}
+
+/** Pointer position normalized to the 200x320 viewBox of the SVG under the
+ * click. currentTarget is a region shape on the body map, or the root <svg>
+ * itself in the detail view — a root svg's ownerSVGElement is null, hence the
+ * fallback to itself. getScreenCTM maps through viewBox scaling and any CSS
+ * transforms, so the point lands exactly where the user clicked. */
+function normalizedPoint(e: React.MouseEvent<SVGElement>): { x: number; y: number } {
+  const svg = (e.currentTarget.ownerSVGElement ?? e.currentTarget) as SVGSVGElement | null;
+  const ctm = svg?.getScreenCTM();
+  if (!ctm) return { x: 0.5, y: 0.5 };
+  const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
+  return {
+    x: Math.min(1, Math.max(0, p.x / 200)),
+    y: Math.min(1, Math.max(0, p.y / 320)),
+  };
+}
+
+/**
+ * The X mark itself, in 200x320 viewBox coordinates. White halo underneath so
+ * it reads over any diagram fill, in the picker or on a badge.
+ */
+export function PinMarker({ pin, span = 9 }: { pin: Pinpoint; span?: number }) {
+  const x = pin.x * 200;
+  const y = pin.y * 320;
+  const d = `M${x - span} ${y - span} L${x + span} ${y + span} M${x - span} ${y + span} L${x + span} ${y - span}`;
+  return (
+    <g className="pointer-events-none" aria-hidden="true">
+      <path d={d} stroke="white" strokeWidth={7} strokeLinecap="round" fill="none" />
+      <path d={d} className="stroke-destructive" strokeWidth={3.5} strokeLinecap="round" fill="none" />
+    </g>
+  );
+}
+
 // The PATIENT's side of a region in the given view. The front view mirrors
 // (the patient's right limb is on the viewer's left); the back view does not.
 // Central regions (head, trunk) have no side.
@@ -111,23 +163,50 @@ interface BodyMapPickerProps {
   /** Currently chosen side, so only that half of a bilateral part highlights. */
   laterality?: Laterality | null;
   onSelect: (part: BodyPartType, laterality: Laterality | null) => void;
+  /** Where the X currently sits, or null. Coordinates are diagram-relative. */
+  pin?: Pinpoint | null;
+  onPinChange?: (pin: Pinpoint | null) => void;
   disabled?: boolean;
 }
 
-export function BodyMapPicker({ value, laterality, onSelect, disabled }: BodyMapPickerProps) {
+export function BodyMapPicker({ value, laterality, onSelect, pin, onPinChange, disabled }: BodyMapPickerProps) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>('front');
   // Which of a bilateral pair was last clicked, so only that side highlights.
   // The laterality prop narrows too once the form has it; `picked` covers the
   // instant between click and form sync (and callers that don't track sides).
   const [picked, setPicked] = useState<{ part: BodyPartType; key: string } | null>(null);
+  // Non-null while the zoomed part diagram is shown instead of the body. The
+  // view is the face being marked (palm vs back of hand for a hand); it starts
+  // from the body view the part was clicked on, or from a saved part-space
+  // pin's view so the stored X renders on the diagram it was placed on.
+  const [detail, setDetail] = useState<{ part: BodyPartType; side: Laterality | null; view: BodyView } | null>(null);
   const regions = view === 'front' ? FRONT : BACK;
   const neckKey = regionId(NECK.part, NECK.kind, NECK.props);
 
-  const handleSelect = (part: BodyPartType, key: string) => {
+  const handleSelect = (
+    part: BodyPartType,
+    key: string,
+    geometry: RegionDef,
+    point: { x: number; y: number },
+  ) => {
     setPicked({ part, key });
     const side = patientSideOf(key, view);
-    onSelect(part, BILATERAL_BODY_PARTS.has(part) && side !== 'center' ? side : null);
+    const isBilateral = BILATERAL_BODY_PARTS.has(part) && side !== 'center';
+    onSelect(part, isBilateral ? side : null);
+    onPinChange?.({ ...point, space: 'body', view });
+    if (hasPartDetail(part)) {
+      const savedView = pin?.space === 'part' && value === part ? pin.view : view;
+      setDetail({ part, side: isBilateral ? side : null, view: savedView });
+    }
+  };
+
+  // Flip the face shown in the detail view (palm ↔ back of hand). A part-space
+  // X keeps its coordinates — the hand/foot outline is shared — and is retagged
+  // so what's saved always matches the surface on screen.
+  const setSurfaceView = (next: BodyView) => {
+    setDetail((d) => (d ? { ...d, view: next } : d));
+    if (pin?.space === 'part') onPinChange?.({ ...pin, view: next });
   };
 
   // A picked side (or the tracked laterality) only narrows the highlight
@@ -140,80 +219,177 @@ export function BodyMapPicker({ value, laterality, onSelect, disabled }: BodyMap
     return true;
   };
 
+  const closePopover = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen) setDetail(null);
+  };
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={closePopover}>
       <PopoverTrigger asChild>
         <Button type="button" variant="outline" disabled={disabled} className="gap-2">
           <PersonStanding className="size-4" />
           Pick on body map
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto p-3">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="flex rounded-md border p-0.5" role="group" aria-label="Body map view">
-            {(['front', 'back'] as View[]).map((v) => (
-              <button
-                key={v}
+      {/* Fixed width sized by the diagram (240px + padding) so the header and
+          footer can never widen the popover and leave dead space beside the
+          map — the diagram is the content here. */}
+      <PopoverContent align="start" className="w-[264px] p-3">
+        {detail ? (
+          <div>
+            <div className="mb-2 flex min-w-0 items-center gap-2">
+              <Button
                 type="button"
-                aria-pressed={view === v}
-                className={cn(
-                  'rounded px-2.5 py-1 text-xs font-medium capitalize transition-colors',
-                  view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
-                )}
-                onClick={() => setView(v)}
+                variant="ghost"
+                size="sm"
+                className="gap-1 px-2 text-xs"
+                onClick={() => setDetail(null)}
               >
-                {v}
-              </button>
-            ))}
-          </div>
-          <span className="text-xs text-muted-foreground">Click a region</span>
-        </div>
+                <ArrowLeft className="size-3.5" />
+                Body map
+              </Button>
+              <span className="truncate text-sm font-medium">
+                {bodyPartSurfaceLabel(detail.part, detail.side, detail.view)}
+              </span>
+            </div>
 
-        <svg
-          viewBox="0 0 200 320"
-          className="h-72 w-auto select-none"
-          role="img"
-          aria-label={`Body map, ${view} view`}
-        >
-          {/* neck: anatomical filler, also selectable */}
-          <RegionShape
-            part={NECK.part}
-            kind={NECK.kind}
-            props={NECK.props}
-            regionKey={neckKey}
-            selected={isSelected(NECK.part, neckKey)}
-            onSelect={handleSelect}
-          />
-          {regions.map((r, i) => {
-            const key = regionId(r.part, r.kind, r.props);
-            return (
+            {/* Hands and feet have distinct front/back faces — make the one
+                being marked explicit (and switchable) so a back-of-hand X can
+                never masquerade as a palm mark. */}
+            {SURFACE_LABELS[detail.part] && (
+              <div className="mb-2 flex w-fit justify-center rounded-md border p-0.5 mx-auto" role="group" aria-label="Surface marked">
+                {(['front', 'back'] as BodyView[]).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={detail.view === v}
+                    className={cn(
+                      'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                      detail.view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
+                    )}
+                    onClick={() => setSurfaceView(v)}
+                  >
+                    {SURFACE_LABELS[detail.part]![v]}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <svg
+              viewBox="0 0 200 320"
+              width={240}
+              height={384}
+              className="h-auto w-[240px] cursor-crosshair select-none"
+              role="button"
+              tabIndex={0}
+              aria-label={`Mark the exact spot on ${bodyPartSurfaceLabel(detail.part, detail.side, detail.view)}`}
+              onClick={(e) => onPinChange?.({ ...normalizedPoint(e), space: 'part', view: detail.view })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onPinChange?.({ x: 0.5, y: 0.5, space: 'part', view: detail.view });
+                }
+              }}
+            >
+              <PartDetailDiagram part={detail.part} side={detail.side} view={detail.view} />
+              {pin?.space === 'part' && <PinMarker pin={pin} />}
+            </svg>
+
+            <p className="mt-1 text-center text-xs text-muted-foreground">
+              Click to mark the exact spot with an X.
+            </p>
+
+            <div className="mt-2 flex justify-end">
+              <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={() => closePopover(false)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="mb-2 flex w-fit rounded-md border p-0.5" role="group" aria-label="Body map view">
+              {(['front', 'back'] as View[]).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={view === v}
+                  className={cn(
+                    'rounded px-2.5 py-1 text-xs font-medium capitalize transition-colors',
+                    view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
+                  )}
+                  onClick={() => setView(v)}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+
+            <svg
+              viewBox="0 0 200 320"
+              width={240}
+              height={384}
+              className="h-auto w-[240px] select-none"
+              role="img"
+              aria-label={`Body map, ${view} view`}
+            >
+              {/* neck: anatomical filler, also selectable */}
               <RegionShape
-                key={`${r.part}-${i}`}
-                part={r.part}
-                kind={r.kind}
-                props={r.props}
-                regionKey={key}
-                selected={isSelected(r.part, key)}
+                part={NECK.part}
+                kind={NECK.kind}
+                props={NECK.props}
+                regionKey={neckKey}
+                selected={isSelected(NECK.part, neckKey)}
                 onSelect={handleSelect}
               />
-            );
-          })}
-        </svg>
+              {regions.map((r, i) => {
+                const key = regionId(r.part, r.kind, r.props);
+                return (
+                  <RegionShape
+                    key={`${r.part}-${i}`}
+                    part={r.part}
+                    kind={r.kind}
+                    props={r.props}
+                    regionKey={key}
+                    selected={isSelected(r.part, key)}
+                    onSelect={handleSelect}
+                  />
+                );
+              })}
+              {/* Eyes: the front view must read as facing the patient at a glance */}
+              {view === 'front' && (
+                <g className="pointer-events-none" aria-hidden="true">
+                  <circle cx={92} cy={49} r={2.2} className="fill-foreground/70" />
+                  <circle cx={108} cy={49} r={2.2} className="fill-foreground/70" />
+                </g>
+              )}
+              {pin?.space === 'body' && <PinMarker pin={pin} />}
+            </svg>
 
-        <div className="mt-2 flex items-center justify-between">
-          <Button
-            type="button"
-            variant={value === BodyPart.TORSO ? 'secondary' : 'ghost'}
-            size="sm"
-            className="text-xs"
-            onClick={() => onSelect(BodyPart.TORSO, null)}
-          >
-            Torso (general)
-          </Button>
-          <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={() => setOpen(false)}>
-            Done
-          </Button>
-        </div>
+            <p className="mt-1 text-center text-xs text-muted-foreground">
+              {view === 'front' ? 'Front — facing the patient.' : 'Back — seen from behind.'}{' '}
+              Click a region, then mark the exact spot.
+            </p>
+
+            <div className="mt-2 flex items-center justify-between">
+              <Button
+                type="button"
+                variant={value === BodyPart.TORSO ? 'secondary' : 'ghost'}
+                size="sm"
+                className="text-xs"
+                onClick={() => {
+                  onSelect(BodyPart.TORSO, null);
+                  onPinChange?.(null);
+                }}
+              >
+                Torso (general)
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={() => closePopover(false)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   );
@@ -232,18 +408,20 @@ function RegionShape({
   props: RegionDef['props'];
   regionKey: string;
   selected: boolean;
-  onSelect: (part: BodyPartType, key: string) => void;
+  onSelect: (part: BodyPartType, key: string, geometry: RegionDef, point: { x: number; y: number }) => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const className = cn(
     'cursor-pointer stroke-[1.5px] transition-[fill] duration-75',
     selected ? 'fill-primary stroke-primary' : hovered ? 'fill-primary/40 stroke-primary/50' : 'fill-muted-foreground/25 stroke-border',
   );
+  const geometry: RegionDef = { part, kind, props };
+  const activate = (e: React.MouseEvent<SVGElement>) => onSelect(part, regionKey, geometry, normalizedPoint(e));
   const common = {
     className,
     onMouseEnter: () => setHovered(true),
     onMouseLeave: () => setHovered(false),
-    onClick: () => onSelect(part, regionKey),
+    onClick: activate,
     // Keyboard reachability for the diagram regions.
     tabIndex: 0,
     role: 'button',
@@ -251,7 +429,7 @@ function RegionShape({
     onKeyDown: (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        onSelect(part, regionKey);
+        onSelect(part, regionKey, geometry, regionCenter(geometry));
       }
     },
   };

@@ -107,7 +107,7 @@ export function PhotoCard({
       )}
     >
       {/* Image surface */}
-      <div className={cn('relative w-full bg-muted', fillContainer ? 'flex-1' : 'aspect-square')}>
+      <div className={cn('relative w-full bg-muted', fillContainer ? 'min-h-0 flex-1' : 'aspect-square')}>
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center">
             <Loader2 className="size-7 animate-spin text-muted-foreground" />
@@ -122,7 +122,12 @@ export function PhotoCard({
           <img
             src={thumbnailUrl}
             alt={`Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? ` — ${photo.subpart}` : ''}`}
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+            // Absolutely positioned: a static h-full img gives WebKit an
+            // unresolvable height during flex layout, so the uncropped image
+            // inflated this container (min-height:auto), pushing the caption
+            // and the body-map chip out past the clipped tile edge on wider
+            // viewports. Filling the box instead keeps every overlay anchored.
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
             loading="lazy"
           />
         )}
@@ -164,19 +169,20 @@ export function PhotoCard({
           </span>
         )}
 
-        {/* Body-map indicator: where on the patient this was taken */}
-        {thumbnailUrl && !isLoading && !error && (
-          <span
-            className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-black/55 p-1"
-            title={`${BodyPartLabels[photo.bodyPart]}${photo.laterality ? ` (${photo.laterality})` : ''}`}
-          >
-            <BodyMapBadge
-              bodyPart={photo.bodyPart}
-              laterality={photo.laterality}
-              className="block h-9 w-auto"
-            />
-          </span>
-        )}
+        {/* Body-map indicator: where on the patient this was taken. Rendered
+            regardless of image state so every tile carries it — a white chip
+            (both colour modes) that reads over any photo. Sized to stay
+            legible next to the photo rather than a speck in the corner. */}
+        <span
+          className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-white p-1 shadow-md ring-1 ring-black/10"
+          title={`${BodyPartLabels[photo.bodyPart]}${photo.laterality ? ` (${photo.laterality})` : ''}`}
+        >
+          <BodyMapBadge
+            bodyPart={photo.bodyPart}
+            laterality={photo.laterality}
+            className="block h-12 w-[30px]"
+          />
+        </span>
 
         {/* Selection checkbox */}
         {showCheckbox && (

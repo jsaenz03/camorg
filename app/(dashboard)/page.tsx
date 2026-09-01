@@ -12,14 +12,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Camera, Images, Users, ArrowRight } from 'lucide-react';
+import { Camera, Images, Users, ArrowRight, Smartphone } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import type { BodyPart } from '@/types/body-part';
 import { BodyPartLabels } from '@/types/body-part';
 import { patientService } from '@/lib/services/patient-service';
 import { photoService, type PhotoSummary } from '@/lib/services/photo-service';
+import { BodyMapBadge } from '@/components/patient/body-map-badge';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useCapture } from '@/components/capture/capture-provider';
+import { useCompanion } from '@/components/companion/companion-provider';
+import { PhoneLinkDialog } from '@/components/companion/phone-link-dialog';
 import { formatRelativeTime } from '@/lib/utils/date-formatting';
 import { startOfDay, endOfDay } from 'date-fns';
 import { Button } from '@/components/ui/button';
@@ -42,6 +45,7 @@ export default function HomePage() {
   const router = useRouter();
   const { clinician } = useAuth();
   const { openCapture } = useCapture();
+  const companion = useCompanion();
   const {
     items: attentionItems,
     isLoading: isLoadingAttention,
@@ -249,10 +253,29 @@ export default function HomePage() {
         title={greeting}
         description="Review activity or capture a new photo."
         actions={
-          <Button onClick={() => openCapture()}>
-            <Camera className="size-4" />
-            Capture photo
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Phone link + capture are session controls, not routes — they
+                live here on the dashboard instead of the sidebar. The dot is
+                a live-session indicator (privacy state, not decoration). */}
+            <PhoneLinkDialog>
+              <Button variant="outline">
+                <span className="relative">
+                  <Smartphone className="size-4" />
+                  {companion.active && (
+                    <span
+                      className="absolute -right-1 -top-1 size-1.5 rounded-full bg-primary"
+                      aria-label="Phone link session active"
+                    />
+                  )}
+                </span>
+                Phone link
+              </Button>
+            </PhoneLinkDialog>
+            <Button onClick={() => openCapture()}>
+              <Camera className="size-4" />
+              Capture photo
+            </Button>
+          </div>
         }
       />
 
@@ -426,6 +449,18 @@ function RecentPhotoTile({
         ) : (
           <div className="absolute inset-0 animate-pulse bg-muted" />
         )}
+        {/* Body-map indicator: same white-chip convention as the timeline
+            tiles, so the overlay reads on every photo surface. */}
+        <span
+          className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-white p-1 shadow-sm ring-1 ring-black/10"
+          title={`${BodyPartLabels[photo.bodyPart as BodyPart]}${photo.laterality ? ` (${photo.laterality})` : ''}`}
+        >
+          <BodyMapBadge
+            bodyPart={photo.bodyPart as BodyPart}
+            laterality={photo.laterality}
+            className="block h-9 w-[22.5px]"
+          />
+        </span>
       </div>
       <div className="flex items-center justify-between gap-2 p-3">
         <div className="min-w-0">

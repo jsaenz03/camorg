@@ -15,6 +15,7 @@ import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import { formatDateOfBirth, formatRelativeTime } from '@/lib/utils/date-formatting';
 import { ReviewBadge } from '@/components/patient/review-badge';
+import { PhotoReviewDueBadge, type DueReviewCounts } from '@/components/patient/photo-review-due-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,10 +33,12 @@ type SortDir = 'asc' | 'desc';
 
 interface PatientsDataTableProps {
   patients: Patient[];
+  /** Photos due for review per patient id. */
+  dueByPatient?: Map<string, DueReviewCounts>;
   className?: string;
 }
 
-export function PatientsDataTable({ patients, className }: PatientsDataTableProps) {
+export function PatientsDataTable({ patients, dueByPatient, className }: PatientsDataTableProps) {
   const router = useRouter();
   const [sortKey, setSortKey] = useState<SortKey>('lastPhotoAt');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -95,9 +98,13 @@ export function PatientsDataTable({ patients, className }: PatientsDataTableProp
               className="cursor-pointer"
             >
               <TableCell className="font-medium">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span>{patient.name}</span>
                   <ReviewBadge patient={patient} />
+                  <PhotoReviewDueBadge
+                    due={dueByPatient?.get(patient.id)?.due ?? 0}
+                    overdue={dueByPatient?.get(patient.id)?.overdue ?? 0}
+                  />
                 </div>
               </TableCell>
               <TableCell className="text-muted-foreground">

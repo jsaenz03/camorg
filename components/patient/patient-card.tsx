@@ -12,9 +12,12 @@ import type { Patient } from '@/types/patient';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { formatDateOfBirth, formatLastPhotoTime } from '@/lib/utils/date-formatting';
+import { PhotoReviewDueBadge, type DueReviewCounts } from './photo-review-due-badge';
 
 interface PatientCardProps {
   patient: Patient;
+  /** Photos due for review; badge hidden when absent or zero. */
+  due?: DueReviewCounts;
   onClick?: () => void;
 }
 
@@ -22,7 +25,7 @@ interface PatientCardProps {
  * PatientCard displays patient information with photo stats and an access badge
  * (Org-wide / Private) so the doctor understands the visibility at a glance.
  */
-export function PatientCard({ patient, onClick }: PatientCardProps) {
+export function PatientCard({ patient, due, onClick }: PatientCardProps) {
   return (
     <Card
       className="cursor-pointer transition-all hover:shadow-md hover:border-primary/50"
@@ -47,6 +50,13 @@ export function PatientCard({ patient, onClick }: PatientCardProps) {
             {patient.photoCount} {patient.photoCount === 1 ? 'photo' : 'photos'}
           </Badge>
         </div>
+        {/* Own row: the long review-due label truncates inside the card
+            instead of forcing the header row wider than it. */}
+        {due && due.due > 0 && (
+          <div className="mt-2 flex min-w-0">
+            <PhotoReviewDueBadge due={due.due} overdue={due.overdue} />
+          </div>
+        )}
       </CardHeader>
       <CardContent className="p-4 pt-2">
         <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">

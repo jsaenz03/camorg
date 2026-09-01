@@ -26,6 +26,7 @@ import { PhotoCompareDialog } from '@/components/photo/photo-compare-dialog';
 import { PhotoUpload } from '@/components/photo/photo-upload';
 import { useCapture } from '@/components/capture/capture-provider';
 import { ReviewBadge } from '@/components/patient/review-badge';
+import { PhotoReviewDueBadge } from '@/components/patient/photo-review-due-badge';
 import { EmptyState } from '@/components/empty-state';
 import { PageHeader } from '@/components/page-header';
 import { usePhotos } from '@/lib/hooks/use-photos';
@@ -89,7 +90,8 @@ function PatientTimelineView() {
   });
 
   // Memoised so the compare dialog's pick-seeding effect doesn't refire on
-  // every parent render.
+  // every parent render. (Photos due for review are flagged per tile in the
+  // timeline below — alarm-clock cue on each photo card.)
   const activePhotos = useMemo(
     () => photos.filter((p) => !p.isDeleted),
     [photos],

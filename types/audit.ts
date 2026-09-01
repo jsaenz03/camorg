@@ -20,6 +20,8 @@ export type AuditAction =
   | 'photo.restore'
   | 'photo.annotate'
   | 'photo.export'
+  | 'result_file.add'
+  | 'result_file.delete'
   | 'backup.create'
   | 'companion.start'
   | 'companion.stop';
@@ -54,6 +56,8 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'photo.restore': 'Restored photo',
   'photo.annotate': 'Annotated photo',
   'photo.export': 'Exported / printed photos',
+  'result_file.add': 'Attached a result file',
+  'result_file.delete': 'Removed a result file',
   'backup.create': 'Created backup',
   'companion.start': 'Opened phone link session',
   'companion.stop': 'Closed phone link session',

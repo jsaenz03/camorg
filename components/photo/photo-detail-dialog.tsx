@@ -33,7 +33,10 @@ import { normalizeLesionGroup } from '@/lib/utils/lesion-group';
 import {
   BILATERAL_BODY_PARTS,
   bodyPartDisplayLabel,
+  bodyPartSurfaceLabel,
+  type BodyPart,
   type Laterality,
+  type Pinpoint,
 } from '@/types/body-part';
 import { photoService } from '@/lib/services/photo-service';
 import { formatCaptureDate } from '@/lib/utils/date-formatting';
@@ -42,8 +45,10 @@ import { photoReviewStatus } from '@/lib/utils/photo-review';
 import { useBranding } from '@/components/branding-boot';
 import { NotFoundError } from '@/lib/validators/errors';
 import { PhotoViewer } from './photo-viewer';
+import { ResultFilesSection } from './result-files-section';
 import { BodyMapBadge } from '@/components/patient/body-map-badge';
-import { cn } from '@/lib/utils';
+import { BodyMapPicker, PinMarker } from '@/components/patient/body-map-picker';
+import { PartDetailDiagram, hasPartDetail } from '@/components/patient/part-detail-diagram';
 import {
   Dialog,
   DialogContent,
@@ -98,6 +103,8 @@ export function PhotoDetailDialog({
 
   const [subpart, setSubpart] = useState('');
   const [laterality, setLaterality] = useState<Laterality | null>(null);
+  const [bodyPart, setBodyPart] = useState<BodyPart | null>(null);
+  const [pin, setPin] = useState<Pinpoint | null>(null);
   const [clinicalNotes, setClinicalNotes] = useState('');
   const [lesionGroupInput, setLesionGroupInput] = useState('');
   const [reviewDueInput, setReviewDueInput] = useState('');
@@ -145,6 +152,12 @@ export function PhotoDetailDialog({
     if (!photo) return;
     setSubpart(photo.subpart ?? '');
     setLaterality(photo.laterality);
+    setBodyPart(photo.bodyPart);
+    setPin(
+      photo.pinX != null && photo.pinY != null && photo.pinSpace != null
+        ? { x: photo.pinX, y: photo.pinY, space: photo.pinSpace, view: photo.pinView ?? 'front' }
+        : null,
+    );
     setClinicalNotes(photo.clinicalNotes ?? '');
     setLesionGroupInput(photo.lesionGroup ?? '');
     setReviewDueInput(photo.reviewDueAt ? format(photo.reviewDueAt, 'yyyy-MM-dd') : '');
@@ -195,7 +208,8 @@ export function PhotoDetailDialog({
 
   if (!photo) return null;
 
-  const isBilateral = BILATERAL_BODY_PARTS.has(photo.bodyPart);
+  // Live body part: the picker edits it locally and Save commits it.
+  const isBilateral = bodyPart ? BILATERAL_BODY_PARTS.has(bodyPart) : false;
 
   const photoAlt = `Photo of ${bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}${photo.subpart ? `, ${photo.subpart}` : ''}`;
 
@@ -288,15 +302,20 @@ export function PhotoDetailDialog({
   }
 
   async function handleSave() {
-    if (!photo) return;
+    if (!photo || !bodyPart) return;
     setIsSaving(true);
     try {
       await photoService.updatePhoto(photo.id, {
+        bodyPart,
         laterality: isBilateral ? laterality : null,
         subpart: subpart.trim() || null,
         clinicalNotes: clinicalNotes.trim() || null,
         lesionGroup: normalizeLesionGroup(lesionGroupInput),
         reviewDueAt: parsedReviewDue,
+        pinX: pin?.x ?? null,
+        pinY: pin?.y ?? null,
+        pinSpace: pin?.space ?? null,
+        pinView: pin?.view ?? null,
       });
       toast.success('Photo updated');
       onChanged();
@@ -356,7 +375,10 @@ export function PhotoDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid min-h-0 flex-1 gap-0 overflow-y-auto md:h-[60vh] md:grid-cols-[1.4fr_1fr] md:overflow-hidden">
+        {/* Bounded grid: the image row is capped, the form column scrolls
+            internally, and the action bar is pinned outside the scroll
+            region at every breakpoint — content never slides under it. */}
+        <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,45vh)_minmax(0,1fr)] gap-0 overflow-hidden md:h-[60vh] md:grid-cols-[1.4fr_1fr] md:grid-rows-1">
           {/* Image viewer: zoom/pan; Annotate opens a fullscreen editor */}
           <div className="relative flex h-[45vh] shrink-0 items-center justify-center bg-black/95 p-2 sm:p-4 md:h-auto">
             {isLoadingImage ? (
@@ -387,31 +409,71 @@ export function PhotoDetailDialog({
             )}
           </div>
 
-          {/* Metadata form. On md+ the pane scrolls under a sticky action
-              bar, so Save/Delete are reachable without scrolling; on mobile
-              the whole dialog body scrolls and the bar pins to its bottom
-              once the form is in view. */}
-          <div className="flex min-h-0 flex-col gap-4 border-t p-4 sm:p-6 md:overflow-y-auto md:border-l md:border-t-0">
-            {/* Body map: where on the patient this photo was taken. The
-                highlight follows the side toggle live for bilateral regions. */}
+          {/* Metadata form in a wrapper column: an inner scroll region with
+              the action bar as a pinned sibling below it. On mobile the image
+              row stays visible while the form scrolls under the bar. */}
+          <div className="flex min-h-0 flex-col border-t md:border-l md:border-t-0">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
+            {/* Body map: where on the patient this photo was taken. Editable
+                in place — the picker updates the body part, side and pinpoint
+                locally; Save commits them. The highlight follows the side
+                toggle live, and the X renders on whichever diagram it was
+                placed on (body map, or the part's zoomed detail view). */}
             <div className="space-y-1.5">
               <Label>Where on the body</Label>
-              <div className="flex items-end gap-3">
+              <div className="flex flex-wrap items-end gap-3">
                 <div
-                  className="rounded-lg bg-black/85 p-2"
-                  title={`${bodyPartDisplayLabel(photo.bodyPart, isBilateral ? laterality : photo.laterality)} — body map`}
+                  className="shrink-0 rounded-lg bg-white p-2 shadow-sm ring-1 ring-black/10"
+                  title={`${bodyPartDisplayLabel(bodyPart ?? photo.bodyPart, isBilateral ? laterality : null)} — body map`}
                 >
                   <BodyMapBadge
-                    bodyPart={photo.bodyPart}
-                    laterality={isBilateral ? laterality : photo.laterality}
-                    className="block h-32 w-auto"
+                    bodyPart={bodyPart ?? photo.bodyPart}
+                    laterality={isBilateral ? laterality : null}
+                    pin={pin?.space === 'body' ? pin : null}
+                    className="block h-32 w-20"
                   />
                 </div>
-                <p className="pb-1 text-sm text-muted-foreground">
-                  {bodyPartDisplayLabel(photo.bodyPart, isBilateral ? laterality : photo.laterality)}
+                {pin?.space === 'part' && bodyPart && hasPartDetail(bodyPart) && (
+                  <div
+                    className="shrink-0 rounded-lg bg-white p-2 shadow-sm ring-1 ring-black/10"
+                    title={`${bodyPartSurfaceLabel(bodyPart, isBilateral ? laterality : null, pin.view)} — exact spot`}
+                  >
+                    <svg
+                      viewBox="0 0 200 320"
+                      width={200}
+                      height={320}
+                      className="block h-32 w-20"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <PartDetailDiagram
+                        part={bodyPart}
+                        side={isBilateral ? laterality : null}
+                        view={pin.view}
+                        tone="on-light"
+                      />
+                      <PinMarker pin={pin} />
+                    </svg>
+                  </div>
+                )}
+                <p className="max-w-full min-w-0 pb-1 text-sm text-muted-foreground">
+                  {(pin?.space === 'part' && bodyPart
+                    ? bodyPartSurfaceLabel(bodyPart, isBilateral ? laterality : null, pin.view)
+                    : bodyPartDisplayLabel(bodyPart ?? photo.bodyPart, isBilateral ? laterality : null))}
                   {photo.subpart ? ` — ${photo.subpart}` : ''}
                 </p>
               </div>
+              <BodyMapPicker
+                value={bodyPart ?? undefined}
+                laterality={laterality}
+                pin={pin}
+                onSelect={(part, side) => {
+                  setBodyPart(part);
+                  setLaterality(side);
+                }}
+                onPinChange={setPin}
+                disabled={isSaving || isDeleting}
+              />
             </div>
 
             <dl className="grid grid-cols-3 gap-y-2 text-sm">
@@ -424,6 +486,8 @@ export function PhotoDetailDialog({
               <dt className="text-muted-foreground">File size</dt>
               <dd className="col-span-2">{(photo.fileSizeBytes / 1024).toFixed(1)} KB</dd>
             </dl>
+
+            <ResultFilesSection photoId={photo.id} isDeleted={photo.isDeleted} />
 
             {!photo.isDeleted && (
               <div className="space-y-2 rounded-md border p-3">
@@ -514,39 +578,6 @@ export function PhotoDetailDialog({
               </p>
             </div>
 
-            {isBilateral && (
-              <div className="space-y-2">
-                <Label>Side</Label>
-                <div
-                  role="radiogroup"
-                  aria-label="Patient's side"
-                  className="flex w-fit gap-1 rounded-md border p-0.5"
-                >
-                  {(['left', 'right'] as Laterality[]).map((side) => (
-                    <button
-                      key={side}
-                      type="button"
-                      role="radio"
-                      aria-checked={laterality === side}
-                      disabled={isSaving || isDeleting}
-                      onClick={() => setLaterality(side)}
-                      className={cn(
-                        'rounded px-4 py-1.5 text-sm font-medium capitalize transition-colors',
-                        laterality === side
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:text-foreground',
-                      )}
-                    >
-                      {side}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  The patient&rsquo;s own {laterality ?? 'left/right'} side.
-                </p>
-              </div>
-            )}
-
             <div className="space-y-2">
               <Label htmlFor="photo-subpart">Subpart</Label>
               <Input
@@ -575,61 +606,63 @@ export function PhotoDetailDialog({
               </p>
             </div>
 
-            {/* Pinned action bar: negative margins span the pane padding so
-                scrolling content slides underneath it, never past it. */}
-            <div className="sticky bottom-0 -mx-4 mt-auto border-t bg-background px-4 pb-4 pt-3 sm:-mx-6 sm:px-6 sm:pb-6">
-              {confirmDelete && (
-                <p className="pb-2 text-xs text-destructive">
-                  Click again to remove this photo — it can be restored while it
-                  stays in deleted.
-                </p>
-              )}
-              <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
-                {photo.isDeleted ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleRestore}
-                    disabled={isSaving || isRestoring}
-                  >
-                    {isRestoring ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <ArchiveRestore className="size-4" />
-                    )}
-                    Restore photo
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    onClick={handleDelete}
-                    disabled={isSaving || isDeleting}
-                  >
-                    {isDeleting ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="size-4" />
-                    )}
-                    {confirmDelete ? 'Confirm delete' : 'Delete'}
-                  </Button>
-                )}
+          </div>
+
+          {/* Pinned action bar: a sibling of the scroll region, so form
+              content stops above it instead of peeking underneath. */}
+          <div className="shrink-0 border-t bg-background px-4 pb-4 pt-3 sm:px-6 sm:pb-6">
+            {confirmDelete && (
+              <p className="pb-2 text-xs text-destructive">
+                Click again to remove this photo — it can be restored while it
+                stays in deleted.
+              </p>
+            )}
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+              {photo.isDeleted ? (
                 <Button
                   type="button"
-                  onClick={handleSave}
-                  disabled={isSaving || isDeleting}
+                  variant="outline"
+                  onClick={handleRestore}
+                  disabled={isSaving || isRestoring}
                 >
-                  {isSaving ? (
+                  {isRestoring ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
-                    <Save className="size-4" />
+                    <ArchiveRestore className="size-4" />
                   )}
-                  Save changes
+                  Restore photo
                 </Button>
-              </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={isSaving || isDeleting}
+                >
+                  {isDeleting ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="size-4" />
+                  )}
+                  {confirmDelete ? 'Confirm delete' : 'Delete'}
+                </Button>
+              )}
+              <Button
+                type="button"
+                onClick={handleSave}
+                disabled={isSaving || isDeleting}
+              >
+                {isSaving ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Save className="size-4" />
+                )}
+                Save changes
+              </Button>
             </div>
           </div>
         </div>
+      </div>
       </DialogContent>
     </Dialog>
   );

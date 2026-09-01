@@ -17,15 +17,18 @@ import { EmptyState } from '@/components/empty-state';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import type { DueReviewCounts } from './photo-review-due-badge';
 
 interface PatientListProps {
   patients: Patient[];
   isLoading: boolean;
   error: Error | null;
   onSearch: (term: string) => void;
+  /** Photos due for review per patient id (grid cards + table rows). */
+  dueByPatient?: Map<string, DueReviewCounts>;
 }
 
-export function PatientList({ patients, isLoading, error, onSearch }: PatientListProps) {
+export function PatientList({ patients, isLoading, error, onSearch, dueByPatient }: PatientListProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [view, setView] = useState<'grid' | 'table'>('grid');
   const router = useRouter();
@@ -143,12 +146,13 @@ export function PatientList({ patients, isLoading, error, onSearch }: PatientLis
             <PatientCard
               key={patient.id}
               patient={patient}
+              due={dueByPatient?.get(patient.id)}
               onClick={() => handlePatientClick(patient.id)}
             />
           ))}
         </div>
       ) : (
-        <PatientsDataTable patients={patients} />
+        <PatientsDataTable patients={patients} dueByPatient={dueByPatient} />
       )}
     </div>
   );

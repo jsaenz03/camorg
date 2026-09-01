@@ -100,6 +100,24 @@ pub fn run() {
       sql: include_str!("../migrations/014_photo_review_due.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 15,
+      description: "photos: per-photo result files (PDF/RTF/… documents)",
+      sql: include_str!("../migrations/015_result_files.sql"),
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 16,
+      description: "photos: exact pinpoint mark (X) on the body map",
+      sql: include_str!("../migrations/016_photo_pinpoint.sql"),
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 17,
+      description: "photos: which face (front/back) the pinpoint X was marked on",
+      sql: include_str!("../migrations/017_photo_pin_view.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory

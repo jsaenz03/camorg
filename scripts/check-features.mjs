@@ -289,8 +289,8 @@ check(
   read('app/(dashboard)/layout.tsx').includes('CompanionProvider'),
 );
 check(
-  'sidebar opens the phone link dialog',
-  read('components/app-sidebar.tsx').includes('PhoneLinkDialog'),
+  'dashboard opens the phone link dialog (capture + phone link are dashboard buttons, not sidebar tabs)',
+  read('app/(dashboard)/page.tsx').includes('PhoneLinkDialog'),
 );
 check(
   'capture screen flags itself so photos are not handled twice',

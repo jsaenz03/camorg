@@ -1,4 +1,4 @@
-import { BodyPart, type Laterality } from './body-part';
+import { BodyPart, type BodyView, type Laterality, type PinpointSpace } from './body-part';
 
 /**
  * Represents a single clinical photograph with associated metadata
@@ -22,6 +22,15 @@ export interface PhotoRecord {
   laterality: Laterality | null; // Patient's left/right side (bilateral regions only)
   subpart: string | null; // Custom anatomical detail (optional)
   clinicalNotes: string | null; // Free-text clinical observations (optional)
+
+  // Exact pinpoint mark (migration 016): normalized 0..1 coordinates of the X
+  // on the body-map diagram, plus which diagram they belong to and which face
+  // (front/back) it was marked on — palm vs back of hand differ (migration
+  // 017). Null = unmarked; pinView null = pre-017 row, read as 'front'.
+  pinX: number | null;
+  pinY: number | null;
+  pinSpace: PinpointSpace | null;
+  pinView: BodyView | null;
 
   // Review + series (migrations 013/014)
   reviewDueAt: Date | null; // Next scheduled review date for this photo; null = none set
