@@ -16,7 +16,9 @@
 //
 // The phone page drives the native camera via <input capture> rather than
 // getUserMedia: camera capture needs a secure context, which plain LAN http
-// cannot offer on iOS/Android.
+// cannot offer on iOS/Android. Existing photos can also be sent from the
+// phone's own library through the same POST path (multi-select, reviewed one
+// at a time on the phone).
 
 use std::collections::HashSet;
 use std::io::Read;
@@ -29,7 +31,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tiny_http::{Header, Method, Response, Server};
 
 const PHOTO_EVENT: &str = "remote-camera-photo";
@@ -98,6 +100,72 @@ fn is_safe_filename(name: &str) -> bool {
     && name
       .chars()
       .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+}
+
+/// The pairing token is the bearer secret for the LAN link, and it persists
+/// across restarts: the same URL is served every session, so the phone's
+/// saved bookmark (or home-screen icon) keeps working without re-scanning
+/// the QR. Stored in the app data dir next to the database; deleting the
+/// file revokes every phone link saved to it.
+fn pairing_token(app: &AppHandle) -> Result<String, String> {
+  let dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("could not resolve the app data dir: {e}"))?;
+  let path = dir.join("phone-link-token");
+  if let Ok(token) = std::fs::read_to_string(&path) {
+    let token = token.trim();
+    if token.len() == 16 && token.chars().all(|c| c.is_ascii_hexdigit()) {
+      return Ok(token.to_string());
+    }
+  }
+  let token = format!("{:016x}", rand::random::<u64>());
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  std::fs::write(&path, &token).map_err(|e| e.to_string())?;
+  Ok(token)
+}
+
+/// "Start automatically" preference (the Phone link dialog's toggle): when
+/// on, the link starts itself whenever the app opens, so a doctor who has
+/// paired once never scans the QR again. On by default.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PhoneLinkPrefs {
+  #[serde(default = "default_true")]
+  remember: bool,
+}
+
+fn default_true() -> bool {
+  true
+}
+
+fn phone_link_prefs_path(app: &AppHandle) -> Result<PathBuf, String> {
+  app
+    .path()
+    .app_data_dir()
+    .map(|d| d.join("phone-link.json"))
+    .map_err(|e| format!("could not resolve the app data dir: {e}"))
+}
+
+#[tauri::command]
+pub fn get_phone_link_remember(app: AppHandle) -> Result<bool, String> {
+  let path = phone_link_prefs_path(&app)?;
+  match std::fs::read_to_string(&path) {
+    Ok(text) => serde_json::from_str::<PhoneLinkPrefs>(&text)
+      .map(|p| p.remember)
+      .map_err(|e| e.to_string()),
+    // No file yet: the default (remembered) applies.
+    Err(_) => Ok(true),
+  }
+}
+
+#[tauri::command]
+pub fn set_phone_link_remember(app: AppHandle, remember: bool) -> Result<(), String> {
+  let path = phone_link_prefs_path(&app)?;
+  if let Some(dir) = path.parent() {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+  }
+  let json = serde_json::to_string(&PhoneLinkPrefs { remember }).map_err(|e| e.to_string())?;
+  std::fs::write(&path, json).map_err(|e| e.to_string())
 }
 
 fn now_ms() -> u64 {
@@ -276,6 +344,8 @@ fn handle_request(app: &AppHandle, token: &str, last_seen_ms: &AtomicU64, mut re
     let _ = request.respond(
       Response::from_data(LOGO_PNG.to_vec()).with_header(content_type("image/png")),
     );
+  } else if method == Method::Get && path == "manifest.webmanifest" {
+    respond_json(request, 200, WEB_MANIFEST.to_string());
   } else if method == Method::Get && path == "hello" {
     // Phone page pings on load so the desktop knows pairing succeeded.
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: true });
@@ -369,7 +439,7 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
     crate::diagnostics::record(crate::diagnostics::Level::Error, "phone-camera", &msg, None);
     msg
   })?;
-  let token = format!("{:016x}", rand::random::<u64>());
+  let token = pairing_token(&app)?;
   let url = format!("http://{ip}:{port}/t/{token}/");
   let server = Arc::new(server);
   let last_seen_ms = Arc::new(AtomicU64::new(now_ms()));
@@ -479,11 +549,20 @@ pub fn stage_remote_report(path: String) {
 // brand mark without shipping the 1024px original over the LAN.
 const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
 
+// Home-screen app (PWA) manifest: lets the phone add Camog to its home
+// screen with the app logo and open it standalone, without browser chrome.
+// Relative start_url/scope resolve under /t/<token>/ so each phone's saved
+// icon points at its own pairing. Android uses this; iOS home-screen icons
+// come from the apple-touch-icon link in the page head.
+// ponytail: single 256px "any" icon — a dedicated maskable PNG would avoid
+// launcher cropping but we ship only the one logo asset.
+const WEB_MANIFEST: &str = r##"{"name":"Camog · Clinical Photos","short_name":"Camog","start_url":"./","scope":"./","display":"standalone","background_color":"#f4f4f5","theme_color":"#f4f4f5","icons":[{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}]}"##;
+
 include!("remote_camera_page.rs");
 
 #[cfg(test)]
 mod tests {
-  use super::{is_safe_filename, PAGE_HTML};
+  use super::{is_safe_filename, PAGE_HTML, WEB_MANIFEST};
 
   // Guards the branded phone page: the logo route, wordmark, theme tokens,
   // and the [hidden] override that keeps screens toggleable.
@@ -525,6 +604,23 @@ mod tests {
     assert!(PAGE_HTML.contains("blurred"));
   }
 
+  // Send-from-library + the all-photos tab + patient detail lines: the phone
+  // packs the same affordances the desktop offers (upload dialog, Photos
+  // page, patient header details).
+  #[test]
+  fn phone_page_carries_send_photo_and_photos_tab() {
+    assert!(PAGE_HTML.contains(r#"id="pick""#));
+    assert!(PAGE_HTML.contains(r#"type="file" accept="image/*" multiple"#));
+    assert!(PAGE_HTML.contains("Send from library"));
+    assert!(PAGE_HTML.contains(r#"id="tab-all""#));
+    assert!(PAGE_HTML.contains(r#"id="screen-all""#));
+    assert!(PAGE_HTML.contains("cell-name"));
+    assert!(PAGE_HTML.contains("patientName(e.p.patientId)"));
+    assert!(PAGE_HTML.contains("p.dob"));
+    assert!(PAGE_HTML.contains("p.ownerName"));
+    assert!(PAGE_HTML.contains("p.consentScopeLabel"));
+  }
+
   // Trust boundary: only plain UUID-derived names may reach the filesystem.
   #[test]
   fn filename_gate() {
@@ -537,5 +633,30 @@ mod tests {
     assert!(!is_safe_filename("a\\b.jpg"));
     assert!(!is_safe_filename("photo name.jpg"));
     assert!(!is_safe_filename("café.jpg"));
+  }
+
+  // Reports from a home-screen app: a standalone PWA cannot open a new tab
+  // (target="_blank" is a silent no-op) nor render PDFs inline, so the page
+  // must detect standalone and hand the file to the platform instead —
+  // share sheet where available, else a download.
+  #[test]
+  fn phone_page_report_survives_standalone() {
+    assert!(PAGE_HTML.contains("display-mode: standalone"));
+    assert!(PAGE_HTML.contains("navigator.canShare"));
+    assert!(PAGE_HTML.contains("a.download = 'camog-case-report.pdf'"));
+  }
+
+  // Home-screen app (PWA): the page links the manifest and the app logo, the
+  // manifest route serves that logo as the icon, and light is the default
+  // appearance on a fresh phone (dark stays opt-in, remembered per phone).
+  #[test]
+  fn phone_page_pwa_and_light_default() {
+    assert!(PAGE_HTML.contains(r##"<link rel="manifest" href="manifest.webmanifest">"##));
+    assert!(PAGE_HTML.contains(r##"<link rel="apple-touch-icon" href="logo.png">"##));
+    assert!(PAGE_HTML.contains(r##"<meta name="apple-mobile-web-app-capable" content="yes">"##));
+    assert!(PAGE_HTML.contains(r##"<body class="light">"##));
+    assert!(PAGE_HTML.contains(r##"localStorage.getItem(THEME_KEY) !== 'dark'"##));
+    assert!(WEB_MANIFEST.contains(r##""icons":[{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}]"##));
+    assert!(WEB_MANIFEST.contains(r##""display":"standalone""##));
   }
 }

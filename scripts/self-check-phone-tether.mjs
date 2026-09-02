@@ -15,7 +15,12 @@ for (const dep of ['tiny_http', 'base64', 'rand']) {
 
 const lib = read('../src-tauri/src/lib.rs');
 assert(lib.includes('mod remote_camera'), 'lib.rs missing remote_camera module');
-for (const cmd of ['start_remote_camera', 'stop_remote_camera']) {
+for (const cmd of [
+  'start_remote_camera',
+  'stop_remote_camera',
+  'get_phone_link_remember',
+  'set_phone_link_remember',
+]) {
   assert(lib.includes(cmd), `lib.rs does not register command: ${cmd}`);
 }
 
@@ -24,11 +29,24 @@ const rust = read('../src-tauri/src/remote_camera.rs');
 for (const needle of ['remote-camera-photo', 'remote-camera-status']) {
   assert(rust.includes(needle), `remote_camera.rs missing event: ${needle}`);
 }
+// Remembered pairing: the token persists in the app data dir so the phone's
+// saved link keeps working across app restarts, and the "start automatically"
+// preference is stored beside it (default on).
+for (const needle of ['phone-link-token', 'phone-link.json', 'pairing_token']) {
+  assert(rust.includes(needle), `remote_camera.rs missing remembered-pairing piece: ${needle}`);
+}
+// Home-screen app: the manifest (with the logo icon) is served by the shell.
+assert(rust.includes('manifest.webmanifest'), 'remote_camera.rs missing PWA manifest route');
+assert(rust.includes('WEB_MANIFEST'), 'remote_camera.rs missing WEB_MANIFEST');
 // The phone page must use the native camera (getUserMedia is blocked on
 // plain LAN http) and re-encode to JPEG like the desktop path.
 const phonePage = read('../src-tauri/src/remote_camera_page.rs');
 for (const needle of ['capture="environment"', 'image/jpeg']) {
   assert(phonePage.includes(needle), `remote_camera_page.rs phone page missing: ${needle}`);
+}
+// The phone page links the manifest and the home-screen icon.
+for (const needle of ['rel="manifest"', 'rel="apple-touch-icon"']) {
+  assert(phonePage.includes(needle), `phone page missing PWA link: ${needle}`);
 }
 assert(rust.includes('/t/'), 'remote_camera.rs missing tokened path /t/');
 
@@ -47,6 +65,15 @@ for (const needle of ['remote-camera-photo', 'storePendingPhoto', 'setCaptureScr
 const provider = read('../components/companion/companion-provider.tsx');
 for (const needle of ['remote-camera-photo', 'storePendingPhoto']) {
   assert(provider.includes(needle), `companion-provider.tsx missing: ${needle}`);
+}
+// Remembered link: the provider reads the preference and auto-starts the
+// link on launch, and the dialog carries the toggle.
+for (const needle of ['get_phone_link_remember', 'set_phone_link_remember']) {
+  assert(provider.includes(needle), `companion-provider.tsx missing: ${needle}`);
+}
+const linkDialog = read('../components/companion/phone-link-dialog.tsx');
+for (const needle of ['remember-link', 'setRemember']) {
+  assert(linkDialog.includes(needle), `phone-link-dialog.tsx missing remember toggle: ${needle}`);
 }
 
 const capture = read('../components/camera/camera-capture.tsx');

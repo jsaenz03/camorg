@@ -7,11 +7,22 @@ const PAGE_HTML: &str = r##"<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0a0a0a" id="meta-theme">
+<meta name="theme-color" content="#f4f4f5" id="meta-theme">
 <title>Camog &middot; Phone link</title>
+<!-- Home-screen app: the manifest + icon let the phone add Camog to its home
+     screen with the app logo (iOS via apple-touch-icon, Android via the
+     manifest served by the tether server). -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="logo.png">
+<link rel="icon" type="image/png" href="logo.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Camog">
 <style>
-  /* Camog theme — mirrors app/globals.css tokens. Dark is the default
-     (photo review); body.light flips to the app's light palette. */
+  /* Camog theme — mirrors app/globals.css tokens. Light is the default
+     (new phones start light); body.theme-dark flips to the dark palette
+     for photo review, remembered per phone. */
   :root {
     color-scheme: dark;
     --bg: #0a0a0a;
@@ -61,7 +72,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 20px; padding: 24px 16px;
   }
-  #screen-lib, #screen-patient { padding: 16px 16px calc(76px + env(safe-area-inset-bottom)); }
+  #screen-lib, #screen-patient, #screen-all { padding: 16px 16px calc(76px + env(safe-area-inset-bottom)); }
 
   header { display: flex; flex-direction: column; align-items: center; gap: 10px; }
   header img {
@@ -157,12 +168,12 @@ const PAGE_HTML: &str = r##"<!doctype html>
   .textbtn:active { opacity: 0.7; }
   .textbtn[disabled] { color: var(--muted); pointer-events: none; }
   .textbtn svg { width: 18px; height: 18px; }
-  #search {
+  #search, #all-search {
     width: 100%; min-height: 44px; padding: 10px 14px; margin-bottom: 8px;
     border-radius: var(--radius); border: 1px solid var(--border); background: var(--card);
     color: var(--fg); font-size: 16px; /* 16px+ so iOS never zooms the field */
   }
-  #search::placeholder { color: var(--muted); }
+  #search::placeholder, #all-search::placeholder { color: var(--muted); }
   #patients { display: flex; flex-direction: column; }
   .patient-row {
     display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
@@ -188,18 +199,29 @@ const PAGE_HTML: &str = r##"<!doctype html>
   #patient-status.ok { color: var(--success); }
   #patient-status.err { color: var(--error); }
 
-  /* Photo grid. */
-  #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px; }
-  #grid button {
+  /* Patient detail lines (DOB, treating clinician, consent scope). */
+  #patient-detail { text-align: left; }
+  #patient-detail div { font-size: 13px; color: var(--muted); margin-top: 2px; max-width: none; }
+
+  /* Photo grid (per-patient and all-photos). */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px; }
+  .grid button {
     display: block; position: relative; width: 100%; aspect-ratio: 1; border-radius: 8px; overflow: hidden;
     background: var(--card);
   }
-  #grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* Body-map indicator: where on the patient this photo was taken. */
-  #grid .cell-fig {
+  .grid .cell-fig {
     position: absolute; right: 3px; bottom: 3px; width: 24px;
     background: rgba(0, 0, 0, 0.55); border-radius: 5px; padding: 2px;
     pointer-events: none;
+  }
+  /* Patient-name chip (all-photos grid, where rows mix patients). */
+  .grid .cell-name {
+    position: absolute; left: 3px; bottom: 3px; max-width: calc(100% - 34px);
+    padding: 2px 6px; border-radius: 5px; background: rgba(0, 0, 0, 0.55); color: #fafafa;
+    font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; pointer-events: none;
   }
   .empty { padding: 48px 12px; text-align: center; color: var(--muted); font-size: 15px; }
 
@@ -298,7 +320,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }
 </style>
 </head>
-<body class="theme-dark">
+<body class="light">
   <!-- Camera -->
   <main id="screen-cam" class="screen">
     <div id="screen-start" style="width:100%">
@@ -312,9 +334,11 @@ const PAGE_HTML: &str = r##"<!doctype html>
       <p id="conn">Connecting to Camog&hellip;</p>
       <label class="btn btn-primary" for="photo">Take photo</label>
       <input id="photo" type="file" accept="image/*" capture="environment" hidden>
+      <label class="btn btn-secondary" for="pick">Send from library</label>
+      <input id="pick" type="file" accept="image/*" multiple hidden>
     </div>
     <div id="screen-review" hidden style="width:100%">
-      <h1>Use this photo?</h1>
+      <h1 id="review-title">Use this photo?</h1>
       <img id="preview" alt="Photo to send">
       <button type="button" class="btn btn-primary" id="send">Send to Camog</button>
       <button type="button" class="btn btn-secondary" id="retake">Retake</button>
@@ -326,22 +350,35 @@ const PAGE_HTML: &str = r##"<!doctype html>
       <h1>Photo sent</h1>
       <p>Check Camog on your computer to add details and save it.</p>
       <button type="button" class="btn btn-primary" id="another">Take another photo</button>
-      <button type="button" class="btn btn-secondary" id="sent-lib" hidden>Open library</button>
+      <button type="button" class="btn btn-secondary" id="sent-lib" hidden>Open patients</button>
     </div>
     <p id="error"></p>
   </main>
 
-  <!-- Library: patient list -->
+  <!-- Patients: patient list -->
   <main id="screen-lib" class="screen" hidden>
     <div class="topbar">
-      <h2>Library</h2>
-      <button type="button" class="iconbtn" id="refresh" aria-label="Refresh library">
+      <h2>Patients</h2>
+      <button type="button" class="iconbtn" id="refresh" aria-label="Refresh patients">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
       </button>
     </div>
     <input id="search" type="search" placeholder="Search patients" autocomplete="off" aria-label="Search patients">
     <div id="patients" role="list"></div>
     <div id="lib-empty" class="empty" hidden>No patients to show yet.</div>
+  </main>
+
+  <!-- Photos: every patient's photos, newest first (like the desktop Photos page) -->
+  <main id="screen-all" class="screen" hidden>
+    <div class="topbar">
+      <h2>All photos</h2>
+      <button type="button" class="iconbtn" id="all-refresh" aria-label="Refresh photos">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+      </button>
+    </div>
+    <input id="all-search" type="search" placeholder="Search patient or body part" autocomplete="off" aria-label="Search photos">
+    <div id="all-grid" class="grid"></div>
+    <div id="all-empty" class="empty" hidden>No photos to show yet.</div>
   </main>
 
   <!-- Library: one patient's photos -->
@@ -357,6 +394,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
       </button>
     </div>
     <p id="patient-meta"></p>
+    <div id="patient-detail"></div>
     <div id="patient-actions">
       <button type="button" class="btn btn-outline" id="review-btn">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
@@ -368,7 +406,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
       </button>
     </div>
     <p id="patient-status" aria-live="polite"></p>
-    <div id="grid"></div>
+    <div id="grid" class="grid"></div>
   </main>
 
   <!-- Full-screen viewer -->
@@ -457,9 +495,13 @@ const PAGE_HTML: &str = r##"<!doctype html>
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
       Camera
     </button>
+    <button type="button" class="tab" id="tab-all" role="tab" aria-selected="false" hidden>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+      Photos
+    </button>
     <button type="button" class="tab" id="tab-lib" role="tab" aria-selected="false" hidden>
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-      Library
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Patients
     </button>
   </nav>
 
@@ -473,14 +515,14 @@ const PAGE_HTML: &str = r##"<!doctype html>
   function show(el, on) { el.hidden = !on; }
   function fail(msg) { $('error').textContent = msg; }
 
-  // ---- Theme (dark is the default; the choice persists on the phone) -----
+  // ---- Theme (light is the default; the choice persists on the phone) -----
   var THEME_KEY = 'camog-theme';
   function applyTheme(light) {
     document.body.classList.toggle('light', light);
     document.body.classList.toggle('theme-dark', !light);
     $('meta-theme').setAttribute('content', light ? '#f4f4f5' : '#0a0a0a');
   }
-  applyTheme(localStorage.getItem(THEME_KEY) === 'light');
+  applyTheme(localStorage.getItem(THEME_KEY) !== 'dark');
   $('theme').addEventListener('click', function () {
     var light = !document.body.classList.contains('light');
     applyTheme(light);
@@ -564,6 +606,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
     return fetch('library').then(function (res) { return res.json(); }).then(function (data) {
       lib = data.viewing ? data : null;
       show($('tab-lib'), !!lib);
+      show($('tab-all'), !!lib);
       show($('sent-lib'), !!lib);
       return lib;
     });
@@ -574,13 +617,17 @@ const PAGE_HTML: &str = r##"<!doctype html>
     show($('screen-cam'), tab === 'cam');
     show($('screen-lib'), tab === 'lib' && !state.patientId);
     show($('screen-patient'), tab === 'lib' && !!state.patientId);
+    show($('screen-all'), tab === 'all');
     $('tab-cam').setAttribute('aria-selected', tab === 'cam' ? 'true' : 'false');
     $('tab-lib').setAttribute('aria-selected', tab === 'lib' ? 'true' : 'false');
+    $('tab-all').setAttribute('aria-selected', tab === 'all' ? 'true' : 'false');
     show($('theme'), !viewerOpen() && !compareOpen());
     if (tab === 'lib') renderLibrary();
+    if (tab === 'all') renderAll();
   }
   $('tab-cam').addEventListener('click', function () { setTab('cam'); });
   $('tab-lib').addEventListener('click', function () { setTab('lib'); });
+  $('tab-all').addEventListener('click', function () { setTab('all'); });
 
   // ---- Connect + initial data --------------------------------------------
   // Relative URLs resolve under /t/<token>/, so the token never appears here.
@@ -595,20 +642,70 @@ const PAGE_HTML: &str = r##"<!doctype html>
   // Tell the desktop when the page goes away so it can clear "connected".
   addEventListener('pagehide', function () { navigator.sendBeacon('bye'); });
 
-  // ---- Capture flow (unchanged pipeline) ----------------------------------
+  // ---- Capture flow (one POST path for snaps and library picks) -----------
+  var flow = 'cam'; // where the photo under review came from: 'cam' | 'pick'
+  var pick = { queue: [], total: 0, done: 0 };
+
+  function reviewScreen() {
+    $('review-title').textContent = pick.total > 1
+      ? 'Use this photo? (' + (pick.done + 1) + ' of ' + pick.total + ')'
+      : 'Use this photo?';
+    $('retake').lastChild.textContent = flow === 'pick' ? 'Discard' : 'Retake';
+    camScreen('screen-review');
+  }
+
+  function sentScreen() {
+    $('another').lastChild.textContent =
+      flow === 'pick' ? 'Send more from library' : 'Take another photo';
+    camScreen('screen-sent');
+  }
+
   $('photo').addEventListener('change', function () {
     var file = this.files && this.files[0];
     this.value = '';
     if (!file) return;
     fail('');
+    flow = 'cam';
+    pick = { queue: [], total: 0, done: 0 };
     shrink(file).then(function (blob) {
       pending = blob;
       $('preview').src = URL.createObjectURL(blob);
-      camScreen('screen-review');
+      reviewScreen();
     }).catch(function () {
       fail('Could not read that photo. Try again.');
     });
   });
+
+  // Send from library: pick one or more existing photos and review them one
+  // at a time (like the desktop upload dialog), then send each down the same
+  // POST path as a camera snap.
+  $('pick').addEventListener('change', function () {
+    var files = Array.prototype.slice.call(this.files || []);
+    this.value = '';
+    if (!files.length) return;
+    fail('');
+    flow = 'pick';
+    pick = { queue: files, total: files.length, done: 0 };
+    prepNext();
+  });
+
+  function prepNext() {
+    var file = pick.queue.shift();
+    shrink(file).then(function (blob) {
+      pending = blob;
+      $('preview').src = URL.createObjectURL(blob);
+      reviewScreen();
+    }).catch(function () {
+      fail('Could not read one of those photos \u2014 it was skipped.');
+      advancePick();
+    });
+  }
+
+  function advancePick() {
+    pick.done += 1;
+    if (pick.queue.length) prepNext();
+    else sentScreen();
+  }
 
   function camScreen(id) {
     ['screen-start', 'screen-review', 'screen-sent'].forEach(function (s) {
@@ -616,7 +713,10 @@ const PAGE_HTML: &str = r##"<!doctype html>
     });
   }
 
-  $('retake').addEventListener('click', function () { camScreen('screen-start'); });
+  $('retake').addEventListener('click', function () {
+    if (flow === 'pick') advancePick();
+    else camScreen('screen-start');
+  });
   $('another').addEventListener('click', function () { camScreen('screen-start'); });
   $('sent-lib').addEventListener('click', function () { setTab('lib'); });
 
@@ -627,11 +727,12 @@ const PAGE_HTML: &str = r##"<!doctype html>
     fail('');
     fetch('photo', { method: 'POST', body: blob }).then(function (res) {
       if (!res.ok) throw new Error('status ' + res.status);
-      camScreen('screen-sent');
+      if (flow === 'pick') advancePick();
+      else sentScreen();
     }).catch(function () {
       pending = blob;
       fail('Could not send the photo.\nMake sure Camog is still open, then try again.');
-      camScreen('screen-review');
+      reviewScreen();
     });
   });
 
@@ -655,9 +756,16 @@ const PAGE_HTML: &str = r##"<!doctype html>
 
   function decode(file) {
     if (window.createImageBitmap) {
-      return createImageBitmap(file, { imageOrientation: 'from-image' });
+      // Some engines reject files their own <img> decoder accepts, so a
+      // bitmap failure falls back to <img> instead of failing the photo.
+      return createImageBitmap(file, { imageOrientation: 'from-image' })
+        .catch(function () { return decodeViaImg(file); });
     }
     // ponytail: pre-2021 iOS Safari has no createImageBitmap; img decode applies EXIF anyway.
+    return decodeViaImg(file);
+  }
+
+  function decodeViaImg(file) {
     return new Promise(function (resolve, reject) {
       var url = URL.createObjectURL(file);
       var img = new Image();
@@ -755,6 +863,17 @@ const PAGE_HTML: &str = r##"<!doctype html>
     return found;
   }
 
+  // Desktop-parity detail lines under the photo count.
+  function detailLines(p) {
+    var lines = [];
+    if (p.dob) lines.push('DOB ' + p.dob);
+    if (p.ownerName) lines.push('Treating clinician: ' + p.ownerName);
+    if (p.consentScopeLabel && p.consent !== 'none') {
+      lines.push('Consent: ' + p.consentScopeLabel);
+    }
+    return lines;
+  }
+
   function openPatient(patientId) {
     if (!lib) return;
     state.patientId = patientId;
@@ -762,6 +881,13 @@ const PAGE_HTML: &str = r##"<!doctype html>
     if (!p) return;
     $('patient-name').textContent = p.name;
     $('patient-meta').textContent = p.photoCount + (p.photoCount === 1 ? ' photo' : ' photos');
+    var detail = $('patient-detail');
+    detail.innerHTML = '';
+    detailLines(p).forEach(function (line) {
+      var el = document.createElement('div');
+      el.textContent = line;
+      detail.appendChild(el);
+    });
     $('patient-status').textContent = '';
     $('patient-status').className = '';
     renderPatientActions();
@@ -773,7 +899,8 @@ const PAGE_HTML: &str = r##"<!doctype html>
   function renderGrid() {
     var grid = $('grid');
     grid.innerHTML = '';
-    photosFor(state.patientId).forEach(function (e) {
+    var list = photosFor(state.patientId);
+    list.forEach(function (e) {
       var cell = document.createElement('button');
       cell.type = 'button';
       cell.setAttribute('aria-label', e.p.bodyPartLabel + ', ' + fmtDate(e.p.capturedAt));
@@ -786,7 +913,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
       var fig = bodyFigure(e.p.bodyPart, e.p.laterality);
       fig.classList.add('cell-fig');
       cell.appendChild(fig);
-      cell.addEventListener('click', function () { openViewer(e.i); });
+      cell.addEventListener('click', function () { openViewer(list, e.i, false); });
       grid.appendChild(cell);
     });
     updateCompareButton();
@@ -828,6 +955,57 @@ const PAGE_HTML: &str = r##"<!doctype html>
     });
   });
 
+  // Deliver the staged report. A browser tab can open the PDF directly, but
+  // a standalone home-screen app can neither spawn a tab (target="_blank" is
+  // a silent no-op there) nor render PDFs inline — so in that mode hand the
+  // bytes to the platform instead: the share sheet where it exists (iOS,
+  // also covering standalone), else a plain download (Android).
+  function downloadReport(blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'camog-case-report.pdf';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }
+
+  function openReport() {
+    var standalone = window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true;
+    if (!standalone) {
+      var a = document.createElement('a');
+      a.href = 'report';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return Promise.resolve();
+    }
+    return fetch('report').then(function (res) {
+      if (!res.ok) throw new Error('not ready');
+      return res.blob();
+    }).then(function (blob) {
+      var file = null;
+      try {
+        file = new File([blob], 'camog-case-report.pdf', { type: 'application/pdf' });
+      } catch (e) { /* pre-2020 engines: no File constructor */ }
+      if (!(file && navigator.share && navigator.canShare &&
+            navigator.canShare({ files: [file] }))) {
+        downloadReport(blob);
+        return;
+      }
+      return navigator.share({ files: [file], title: 'Case report' }).catch(function (err) {
+        if (err && err.name === 'AbortError') return; // user dismissed the sheet
+        // Share can fail transiently (e.g. the tap's user-activation expired
+        // while the report was still being prepared) — deliver the download
+        // instead of failing.
+        downloadReport(blob);
+      });
+    });
+  }
+
   var reportTimer = null;
   $('report-btn').addEventListener('click', function () {
     var p = currentPatient();
@@ -859,16 +1037,80 @@ const PAGE_HTML: &str = r##"<!doctype html>
       status.className = 'ok';
       status.textContent = 'Report ready.';
       btn.disabled = false;
-      var a = document.createElement('a');
-      a.href = 'report';
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      return openReport();
     }).catch(function () {
       status.className = 'err';
       status.textContent = 'Could not prepare the report. Try again.';
       btn.disabled = false;
+    });
+  });
+
+  // ---- All photos (mirrors the desktop Photos page) ------------------------
+  var allQuery = '';
+
+  function patientName(id) {
+    var name = '';
+    if (lib) lib.patients.forEach(function (x) { if (x.id === id) name = x.name; });
+    return name;
+  }
+
+  function allPhotos() {
+    if (!lib) return [];
+    return lib.photos
+      .map(function (p, i) { return { p: p, i: i }; })
+      .sort(function (a, b) { return b.p.capturedAt - a.p.capturedAt; });
+  }
+
+  function photosMatching(entries, query) {
+    var q = query.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter(function (e) {
+      return patientName(e.p.patientId).toLowerCase().indexOf(q) !== -1 ||
+        e.p.bodyPartLabel.toLowerCase().indexOf(q) !== -1 ||
+        (e.p.subpart || '').toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  function renderAll() {
+    if (!lib) return;
+    var entries = photosMatching(allPhotos(), allQuery);
+    var grid = $('all-grid');
+    grid.innerHTML = '';
+    entries.forEach(function (e) {
+      var cell = document.createElement('button');
+      cell.type = 'button';
+      cell.setAttribute(
+        'aria-label',
+        patientName(e.p.patientId) + ' \u2014 ' + e.p.bodyPartLabel + ', ' + fmtDate(e.p.capturedAt),
+      );
+      var img = document.createElement('img');
+      img.src = 'img/' + e.p.id + '.thumb.jpg';
+      img.alt = '';
+      img.loading = 'lazy';
+      cell.appendChild(img);
+      // Name chip: rows mix patients, so each photo says whose it is.
+      var name = document.createElement('span');
+      name.className = 'cell-name';
+      name.textContent = patientName(e.p.patientId);
+      cell.appendChild(name);
+      var fig = bodyFigure(e.p.bodyPart, e.p.laterality);
+      fig.classList.add('cell-fig');
+      cell.appendChild(fig);
+      cell.addEventListener('click', function () { openViewer(entries, e.i, true); });
+      grid.appendChild(cell);
+    });
+    show($('all-empty'), entries.length === 0);
+    show($('all-search'), lib.photos.length > 0);
+  }
+
+  $('all-search').addEventListener('input', function () {
+    allQuery = this.value;
+    renderAll();
+  });
+
+  $('all-refresh').addEventListener('click', function () {
+    fetchLibrary().then(function () { renderAll(); }).catch(function () {
+      fail('Could not refresh the photos. Is Camog still open?');
     });
   });
 
@@ -1080,13 +1322,15 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }
 
   // ---- Viewer -------------------------------------------------------------
-  var viewer = { photos: [], idx: 0, touchX: null, lastTap: 0 };
+  var viewer = { photos: [], idx: 0, names: false, touchX: null, lastTap: 0 };
 
-  function openViewer(id) {
-    viewer.photos = photosFor(state.patientId);
-    // `id` is the photo's index in the shared manifest (lib.photos), but
-    // viewer.photos is the per-patient subset in its own order — resolve by
-    // id, never by position, or the tap opens a different patient's photo.
+  // `list` is the calling grid's own photo list (one patient's, or the whole
+  // library); `id` is the photo's index in the shared manifest and is resolved
+  // by id, never by position, so the tap opens the photo the user saw.
+  // `names` prefixes the patient's name when the list mixes patients.
+  function openViewer(list, id, names) {
+    viewer.photos = list;
+    viewer.names = !!names;
     var idx = -1;
     viewer.photos.forEach(function (x, k) { if (x.i === id) idx = k; });
     if (idx < 0) return;
@@ -1110,7 +1354,9 @@ const PAGE_HTML: &str = r##"<!doctype html>
       if (n) { var pre = new Image(); pre.src = 'img/' + n.p.id + '.jpg'; }
     });
     $('viewer-count').textContent = (viewer.idx + 1) + ' of ' + viewer.photos.length;
-    $('viewer-title').textContent = e.p.bodyPartLabel + (e.p.subpart ? ' \u00b7 ' + e.p.subpart : '');
+    $('viewer-title').textContent =
+      (viewer.names ? patientName(e.p.patientId) + ' \u00b7 ' : '') +
+      e.p.bodyPartLabel + (e.p.subpart ? ' \u00b7 ' + e.p.subpart : '');
     $('viewer-date').textContent = 'Taken ' + fmtDate(e.p.capturedAt);
     var notes = $('viewer-notes');
     if (e.p.notes) {

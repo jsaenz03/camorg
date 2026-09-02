@@ -49,9 +49,12 @@ interface CompanionContextValue {
   url: string | null;
   phoneConnected: boolean;
   shareLibrary: boolean;
+  /** "Start automatically": the link starts itself when the app opens. */
+  remember: boolean;
   start: () => Promise<void>;
   stop: () => Promise<void>;
   setShareLibrary: (share: boolean) => Promise<void>;
+  setRemember: (remember: boolean) => Promise<void>;
 }
 
 const CompanionContext = createContext<CompanionContextValue | null>(null);
@@ -68,6 +71,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
   const [url, setUrl] = useState<string | null>(null);
   const [phoneConnected, setPhoneConnected] = useState(false);
   const [shareLibrary, setShareLibraryState] = useState(true);
+  const [remember, setRememberState] = useState(true);
 
   // Latest-state refs for the long-lived event listeners.
   const stateRef = useRef({ active, shareLibrary });
@@ -124,6 +128,16 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
       await companionService.unpublish().catch(() => {});
     }
   }, []);
+
+  const setRemember = useCallback(async (value: boolean) => {
+    setRememberState(value);
+    await invoke('set_phone_link_remember', { remember: value }).catch(() => {});
+    // Turning remember on with no live link starts one right away, so the
+    // toggle takes effect without waiting for the next app launch.
+    if (value && !stateRef.current.active) {
+      await start();
+    }
+  }, [start]);
 
   // Global listeners while the session is live. The capture screen's panel
   // handles camera photos when it is mounted; the phone's review/report
@@ -240,17 +254,31 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
   // A webview reload wipes this React state while the Rust server (and the
   // phone's pairing) lives on. Re-adopt the session on mount so the status,
   // idle watchdog and photo-relay listeners come back instead of silently
-  // dropping photos the phone sends.
+  // dropping photos the phone sends. With no server running and "start
+  // automatically" on, start the link: the pairing URL is persisted in the
+  // app data dir, so the phone's saved home-screen icon keeps working after
+  // an app restart without re-scanning the QR.
   useEffect(() => {
-    void invoke<RemoteCameraInfo | null>('remote_camera_active')
-      .then((info) => {
-        if (info) {
+    void (async () => {
+      const remembered = await invoke<boolean>('get_phone_link_remember')
+        .then((value) => {
+          setRememberState(value);
+          return value;
+        })
+        .catch(() => true);
+      try {
+        const existing = await invoke<RemoteCameraInfo | null>('remote_camera_active');
+        if (existing) {
           setActive(true);
-          setUrl(info.url);
+          setUrl(existing.url);
+        } else if (remembered) {
+          await start();
         }
-      })
-      .catch(() => {});
-  }, []);
+      } catch {
+        /* the link is simply not available (e.g. dev server without Tauri) */
+      }
+    })();
+  }, [start]);
 
   // Leaving the dashboard (sign-out) ends the session.
   useEffect(() => {
@@ -263,7 +291,17 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
 
   return (
     <CompanionContext.Provider
-      value={{ active, url, phoneConnected, shareLibrary, start, stop, setShareLibrary }}
+      value={{
+        active,
+        url,
+        phoneConnected,
+        shareLibrary,
+        remember,
+        start,
+        stop,
+        setShareLibrary,
+        setRemember,
+      }}
     >
       {children}
     </CompanionContext.Provider>

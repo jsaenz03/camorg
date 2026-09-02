@@ -27,7 +27,7 @@ import { Switch } from '@/components/ui/switch';
 import { useCompanion } from '@/components/companion/companion-provider';
 
 export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
-  const { active, url, phoneConnected, shareLibrary, start, stop, setShareLibrary } =
+  const { active, url, phoneConnected, shareLibrary, remember, start, stop, setShareLibrary, setRemember } =
     useCompanion();
   const [starting, setStarting] = useState(false);
 
@@ -111,6 +111,24 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
 
             <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
               <div className="space-y-0.5">
+                <Label htmlFor="remember-link" className="text-sm font-medium">
+                  Start automatically
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  The link starts itself whenever Camog opens, with the same
+                  address — your phone&rsquo;s saved home-screen icon works
+                  without re-scanning the code.
+                </p>
+              </div>
+              <Switch
+                id="remember-link"
+                checked={remember}
+                onCheckedChange={(v) => void setRemember(v)}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+              <div className="space-y-0.5">
                 <Label htmlFor="share-library" className="text-sm font-medium">
                   Share photo library
                 </Label>
@@ -130,7 +148,9 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
               Anyone with this code, on the same Wi-Fi, can take photos and
               open the shared library until you end the session. The
               connection is local and not encrypted, so end it when you&rsquo;re
-              done. It closes itself after 30 minutes of inactivity.
+              done. It closes itself after 30 minutes of inactivity, and with
+              Start automatically on it reopens (same address) next time
+              Camog starts.
             </p>
 
             <Button variant="destructive" className="w-full" onClick={() => void stop()}>

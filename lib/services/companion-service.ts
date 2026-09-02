@@ -67,6 +67,10 @@ class CompanionService {
       consent: consentStatus(p),
       review: reviewStatus(p, { warningDays, staleDays }),
       reviewDueAt: p.reviewDueAt?.getTime() ?? null,
+      // Desktop-parity detail lines on the phone's patient screen.
+      dob: formatDateOfBirth(p.dateOfBirth),
+      ownerName: p.ownerName,
+      consentScopeLabel: p.consentScope ? ConsentScopeLabels[p.consentScope] : null,
     }));
 
     const photoRows: CompanionPhoto[] = photos

@@ -30,10 +30,10 @@ writeFileSync(join(outDir, 'index.html'), page);
 
 // 2. Mock manifest + placeholder photos (1x2 JPEG stretched by CSS).
 const patients = [
-  { id: 'p1', name: 'Margot Whitfield', photoCount: 8, lastPhotoAt: Date.now() - 864e5 * 2, consent: 'valid', review: 'overdue', reviewDueAt: Date.now() - 864e5 * 3 },
-  { id: 'p2', name: 'Tane Ngata', photoCount: 8, lastPhotoAt: Date.now() - 864e5 * 9, consent: 'none', review: 'due-soon', reviewDueAt: Date.now() + 864e5 * 4 },
-  { id: 'p3', name: 'Priya Ramanathan', photoCount: 12, lastPhotoAt: Date.now() - 864e5 * 40, consent: 'valid', review: 'none', reviewDueAt: null },
-  { id: 'p4', name: 'Colin Bradshaw', photoCount: 2, lastPhotoAt: Date.now() - 864e5 * 120, consent: 'expired', review: 'stale', reviewDueAt: null },
+  { id: 'p1', name: 'Margot Whitfield', photoCount: 8, lastPhotoAt: Date.now() - 864e5 * 2, consent: 'valid', review: 'overdue', reviewDueAt: Date.now() - 864e5 * 3, dob: '12 Apr 1968', ownerName: 'Dr Sarah Chen', consentScopeLabel: 'Care team' },
+  { id: 'p2', name: 'Tane Ngata', photoCount: 8, lastPhotoAt: Date.now() - 864e5 * 9, consent: 'none', review: 'due-soon', reviewDueAt: Date.now() + 864e5 * 4, dob: '3 Sep 1990', ownerName: 'Dr Sarah Chen', consentScopeLabel: null },
+  { id: 'p3', name: 'Priya Ramanathan', photoCount: 12, lastPhotoAt: Date.now() - 864e5 * 40, consent: 'valid', review: 'none', reviewDueAt: null, dob: null, ownerName: 'Dr Mere Kingi', consentScopeLabel: 'Clinical use' },
+  { id: 'p4', name: 'Colin Bradshaw', photoCount: 2, lastPhotoAt: Date.now() - 864e5 * 120, consent: 'expired', review: 'stale', reviewDueAt: null, dob: '30 Jan 1955', ownerName: null, consentScopeLabel: 'Care team' },
 ];
 const spots = [
   ['left hand', 'hand', 'left'], ['right cheek', 'face', null], ['left cheek', 'face', null],
@@ -78,6 +78,13 @@ const jpeg = Buffer.from(
 );
 const pdf = Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<<>>\n%%EOF', 'utf8');
 
+// Photos the phone "picks from its library" in the send-from-library flow.
+const pick1 = join(outDir, 'pick-1.jpg');
+const pick2 = join(outDir, 'pick-2.jpg');
+writeFileSync(pick1, jpeg);
+writeFileSync(pick2, jpeg);
+let photoPosts = []; // byte lengths of each POST /photo body
+
 const server = createServer((req, res) => {
   const url = req.url;
   if (url.endsWith('/') || url.endsWith('index.html')) {
@@ -86,6 +93,14 @@ const server = createServer((req, res) => {
   } else if (url.endsWith('/library')) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(manifest));
+  } else if (url.endsWith('/photo') && req.method === 'POST') {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      photoPosts.push(Buffer.concat(chunks).length);
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('ok');
+    });
   } else if (url.includes('/img/')) {
     res.writeHead(200, { 'Content-Type': 'image/jpeg' });
     res.end(jpeg);
@@ -95,6 +110,14 @@ const server = createServer((req, res) => {
   } else if (url.endsWith('/hello')) {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('ok');
+  } else if (url.endsWith('/manifest.webmanifest')) {
+    res.writeHead(200, { 'Content-Type': 'application/manifest+json' });
+    res.end(JSON.stringify({
+      name: 'Camog · Clinical Photos',
+      short_name: 'Camog',
+      display: 'standalone',
+      icons: [{ src: 'logo.png', sizes: '256x256', type: 'image/png', purpose: 'any' }],
+    }));
   } else if (url.endsWith('/logo.png')) {
     res.writeHead(200, { 'Content-Type': 'image/png' });
     res.end(jpeg);
@@ -134,6 +157,22 @@ const shot = async (name) => {
 await pageC.goto(base, { waitUntil: 'networkidle' });
 await shot('1-camera');
 
+// Send from library: pick two existing photos, review one at a time (like
+// the desktop upload dialog), send each down the same POST path as a snap.
+await pageC.setInputFiles('#pick', [pick1, pick2]);
+await pageC.waitForFunction(() =>
+  document.getElementById('review-title').textContent === 'Use this photo? (1 of 2)',
+);
+const discardLabel = await pageC.textContent('#retake');
+await pageC.click('#send');
+await pageC.waitForFunction(() =>
+  document.getElementById('review-title').textContent === 'Use this photo? (2 of 2)',
+);
+await pageC.click('#send');
+await pageC.waitForFunction(() => !document.getElementById('screen-sent').hidden);
+const sentLabel = await pageC.textContent('#another');
+await shot('1b-send-library');
+
 await pageC.click('#tab-lib');
 await pageC.waitForTimeout(300);
 await shot('2-library');
@@ -146,6 +185,8 @@ await pageC.fill('#search', '');
 await pageC.click('.patient-row:first-child');
 await pageC.waitForTimeout(400);
 await shot('4-patient-grid');
+// Desktop-parity detail lines under the photo count.
+const patientDetail = await pageC.textContent('#patient-detail');
 
 // Mark reviewed: mock accepts p1; the phone should confirm and refetch.
 await pageC.click('#review-btn');
@@ -213,19 +254,47 @@ const lastSrc = await pageC.evaluate(() =>
 const lastCount = await pageC.textContent('#viewer-count');
 await shot('8b-viewer-oldest');
 
-// Light theme.
+// Photos tab (desktop Photos-page parity): every patient's photos newest
+// first, searchable, patient-name chip on each cell, viewer titled with the
+// patient's name.
 await pageC.click('#viewer-back');
 await pageC.waitForTimeout(200);
+await pageC.click('#tab-all');
+await pageC.waitForTimeout(400);
+await shot('8c-photos');
+const allCells = await pageC.evaluate(() => document.querySelectorAll('#all-grid button').length);
+const allChips = await pageC.evaluate(() => document.querySelectorAll('#all-grid .cell-name').length);
+const allFigs = await pageC.evaluate(() => document.querySelectorAll('#all-grid .cell-fig').length);
+await pageC.fill('#all-search', 'margot');
+await pageC.waitForTimeout(200);
+const filteredCells = await pageC.evaluate(() => document.querySelectorAll('#all-grid button').length);
+await pageC.fill('#all-search', '');
+await pageC.click('#all-grid button:first-child');
+await pageC.waitForTimeout(400);
+const allViewerTitle = await pageC.textContent('#viewer-title');
+const allViewerCount = await pageC.textContent('#viewer-count');
+await shot('8d-photos-viewer');
+
+// Light theme is the default on a fresh phone (closing the photos viewer
+// returns to the Photos tab); the toggle flips to dark and back.
+await pageC.click('#viewer-back');
+await pageC.waitForTimeout(200);
+const lightDefault = await pageC.evaluate(() => document.body.classList.contains('light'));
 await pageC.click('#theme');
 await pageC.waitForTimeout(200);
-const lightOn = await pageC.evaluate(() => document.body.classList.contains('light'));
+const darkOn = await pageC.evaluate(() => !document.body.classList.contains('light'));
+await pageC.click('#theme');
+await pageC.waitForTimeout(200);
+const backToLight = await pageC.evaluate(() => document.body.classList.contains('light'));
 await pageC.click('#tab-cam');
 await pageC.waitForTimeout(200);
 await shot('9-light-theme');
-const backToDark = await pageC.evaluate(() => {
-  document.getElementById('theme').click();
-  return !document.body.classList.contains('light');
-});
+
+// Home-screen app (PWA): the manifest route serves, and the page links it
+// plus the apple-touch-icon so both platforms can pin Camog with its logo.
+const manifestOk = await pageC.evaluate(async () => (await fetch('manifest.webmanifest')).ok);
+const pwaLinked = page.includes('rel="manifest" href="manifest.webmanifest"') &&
+  page.includes('rel="apple-touch-icon" href="logo.png"');
 
 // Case report: after the theme check we are back on the patient screen
 // (closing the viewer keeps the patient open), so request it directly.
@@ -234,6 +303,36 @@ await pageC.waitForTimeout(200);
 await pageC.click('#report-btn');
 await pageC.waitForTimeout(2500);
 const reportStatus = await pageC.textContent('#patient-status');
+
+// Home-screen app: in standalone mode a PWA cannot open a new tab (the old
+// target="_blank" delivery silently did nothing there), so the page must
+// detect standalone and hand the PDF to the platform — a real download here.
+const standalonePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+await standalonePage.addInitScript(() => {
+  const orig = window.matchMedia;
+  window.matchMedia = function (query) {
+    const m = orig.call(window, query);
+    if (String(query).includes('display-mode: standalone')) {
+      return {
+        matches: true, media: query, onchange: null,
+        addListener() {}, removeListener() {},
+        addEventListener() {}, removeEventListener() {},
+        dispatchEvent() { return false; },
+      };
+    }
+    return m;
+  };
+});
+await standalonePage.goto(base, { waitUntil: 'networkidle' });
+await standalonePage.click('#tab-lib');
+await standalonePage.waitForTimeout(200);
+await standalonePage.click('.patient-row:first-child');
+await standalonePage.waitForTimeout(300);
+const downloadPromise = standalonePage.waitForEvent('download', { timeout: 10000 });
+await standalonePage.click('#report-btn');
+const reportDownload = await downloadPromise;
+const standaloneReportStatus = await standalonePage.textContent('#patient-status');
+await standalonePage.close();
 
 await browser.close();
 server.close();
@@ -250,8 +349,18 @@ const checks = [
   ['viewer opens the tapped photo, not the manifest-position one', lastSrc === 'img/ph15.jpg' && lastCount === '8 of 8'],
   ['viewer metadata no longer carries the diagram', viewerFigs === 0],
   ['blur toggle engages', blurred === true],
-  ['light theme toggles on and off', lightOn === true && backToDark === true],
+  ['light theme is the default and toggles to dark and back', lightDefault === true && darkOn === true && backToLight === true],
   ['report prepared + confirmed', reportStatus.includes('Report ready')],
+  ['send-from-library reviews each picked photo', discardLabel === 'Discard' && sentLabel === 'Send more from library'],
+  ['picked photos POST down the capture pipeline', photoPosts.length === 2 && photoPosts.every((n) => n > 0)],
+  ['patient detail shows DOB, clinician and consent scope',
+    ['DOB 12 Apr 1968', 'Dr Sarah Chen', 'Consent: Care team'].every((s) => patientDetail.includes(s))],
+  ['photos tab lists every photo with patient names', allCells === 16 && allChips === 16 && allFigs > 0],
+  ['photos search filters by patient', filteredCells === 8],
+  ['photos viewer shows the patient name', allViewerTitle.startsWith('Margot Whitfield') && allViewerCount === '1 of 16'],
+  ['home-screen app: manifest serves and PWA links are in the page', manifestOk === true && pwaLinked === true],
+  ['standalone report downloads instead of opening a blocked tab',
+    reportDownload.suggestedFilename() === 'camog-case-report.pdf' && standaloneReportStatus.includes('Report ready')],
 ];
 let failures = 0;
 for (const [name, ok] of checks) {

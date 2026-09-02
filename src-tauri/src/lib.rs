@@ -216,6 +216,8 @@ pub fn run() {
       remote_camera::stop_remote_camera,
       remote_camera::remote_camera_active,
       remote_camera::remote_camera_idle_ms,
+      remote_camera::get_phone_link_remember,
+      remote_camera::set_phone_link_remember,
       remote_camera::update_remote_library,
       remote_camera::clear_remote_library,
       remote_camera::stage_remote_report,

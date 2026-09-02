@@ -102,20 +102,30 @@ hooks are agnostic to the storage backend.
 **Sidebar → Phone link** opens a QR pairing that turns a phone (same Wi-Fi)
 into a second screen for the signed-in clinician:
 
-- **Camera** — the original tethered capture: snap on the phone, review and
-  save on the desktop. Capture opens as a dialog over whatever page you are
-  on (a patient's timeline prefills their details), and photos that arrive
-  while no capture is open (or while another photo is mid-review) are staged
-  in a "From your phone" tray inside it — open each one to save it or delete
-  it, and anything left unclaimed for a week is dropped automatically.
-- **Library** (toggleable, on by default) — the phone mirrors what you can
-  open on the PC: searchable patient list with review/consent flags,
-  per-patient photo grids, and a full-screen viewer with swipe navigation,
-  double-tap zoom, metadata and notes. Every thumbnail carries a small body-map
-  badge (bottom-right) showing where on the patient the photo was taken,
+- **Camera** — the original tethered capture: snap on the phone, or **send
+  existing photos from the phone's library** (multi-select; each photo is
+  reviewed one at a time, like the desktop upload dialog). Either way you
+  review and save on the desktop. Capture opens as a dialog over whatever
+  page you are on (a patient's timeline prefills their details), and photos
+  that arrive while no capture is open (or while another photo is
+  mid-review) are staged in a "From your phone" tray inside it — open each
+  one to save it or delete it, and anything left unclaimed for a week is
+  dropped automatically.
+- **Patients** (toggleable, on by default) — the phone mirrors what you can
+  open on the PC: searchable patient list with review/consent flags and
+  patient details (DOB, treating clinician, consent scope), per-patient
+  photo grids, and a full-screen viewer with swipe navigation, double-tap
+  zoom, metadata and notes. Every thumbnail carries a small body-map badge
+  (bottom-right) showing where on the patient the photo was taken,
   left/right aware — same on the desktop timeline and dashboard tiles.
+- **Photos** — the phone twin of the desktop Photos page: every patient's
+  photos in one newest-first grid, searchable by patient or body part, each
+  thumbnail naming the patient; the viewer titles photos with the patient's
+  name and swipes across the whole library.
 - **Review actions** — mark a patient reviewed, request a PDF case report
-  (prepared by the desktop, then downloadable), compare photos exactly like
+  (prepared by the desktop, then delivered to the phone — opened in the
+  browser, downloaded or shared to Files from the home-screen app), compare
+  photos exactly like
   the desktop dialog (Earlier/Later pickers, side-by-side or overlay with an
   opacity slider, shared zoom and pan — pinch or drag either image and both
   move together), blur a photo for privacy, and switch the interface light or
@@ -123,10 +133,16 @@ into a second screen for the signed-in clinician:
 
 The phone mirrors your access exactly — it uses the same access-filtered
 queries as the desktop UI and only ever sees patients you can see; review and
-report requests run through the same permission-checked services. The link
-lives until you press **End session**, closes itself after 30 minutes of
-inactivity, and sessions are audited. The connection is local and
-unencrypted, so end it when you are done.
+report requests run through the same permission-checked services. The pairing
+address is persistent: **pair once, and the phone stays paired** — the link
+can survive app restarts, and with **Start automatically** on (the default)
+it opens itself whenever Camog starts, so nobody scans the QR again. The
+phone can **add Camog to its home screen** (with the app logo) from its
+browser menu and launch it like an app. The link closes itself after 30
+minutes of inactivity, ending the session from the dialog stops it now, and
+sessions are audited. The connection is local and unencrypted, so end it
+when you are done. The phone interface starts in light mode; dark is one
+tap away and remembered per phone.
 
 Body parts on paired regions (arms, hands, legs, feet) record the patient's
 side — pick it on the body map or with the Side control in the capture form

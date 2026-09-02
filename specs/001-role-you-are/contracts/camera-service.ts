@@ -73,6 +73,9 @@ export interface CompanionPatient {
   consent: 'none' | 'valid' | 'expired';
   review: 'none' | 'scheduled' | 'due-soon' | 'overdue' | 'stale';
   reviewDueAt: number | null;      // Unix ms of the scheduled review
+  dob: string | null;              // Pre-formatted display DOB ("24 Jan 1990")
+  ownerName: string | null;        // Treating clinician's display name
+  consentScopeLabel: string | null; // Consent scope label ("Care team"), when consented
 }
 
 /** A photo row on the phone (bytes are served separately by filename). */
