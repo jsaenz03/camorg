@@ -88,6 +88,25 @@ const section = readFileSync(
 );
 assert.match(section, /handleView/, 'file rows open the in-app preview');
 assert.match(section, /<iframe/, 'PDFs render inside the preview dialog');
+assert.match(
+  section,
+  /createObjectURL/,
+  'preview loads bytes as a blob URL (base64 data: URLs render blank in the webviews)',
+);
+
+// The packaged CSP must let frames load blob: URLs — without a frame-src
+// grant the PDF preview falls back to default-src 'self' and renders blank
+// ("only photos can be viewed"). The preview only ever frames blob: URLs,
+// so the grant stays least-privilege: 'self' blob:.
+const tauriConf = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8'));
+for (const key of ['csp', 'devCsp']) {
+  const csp = tauriConf.app.security[key];
+  assert.ok(csp, `tauri.conf.json must define app.security.${key}`);
+  const frameSrc = /frame-src\s+([^;]+)(?:;|$)/.exec(csp)?.[1];
+  assert.ok(frameSrc, `${key} must grant frame-src for the PDF preview iframe`);
+  assert.match(frameSrc, /'self'/, `${key} frame-src must keep 'self'`);
+  assert.match(frameSrc, /blob:/, `${key} frame-src must allow blob: URLs`);
+}
 
 const dialog = readFileSync(
   join(root, 'components/photo/photo-detail-dialog.tsx'),

@@ -12,7 +12,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import {
   Download,
@@ -50,14 +50,11 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Chunked base64 so a multi-MB PDF does not blow the call stack. */
-function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
-  let binary = '';
-  const chunkSize = 0x8000; // 32k
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return `data:${mime};base64,${btoa(binary)}`;
+/** Blob URL from raw bytes: the webviews' PDF viewers render blob: frames
+ *  reliably where base64 data: URLs come up blank, and this skips building
+ *  a 4/3-size base64 string for a multi-MB PDF. */
+function bytesToBlobUrl(bytes: Uint8Array<ArrayBuffer>, mime: string): string {
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
 }
 
 export function ResultFilesSection({
@@ -80,6 +77,31 @@ export function ResultFilesSection({
   const [preview, setPreview] = useState<
     { kind: 'pdf' | 'image'; url: string } | { kind: 'text'; text: string } | null
   >(null);
+  // The preview's blob URL, so it can be revoked when replaced or closed.
+  const objectUrlRef = useRef<string | null>(null);
+  // Bumped on every view/close: a readFileBytes that lands after its caller
+  // was superseded must not write stale content into the dialog.
+  const viewSeqRef = useRef(0);
+
+  // Unmount (photo dialog closed) must release the previewed file's bytes —
+  // an unreleased blob URL pins them for the life of the webview.
+  useEffect(
+    () => () => {
+      viewSeqRef.current++;
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+    },
+    [],
+  );
+
+  function revokeObjectUrl() {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -173,21 +195,34 @@ export function ResultFilesSection({
 
   /** Read the file in place and stage content for the preview dialog. */
   async function handleView(file: ResultFileRecord) {
+    const seq = ++viewSeqRef.current;
+    revokeObjectUrl();
     setViewing(file);
     setPreview(null);
     const kind = resultFilePreviewKind(file.originalName);
     if (kind === 'none') return; // fallback panel shows immediately
     try {
       const { bytes, mimeType } = await resultFileService.readFileBytes(file.id);
+      if (seq !== viewSeqRef.current) return; // superseded by a close or newer view
       if (kind === 'text') {
         setPreview({ kind: 'text', text: new TextDecoder().decode(bytes) });
       } else {
-        setPreview({ kind, url: bytesToDataUrl(bytes, mimeType) });
+        const url = bytesToBlobUrl(bytes, mimeType);
+        objectUrlRef.current = url;
+        setPreview({ kind, url });
       }
     } catch (err) {
+      if (seq !== viewSeqRef.current) return;
       toast.error(errorText(err));
       setViewing(null);
     }
+  }
+
+  function closePreview() {
+    viewSeqRef.current++;
+    setViewing(null);
+    setPreview(null);
+    revokeObjectUrl();
   }
 
   return (
@@ -287,7 +322,7 @@ export function ResultFilesSection({
 
       {/* In-app preview: renders straight from the stored bytes — nothing is
           written to disk, so no duplicate files pile up in Downloads. */}
-      <Dialog open={viewing !== null} onOpenChange={(o) => !o && setViewing(null)}>
+      <Dialog open={viewing !== null} onOpenChange={(o) => !o && closePreview()}>
         <DialogContent className="flex h-[90dvh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b px-4 py-3 sm:px-6">
             <DialogTitle className="truncate pr-8 text-base" title={viewing?.originalName}>

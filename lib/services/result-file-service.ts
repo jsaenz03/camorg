@@ -218,7 +218,7 @@ class ResultFileService {
    */
   async readFileBytes(
     id: string,
-  ): Promise<{ bytes: Uint8Array; mimeType: string; originalName: string }> {
+  ): Promise<{ bytes: Uint8Array<ArrayBuffer>; mimeType: string; originalName: string }> {
     const db = await getDB();
     const rows = await db.select<Record<string, unknown>[]>(
       'SELECT * FROM result_files WHERE id = $1 AND is_deleted = 0',
