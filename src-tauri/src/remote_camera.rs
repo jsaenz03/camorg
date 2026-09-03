@@ -125,6 +125,36 @@ fn pairing_token(app: &AppHandle) -> Result<String, String> {
   Ok(token)
 }
 
+/// The tether port sits next to the token (phone-link-port) so the whole
+/// pairing URL — IP, port and token — is stable across restarts. Without a
+/// pinned port every launch would bind an ephemeral one and the phone's
+/// saved home-screen icon would point at a dead endpoint. Unprivileged range
+/// only; the first launch binds an ephemeral port and pins whatever it got.
+/// A corrupt file reads as "no pin" — the link still starts and re-pins.
+fn pinned_port(app: &AppHandle) -> Result<Option<u16>, String> {
+  let dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("could not resolve the app data dir: {e}"))?;
+  let port = std::fs::read_to_string(dir.join("phone-link-port"))
+    .ok()
+    .and_then(|text| parse_saved_port(&text));
+  Ok(port)
+}
+
+fn parse_saved_port(text: &str) -> Option<u16> {
+  text.trim().parse::<u16>().ok().filter(|p| *p >= 1024)
+}
+
+fn pin_port(app: &AppHandle, port: u16) -> Result<(), String> {
+  let dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("could not resolve the app data dir: {e}"))?;
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  std::fs::write(dir.join("phone-link-port"), port.to_string()).map_err(|e| e.to_string())
+}
+
 /// "Start automatically" preference (the Phone link dialog's toggle): when
 /// on, the link starts itself whenever the app opens, so a doctor who has
 /// paired once never scans the QR again. On by default.
@@ -183,6 +213,32 @@ fn lan_ip() -> IpAddr {
     .and_then(|s| s.local_addr())
     .map(|a| a.ip())
     .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+}
+
+/// Bind the tether listener. SO_REUSEADDR (Unix only) lets an app restart
+/// rebind the pinned port even while the previous session's phone
+/// connections are still lingering in TIME_WAIT; without it a quick restart
+/// would EADDRINUSE itself off the pinned port and force a re-pair.
+/// ponytail: Windows' SO_REUSEADDR would also hijack a *live* listener, so
+/// there we bind plain and let a busy port fall back to a fresh one.
+fn bind_listener(ip: IpAddr, port: u16) -> std::io::Result<std::net::TcpListener> {
+  let addr = std::net::SocketAddr::new(ip, port);
+  #[cfg(unix)]
+  {
+    let socket = socket2::Socket::new(
+      socket2::Domain::for_address(addr),
+      socket2::Type::STREAM,
+      Some(socket2::Protocol::TCP),
+    )?;
+    socket.set_reuse_address(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(16)?;
+    Ok(socket.into())
+  }
+  #[cfg(not(unix))]
+  {
+    std::net::TcpListener::bind(addr)
+  }
 }
 
 fn content_type(value: &str) -> Header {
@@ -429,16 +485,40 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   stop_remote_camera().await;
 
   let ip = lan_ip();
-  let server = Server::http((ip, 0)).map_err(|e| {
-    let msg = format!("failed to start phone-camera server: {e}");
-    crate::diagnostics::record(crate::diagnostics::Level::Error, "phone-camera", &msg, None);
-    msg
-  })?;
-  let port = server.server_addr().to_ip().map(|a| a.port()).ok_or_else(|| {
-    let msg = "failed to determine phone-camera server port".to_string();
-    crate::diagnostics::record(crate::diagnostics::Level::Error, "phone-camera", &msg, None);
-    msg
-  })?;
+  // Bind the pinned port first so last session's URL keeps working; only if
+  // something else grabbed it fall back to an ephemeral port (and re-pin, so
+  // the new URL is the stable one going forward).
+  let pinned = pinned_port(&app)?;
+  let (server, port) = match pinned.and_then(|p| {
+    let listener = bind_listener(ip, p).ok()?;
+    Server::from_listener(listener, None).ok().map(|server| (server, p))
+  }) {
+    Some((server, port)) => (server, port),
+    None => {
+      let start_fail = |e: String| {
+        let msg = format!("failed to start phone-camera server: {e}");
+        crate::diagnostics::record(crate::diagnostics::Level::Error, "phone-camera", &msg, None);
+        msg
+      };
+      let listener = bind_listener(ip, 0).map_err(|e| start_fail(e.to_string()))?;
+      let server = Server::from_listener(listener, None).map_err(|e| start_fail(e.to_string()))?;
+      let port = server.server_addr().to_ip().map(|a| a.port()).ok_or_else(|| {
+        let msg = "failed to determine phone-camera server port".to_string();
+        crate::diagnostics::record(crate::diagnostics::Level::Error, "phone-camera", &msg, None);
+        msg
+      })?;
+      if pinned.is_some() {
+        crate::diagnostics::record(
+          crate::diagnostics::Level::Info,
+          "phone-camera",
+          "The saved phone-link port was busy, so the link moved to a new address — re-scan the QR code once.",
+          None,
+        );
+      }
+      pin_port(&app, port)?;
+      (server, port)
+    }
+  };
   let token = pairing_token(&app)?;
   let url = format!("http://{ip}:{port}/t/{token}/");
   let server = Arc::new(server);
@@ -633,6 +713,56 @@ mod tests {
     assert!(!is_safe_filename("a\\b.jpg"));
     assert!(!is_safe_filename("photo name.jpg"));
     assert!(!is_safe_filename("café.jpg"));
+  }
+
+  // The saved port file is read from disk on every launch; corrupt or
+  // privileged values must read as "no pin" (start + re-pin) rather than
+  // breaking the link or asking the OS for a port it can't have.
+  #[test]
+  fn saved_port_gate() {
+    use super::parse_saved_port;
+    assert_eq!(parse_saved_port("49152"), Some(49152));
+    assert_eq!(parse_saved_port("  8080\n"), Some(8080));
+    assert_eq!(parse_saved_port("65535"), Some(65535));
+    assert_eq!(parse_saved_port(""), None);
+    assert_eq!(parse_saved_port("not-a-port"), None);
+    assert_eq!(parse_saved_port("80"), None);
+    assert_eq!(parse_saved_port("0"), None);
+    assert_eq!(parse_saved_port("70000"), None);
+    assert_eq!(parse_saved_port("-1"), None);
+  }
+
+  // The pinned-port promise: an app quit leaves TIME_WAIT sockets on the
+  // tether port (server-closed phone connections), and the next launch must
+  // still rebind that exact port. SO_REUSEADDR is what makes this pass;
+  // a plain std bind fails with EADDRINUSE while TIME_WAIT lingers.
+  #[test]
+  fn pinned_port_rebinds_over_time_wait() {
+    use super::bind_listener;
+    let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let listener = bind_listener(ip, 0).expect("ephemeral bind");
+    let port = listener.local_addr().unwrap().port();
+    // One served connection, closed from the server side first — exactly
+    // what the previous session leaves behind after phone traffic.
+    let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (conn, _) = listener.accept().unwrap();
+    drop(conn);
+    drop(client);
+    drop(listener);
+    let rebound = bind_listener(ip, port).expect("pinned port must rebind over TIME_WAIT");
+    assert_eq!(rebound.local_addr().unwrap().port(), port);
+  }
+
+  // Persistent pairing on the phone side: a saved home-screen app opened
+  // while the desktop is closed (or mid-restart) keeps pinging until the
+  // link answers, heartbeats so the desktop's idle watchdog spares an open
+  // page, and probes immediately when brought back to the foreground.
+  #[test]
+  fn phone_page_reconnects_and_heartbeats() {
+    assert!(PAGE_HTML.contains("setInterval(probe, 3000)"));
+    assert!(PAGE_HTML.contains("setInterval(beat, 60000)"));
+    assert!(PAGE_HTML.contains("addEventListener('visibilitychange'"));
+    assert!(PAGE_HTML.contains("function disconnected()"));
   }
 
   // Reports from a home-screen app: a standalone PWA cannot open a new tab

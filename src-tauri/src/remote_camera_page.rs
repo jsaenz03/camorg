@@ -631,13 +631,42 @@ const PAGE_HTML: &str = r##"<!doctype html>
 
   // ---- Connect + initial data --------------------------------------------
   // Relative URLs resolve under /t/<token>/, so the token never appears here.
-  fetch('hello').then(function () {
-    $('conn').textContent = 'Connected. Take the photo, review it, then send it.';
-    $('conn').style.color = 'var(--success)';
-  }).catch(function () {
+  // The saved home-screen app may open while the desktop is closed or still
+  // starting, so keep pinging until Camog answers (the pinned port and token
+  // survive desktop restarts). Once connected, a slow heartbeat keeps the
+  // desktop's idle watchdog from ending the session while the page is open,
+  // and doubles as the loss detector that re-arms the ping loop.
+  var connTimer = null;
+  var beatTimer = null;
+  function probe() {
+    fetch('hello').then(function () {
+      if (connTimer) { clearInterval(connTimer); connTimer = null; }
+      $('conn').textContent = 'Connected. Take the photo, review it, then send it.';
+      $('conn').style.color = 'var(--success)';
+      fail('');
+      if (!beatTimer) beatTimer = setInterval(beat, 60000);
+      fetchLibrary().catch(function () { /* library stays hidden; capture still works */ });
+    }).catch(disconnected);
+  }
+  function beat() {
+    // Hidden pages are throttled anyway and the desktop counts them idle on
+    // purpose, so only a visible page keeps the link warm.
+    if (document.hidden) return;
+    fetch('hello').catch(disconnected);
+  }
+  function disconnected() {
+    if (beatTimer) { clearInterval(beatTimer); beatTimer = null; }
+    $('conn').textContent = 'Connecting to Camog\u2026';
+    $('conn').style.color = '';
     fail('Cannot reach Camog.\nMake sure the Camog app is open and your phone is on the same Wi-Fi.');
+    if (!connTimer) connTimer = setInterval(probe, 3000);
+  }
+  probe();
+  // Coming back to a page that outlived a desktop restart: probe right away
+  // instead of waiting for the next tick.
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && !beatTimer) probe();
   });
-  fetchLibrary().catch(function () { /* library stays hidden; capture still works */ });
 
   // Tell the desktop when the page goes away so it can clear "connected".
   addEventListener('pagehide', function () { navigator.sendBeacon('bye'); });

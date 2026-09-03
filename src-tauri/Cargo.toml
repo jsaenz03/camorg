@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.4.3"
+version = "0.4.5"
 description = "Camog — Clinical Photo Documentation"
 authors = ["Camog"]
 license = ""
@@ -28,6 +28,7 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 tiny_http = "0.12"
+socket2 = "0.6"
 base64 = "0.22"
 rand = "0.8"
 krilla = "0.8"

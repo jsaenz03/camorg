@@ -28,7 +28,9 @@ TypeScript 5.x with Next.js 15.5.4, React 19.1.0: Follow standard conventions
   (tag `edge`) with all four installers — the GitHub Releases page always
   reflects the latest packaged build. The `edge` release is recreated each run,
   never accumulated.
-- Stable releases: bump `version` in both `package.json` and
-  `src-tauri/tauri.conf.json`, commit, then publish a GitHub Release tagged
-  `vX.Y.Z` — CI builds and attaches the installers to it.
+- Stable releases: bump `version` in **all three** of `package.json`,
+  `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` (the last drives
+  CARGO_PKG_VERSION, shown in Settings → Diagnostics; missing it ships an app
+  that reports the previous version), commit, then publish a GitHub Release
+  tagged `vX.Y.Z` — CI builds and attaches the installers to it.
 <!-- MANUAL ADDITIONS END -->
