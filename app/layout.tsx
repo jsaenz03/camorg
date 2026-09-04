@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { DiagnosticsInit } from "@/components/diagnostics-init";
+import { PhotoCryptoInit } from "@/components/photo-crypto-init";
 import { BrandingProvider } from "@/components/branding-boot";
 import "./globals.css";
 
@@ -39,6 +40,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <ErrorBoundary>
             <DiagnosticsInit />
+            <PhotoCryptoInit />
             <BrandingProvider>
               <LicenceProvider>
                 <AuthProvider>

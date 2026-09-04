@@ -49,6 +49,7 @@ import { accessService } from '@/lib/services/access-service';
 import { auditService } from '@/lib/services/audit-service';
 import { normalizeLesionGroup } from '@/lib/utils/lesion-group';
 import { writeFile, readFile } from '@tauri-apps/plugin-fs';
+import { decryptPhotoBytes, encryptPhotoBytes } from '@/lib/utils/photo-crypto';
 import {
   NotFoundError,
   ValidationError,
@@ -155,9 +156,10 @@ export class PhotoService implements IPhotoService {
       const imagePath = await photoPath(imageFilename);
       const thumbPath = await photoPath(thumbFilename);
 
-      // Write JPEGs to disk (binary-safe via Uint8Array).
-      await writeFile(imagePath, new Uint8Array(await storedBlob.arrayBuffer()));
-      await writeFile(thumbPath, new Uint8Array(await thumbnailBlob.arrayBuffer()));
+      // Write encrypted JPEGs to disk (binary-safe via Uint8Array). The
+      // AES-GCM key lives in the OS credential store, never in the webview.
+      await writeFile(imagePath, await encryptPhotoBytes(new Uint8Array(await storedBlob.arrayBuffer())));
+      await writeFile(thumbPath, await encryptPhotoBytes(new Uint8Array(await thumbnailBlob.arrayBuffer())));
 
       const now = new Date();
       const nowMs = now.getTime();
@@ -558,8 +560,8 @@ export class PhotoService implements IPhotoService {
     const thumbnailBlob = await generateThumbnail(annotated, 200);
     const imagePath = await photoPath(`${newId}.jpg`);
     const thumbPath = await photoPath(`${newId}.thumb.jpg`);
-    await writeFile(imagePath, new Uint8Array(await annotated.arrayBuffer()));
-    await writeFile(thumbPath, new Uint8Array(await thumbnailBlob.arrayBuffer()));
+    await writeFile(imagePath, await encryptPhotoBytes(new Uint8Array(await annotated.arrayBuffer())));
+    await writeFile(thumbPath, await encryptPhotoBytes(new Uint8Array(await thumbnailBlob.arrayBuffer())));
 
     const mimeType = annotated.type || 'image/jpeg';
     const nowMs = Date.now();
@@ -757,7 +759,8 @@ export class PhotoService implements IPhotoService {
     const relPath = useThumbnail ? row.thumbnail_path : row.image_path;
     const dir = await getPhotosDir();
     const path = await join(dir, relPath);
-    const bytes = await readFile(path);
+    // Encrypted at rest; legacy plaintext passes through Rust unchanged.
+    const bytes = await decryptPhotoBytes(new Uint8Array(await readFile(path)));
     const base64 = uint8ToBase64(new Uint8Array(bytes));
     const mime = useThumbnail ? 'image/jpeg' : row.mime_type;
     return `data:${mime};base64,${base64}`;

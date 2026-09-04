@@ -35,6 +35,7 @@ import { remotePhotoToCapturedPhoto } from '@/lib/services/camera-service';
 import type {
   CompanionPatientRequestEvent,
   RemoteCameraInfo,
+  RemoteCameraUrl,
   RemoteCameraPhotoEvent,
   RemoteCameraStatusEvent,
 } from '@/specs/001-role-you-are/contracts/camera-service';
@@ -46,6 +47,9 @@ const IDLE_POLL_MS = 60 * 1000;
 
 interface CompanionContextValue {
   active: boolean;
+  /** Every live pairing URL, same-network primary first. */
+  urls: RemoteCameraUrl[];
+  /** The primary pairing URL (the same-network one) — what a single-QR surface shows. */
   url: string | null;
   phoneConnected: boolean;
   shareLibrary: boolean;
@@ -53,6 +57,9 @@ interface CompanionContextValue {
   remember: boolean;
   start: () => Promise<void>;
   stop: () => Promise<void>;
+  /** Re-read the live pairing URLs — call when a surface opens, so a network
+   * change (Wi-Fi ↔ hotspot) is reflected without restarting the link. */
+  refresh: () => Promise<void>;
   setShareLibrary: (share: boolean) => Promise<void>;
   setRemember: (remember: boolean) => Promise<void>;
 }
@@ -68,7 +75,8 @@ export function useCompanion(): CompanionContextValue {
 export function CompanionProvider({ children }: { children: ReactNode }) {
   const { openCapture } = useCapture();
   const [active, setActive] = useState(false);
-  const [url, setUrl] = useState<string | null>(null);
+  const [urls, setUrls] = useState<RemoteCameraUrl[]>([]);
+  const url = urls[0]?.url ?? null;
   const [phoneConnected, setPhoneConnected] = useState(false);
   const [shareLibrary, setShareLibraryState] = useState(true);
   const [remember, setRememberState] = useState(true);
@@ -81,9 +89,25 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
     await invoke('stop_remote_camera').catch(() => {});
     await companionService.unpublish().catch(() => {});
     setActive(false);
-    setUrl(null);
+    setUrls([]);
     setPhoneConnected(false);
     void auditService.record('companion.stop');
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      const info = await invoke<RemoteCameraInfo | null>('remote_camera_active');
+      if (info) {
+        setActive(true);
+        setUrls(info.urls);
+      } else {
+        setActive(false);
+        setUrls([]);
+        setPhoneConnected(false);
+      }
+    } catch {
+      /* the link is simply not available (e.g. dev server without Tauri) */
+    }
   }, []);
 
   const start = useCallback(async () => {
@@ -104,7 +128,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
       const existing = await invoke<RemoteCameraInfo | null>('remote_camera_active');
       const info = existing ?? (await invoke<RemoteCameraInfo>('start_remote_camera'));
       setActive(true);
-      setUrl(info.url);
+      setUrls(info.urls);
       setPhoneConnected(false);
       void auditService.record('companion.start', {
         detail: stateRef.current.shareLibrary ? 'with photo library' : 'camera only',
@@ -270,7 +294,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
         const existing = await invoke<RemoteCameraInfo | null>('remote_camera_active');
         if (existing) {
           setActive(true);
-          setUrl(existing.url);
+          setUrls(existing.urls);
         } else if (remembered) {
           await start();
         }
@@ -293,12 +317,14 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
     <CompanionContext.Provider
       value={{
         active,
+        urls,
         url,
         phoneConnected,
         shareLibrary,
         remember,
         start,
         stop,
+        refresh,
         setShareLibrary,
         setRemember,
       }}

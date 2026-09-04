@@ -19,5 +19,5 @@ Still to confirm with the lawyer:
 ## Also do
 
 - Have a qualified Australian lawyer review both documents — they are drafts, not legal advice.
-- Keep the documents accurate to the code: they state there is **no telemetry, no cloud backend, no at-rest encryption, no automatic updater, and plain-HTTP LAN phone tether**. If any of that changes, update the documents with the release that changes it.
+- Keep the documents accurate to the code: they state there is **no telemetry, no cloud backend, no automatic updater, and plain-HTTP LAN phone tether**; photographs and thumbnails **are** encrypted at rest (AES-256-GCM, key in the OS credential store) while the **database, backups, result files and report PDFs are not**. If any of that changes, update the documents with the release that changes it.
 - Consider surfacing both documents in-app (e.g. a link in Settings) and at the distribution page.

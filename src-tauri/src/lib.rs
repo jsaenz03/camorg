@@ -3,6 +3,7 @@
 // scope grants and the phone-camera tether server.
 
 mod diagnostics;
+mod photo_crypto;
 mod remote_camera;
 mod report;
 
@@ -209,6 +210,8 @@ pub fn run() {
     .plugin(tauri_plugin_fs::init())
     .invoke_handler(tauri::generate_handler![
       grant_directory_access,
+      photo_crypto::photo_encrypt_bytes,
+      photo_crypto::photo_decrypt_bytes,
       report::generate_case_report,
       report::print_report,
       report::reveal_saved_report,

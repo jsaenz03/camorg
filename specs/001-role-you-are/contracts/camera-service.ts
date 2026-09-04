@@ -39,9 +39,15 @@ export interface CapturedPhoto {
  * plain LAN http cannot provide.
  */
 
+/** One reachable address of a running phone link. */
+export interface RemoteCameraUrl {
+  url: string;             // Pairing URL to open on the phone
+  kind: 'lan' | 'tailscale'; // Network the address lives on
+}
+
 /** Result of the `start_remote_camera` Tauri command. */
 export interface RemoteCameraInfo {
-  url: string;             // Pairing URL to open on the phone (QR-encoded)
+  urls: RemoteCameraUrl[]; // Same-network primary first, then Tailscale
 }
 
 /** Payload of the `remote-camera-photo` Tauri event. */

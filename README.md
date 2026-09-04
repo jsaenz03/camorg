@@ -99,8 +99,9 @@ hooks are agnostic to the storage backend.
 
 ## Phone link (companion sidecar)
 
-**Sidebar → Phone link** opens a QR pairing that turns a phone (same Wi-Fi)
-into a second screen for the signed-in clinician:
+**Sidebar → Phone link** opens a QR pairing that turns a phone (same Wi-Fi,
+the phone's hotspot, or a shared Tailscale network) into a second screen for
+the signed-in clinician:
 
 - **Camera** — the original tethered capture: snap on the phone, or **send
   existing photos from the phone's library** (multi-select; each photo is

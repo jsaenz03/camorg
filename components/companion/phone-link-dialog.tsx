@@ -27,9 +27,22 @@ import { Switch } from '@/components/ui/switch';
 import { useCompanion } from '@/components/companion/companion-provider';
 
 export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
-  const { active, url, phoneConnected, shareLibrary, remember, start, stop, setShareLibrary, setRemember } =
-    useCompanion();
+  const {
+    active,
+    urls,
+    url,
+    phoneConnected,
+    shareLibrary,
+    remember,
+    start,
+    stop,
+    refresh,
+    setShareLibrary,
+    setRemember,
+  } = useCompanion();
   const [starting, setStarting] = useState(false);
+  // The primary QR already covers a tunnel-only link (no ordinary network).
+  const tailscaleUrls = urls.filter((u) => u.kind === 'tailscale' && u.url !== url);
 
   const handleStart = async () => {
     setStarting(true);
@@ -37,17 +50,17 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
     setStarting(false);
   };
 
-  const handleCopy = async () => {
-    if (!url) return;
+  const handleCopy = async (address: string | null) => {
+    if (!address) return;
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(address);
     } catch {
       toast.error('Could not copy — type the address on your phone instead.');
     }
   };
 
   return (
-    <Dialog>
+    <Dialog onOpenChange={(open) => { if (open && active) void refresh(); }}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
@@ -97,17 +110,43 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
               ) : (
                 <span className="text-muted-foreground">
                   Scan with your phone&rsquo;s camera, or{' '}
-                  <button
-                    type="button"
-                    onClick={handleCopy}
-                    className="underline underline-offset-2 hover:text-foreground"
-                  >
-                    copy the address
-                  </button>
-                  .
-                </span>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy(url)}
+                        className="underline underline-offset-2 hover:text-foreground"
+                      >
+                        copy the address
+                      </button>
+                      .
+                    </span>
               )}
             </p>
+
+            {tailscaleUrls.length > 0 && (
+              <div className="space-y-3 rounded-lg border p-3">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">Away from this Wi-Fi (Tailscale)</p>
+                  <p className="text-xs text-muted-foreground">
+                    Pairs from anywhere — both this computer and your phone
+                    need the Tailscale app signed in to the same network.
+                  </p>
+                </div>
+                {tailscaleUrls.map((u) => (
+                  <div key={u.url} className="flex items-center gap-3">
+                    <div className="shrink-0 rounded-md bg-white p-1.5">
+                      <QRCodeSVG value={u.url} size={72} />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopy(u.url)}
+                      className="text-left font-mono text-xs break-all underline underline-offset-2 hover:text-foreground"
+                    >
+                      {u.url}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
               <div className="space-y-0.5">
@@ -145,12 +184,13 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Anyone with this code, on the same Wi-Fi, can take photos and
-              open the shared library until you end the session. The
-              connection is local and not encrypted, so end it when you&rsquo;re
-              done. It closes itself after 30 minutes of inactivity, and with
-              Start automatically on it reopens (same address) next time
-              Camog starts.
+              Anyone with this code — on the same Wi-Fi or hotspot, or in your
+              Tailscale network — can take photos and open the shared library
+              until you end the session. The link itself is not encrypted (a
+              Tailscale address is, by the tunnel), so end it when
+              you&rsquo;re done. It closes itself after 30 minutes of
+              inactivity, and with Start automatically on it reopens (same
+              address) next time Camog starts.
             </p>
 
             <Button variant="destructive" className="w-full" onClick={() => void stop()}>

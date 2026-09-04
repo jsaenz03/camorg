@@ -1,7 +1,8 @@
-// Phone-camera tether + companion viewer. A phone on the same Wi-Fi opens a
-// pairing URL served by this process, snaps the photo with its native camera
-// app, and POSTs the JPEG back; the bytes are forwarded to the webview as a
-// Tauri event and flow through the normal capture pipeline.
+// Phone-camera tether + companion viewer. A phone that can reach this
+// machine — same Wi-Fi, the phone's own hotspot, or a shared Tailscale
+// network — opens a pairing URL served by this process, snaps the photo with
+// its native camera app, and POSTs the JPEG back; the bytes are forwarded to
+// the webview as a Tauri event and flow through the normal capture pipeline.
 //
 // The phone can also browse the signed-in clinician's library (patients and
 // photos) while the link is open, so the clinician can review photos with the
@@ -44,9 +45,28 @@ const MAX_BODY: usize = 25 * 1024 * 1024;
 // Phone control requests are tiny JSON ({"patientId":"<uuid>"}).
 const MAX_CONTROL_BODY: usize = 4 * 1024;
 
+/// Which network a pairing address lives on — the pairing UI labels each
+/// candidate QR with this.
+#[derive(serde::Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkKind {
+  Lan,
+  Tailscale,
+}
+
+/// One address a phone could reach the link on right now.
+#[derive(serde::Serialize, PartialEq, Debug)]
+pub struct RemoteCameraUrl {
+  pub url: String,
+  pub kind: LinkKind,
+}
+
 #[derive(serde::Serialize)]
 pub struct RemoteCameraInfo {
-  pub url: String,
+  /// Every currently-reachable pairing URL, same-network primary first.
+  /// Recomputed from the live routing table on every read, so a network
+  /// change needs a dialog refresh at most — never a link restart.
+  pub urls: Vec<RemoteCameraUrl>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -71,7 +91,10 @@ struct RemoteCamera {
   shutdown: Arc<AtomicBool>,
   server: Arc<Server>,
   thread: Option<JoinHandle<()>>,
-  url: String,
+  /// Port and token are all that is pinned; the URLs are rebuilt from the
+  /// live routing table whenever anyone asks, so they survive network changes.
+  port: u16,
+  token: String,
   /// Unix ms of the last authenticated request from the phone; the desktop
   /// polls it to auto-end an abandoned session.
   last_seen_ms: Arc<AtomicU64>,
@@ -205,14 +228,82 @@ fn now_ms() -> u64 {
     .unwrap_or(0)
 }
 
-/// The LAN address a phone would use to reach this machine. A UDP "connect"
-/// selects the default-route interface without sending any packets.
-fn lan_ip() -> IpAddr {
+/// The source address the routing table picks for `target`. A UDP "connect"
+/// selects the interface without sending any packets, so this is a free
+/// probe of which network a connection to that destination leaves on.
+fn route_source_ip(target: &str) -> Option<IpAddr> {
   UdpSocket::bind("0.0.0.0:0")
-    .and_then(|s| s.connect("8.8.8.8:80").map(|_| s))
+    .and_then(|s| s.connect(target).map(|_| s))
     .and_then(|s| s.local_addr())
     .map(|a| a.ip())
-    .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+    .ok()
+}
+
+/// The address a phone on this machine's usual network (Wi-Fi, hotspot,
+/// ethernet) would dial. Falls back to loopback when there is no route at
+/// all; callers filter that out.
+fn lan_ip() -> IpAddr {
+  route_source_ip("8.8.8.8:80").unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+}
+
+/// The machine's Tailscale address, if Tailscale is connected. Tailscale
+/// routes the CGNAT block 100.64.0.0/10 (RFC 6598) through its tunnel, so
+/// probing any address in that block yields the tunnel's own 100.x IP as the
+/// source. Without Tailscale the probe just echoes the ordinary LAN address,
+/// which the CGNAT filter then discards — nothing is configured or pinned
+/// per user, every machine discovers its own address at runtime.
+/// ponytail: route-probe detection; a Tailscale mode installing only
+/// per-peer /32 routes (no 100.64/10 route) would hide the address — scan
+/// interfaces with getifaddrs/GetAdaptersAddresses if that ever shows up.
+fn tailscale_ip() -> Option<IpAddr> {
+  route_source_ip("100.64.1.1:53").filter(|ip| match ip {
+    IpAddr::V4(v4) => is_cgnat(*v4),
+    _ => false,
+  })
+}
+
+/// Tailscale draws every tailnet address from the CGNAT range 100.64.0.0/10.
+fn is_cgnat(ip: Ipv4Addr) -> bool {
+  let o = ip.octets();
+  o[0] == 100 && (64..=127).contains(&o[1])
+}
+
+/// The pairing URLs worth offering right now: the default-route address a
+/// same-network phone uses, then the Tailscale address for a phone reaching
+/// over the tailnet. Loopback/link-local fallbacks never get a QR.
+fn pairing_urls(
+  default_route: IpAddr,
+  tunnel: Option<IpAddr>,
+  port: u16,
+  token: &str,
+) -> Vec<RemoteCameraUrl> {
+  let usable = |ip: IpAddr| match ip {
+    IpAddr::V4(v4)
+      if !v4.is_loopback() && !v4.is_link_local() && !v4.is_unspecified() =>
+    {
+      Some(v4)
+    }
+    _ => None,
+  };
+  let mut urls = Vec::new();
+  let primary = usable(default_route);
+  if let Some(v4) = primary {
+    urls.push(RemoteCameraUrl {
+      url: format!("http://{v4}:{port}/t/{token}/"),
+      kind: if is_cgnat(v4) {
+        LinkKind::Tailscale
+      } else {
+        LinkKind::Lan
+      },
+    });
+  }
+  if let Some(v4) = tunnel.and_then(usable).filter(|v4| Some(*v4) != primary) {
+    urls.push(RemoteCameraUrl {
+      url: format!("http://{v4}:{port}/t/{token}/"),
+      kind: LinkKind::Tailscale,
+    });
+  }
+  urls
 }
 
 /// Bind the tether listener. SO_REUSEADDR (Unix only) lets an app restart
@@ -298,7 +389,12 @@ fn handle_image(request: tiny_http::Request, filename: &str) {
     respond_text(request, 404, "Not found");
     return;
   };
-  match std::fs::read(&path) {
+  // Photo files are AES-GCM encrypted at rest; legacy plaintext passes
+  // through unchanged (photo_crypto::decrypt_or_plain).
+  match std::fs::read(&path)
+    .map_err(|e| e.to_string())
+    .and_then(|raw| crate::photo_crypto::decrypt_or_plain(&raw))
+  {
     Ok(bytes) => {
       let _ = request.respond(
         Response::from_data(bytes)
@@ -484,13 +580,17 @@ fn spawn_handler(
 pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, String> {
   stop_remote_camera().await;
 
-  let ip = lan_ip();
+  // Bind every interface (0.0.0.0), not just today's default route: the
+  // link keeps working when the machine switches networks (Wi-Fi ↔ hotspot)
+  // and accepts connections arriving over Tailscale's tunnel. The pairing
+  // token in the URL path stays the only gate that matters.
+  let bind_all = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
   // Bind the pinned port first so last session's URL keeps working; only if
   // something else grabbed it fall back to an ephemeral port (and re-pin, so
   // the new URL is the stable one going forward).
   let pinned = pinned_port(&app)?;
   let (server, port) = match pinned.and_then(|p| {
-    let listener = bind_listener(ip, p).ok()?;
+    let listener = bind_listener(bind_all, p).ok()?;
     Server::from_listener(listener, None).ok().map(|server| (server, p))
   }) {
     Some((server, port)) => (server, port),
@@ -500,7 +600,7 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
         crate::diagnostics::record(crate::diagnostics::Level::Error, "phone-camera", &msg, None);
         msg
       };
-      let listener = bind_listener(ip, 0).map_err(|e| start_fail(e.to_string()))?;
+      let listener = bind_listener(bind_all, 0).map_err(|e| start_fail(e.to_string()))?;
       let server = Server::from_listener(listener, None).map_err(|e| start_fail(e.to_string()))?;
       let port = server.server_addr().to_ip().map(|a| a.port()).ok_or_else(|| {
         let msg = "failed to determine phone-camera server port".to_string();
@@ -520,7 +620,7 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
     }
   };
   let token = pairing_token(&app)?;
-  let url = format!("http://{ip}:{port}/t/{token}/");
+  let urls = pairing_urls(lan_ip(), tailscale_ip(), port, &token);
   let server = Arc::new(server);
   let last_seen_ms = Arc::new(AtomicU64::new(now_ms()));
 
@@ -537,7 +637,8 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
     shutdown,
     server,
     thread: Some(thread),
-    url: url.clone(),
+    port,
+    token,
     last_seen_ms,
   });
   *STAGED_REPORT.lock().unwrap() = None;
@@ -546,11 +647,11 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   crate::diagnostics::record(
     crate::diagnostics::Level::Info,
     "phone-camera",
-    &format!("Phone camera link started on {ip}:{port}"),
+    &format!("Phone camera link started on port {port}"),
     None,
   );
 
-  Ok(RemoteCameraInfo { url })
+  Ok(RemoteCameraInfo { urls })
 }
 
 #[tauri::command]
@@ -565,9 +666,11 @@ pub async fn stop_remote_camera() {
   *STAGED_REPORT.lock().unwrap() = None;
 }
 
-/// The pairing URL of the running link, if any. Lets a second surface (the
+/// The pairing URLs of the running link, if any. Lets a second surface (the
 /// capture screen's phone panel) reuse the live session instead of restarting
-/// it, which would invalidate the QR the phone may already have open.
+/// it, which would invalidate the QR the phone may already have open. URLs
+/// are rebuilt from the current routing table on every call, so a dialog
+/// opened after a network switch (Wi-Fi ↔ hotspot) shows live addresses.
 #[tauri::command]
 pub fn remote_camera_active() -> Option<RemoteCameraInfo> {
   REMOTE_CAMERA
@@ -575,7 +678,7 @@ pub fn remote_camera_active() -> Option<RemoteCameraInfo> {
     .unwrap()
     .as_ref()
     .map(|rc| RemoteCameraInfo {
-      url: rc.url.clone(),
+      urls: pairing_urls(lan_ip(), tailscale_ip(), rc.port, &rc.token),
     })
 }
 
@@ -730,6 +833,48 @@ mod tests {
     assert_eq!(parse_saved_port("0"), None);
     assert_eq!(parse_saved_port("70000"), None);
     assert_eq!(parse_saved_port("-1"), None);
+  }
+
+  // Multi-network pairing: the same-network address is offered first, the
+  // Tailscale (CGNAT) address alongside it, and probes that merely echoed the
+  // LAN address (no Tailscale) or fell back to loopback never mint a QR.
+  #[test]
+  fn pairing_urls_offer_lan_then_tailscale() {
+    use super::{pairing_urls, LinkKind};
+    let lan: std::net::IpAddr = "192.168.1.5".parse().unwrap();
+    let ts: std::net::IpAddr = "100.101.102.103".parse().unwrap();
+    let urls = pairing_urls(lan, Some(ts), 8080, "0123456789abcdef");
+    assert_eq!(urls.len(), 2);
+    assert_eq!(urls[0].url, "http://192.168.1.5:8080/t/0123456789abcdef/");
+    assert_eq!(urls[0].kind, LinkKind::Lan);
+    assert_eq!(urls[1].url, "http://100.101.102.103:8080/t/0123456789abcdef/");
+    assert_eq!(urls[1].kind, LinkKind::Tailscale);
+  }
+
+  // The common no-Tailscale case: the CGNAT probe just returns the default
+  // route's own address, which must collapse into a single LAN URL — also
+  // covers the phone-hotspot range.
+  #[test]
+  fn pairing_urls_without_tailscale_stay_single() {
+    use super::{pairing_urls, LinkKind};
+    let lan: std::net::IpAddr = "172.20.10.7".parse().unwrap();
+    let urls = pairing_urls(lan, Some(lan), 9000, "0123456789abcdef");
+    assert_eq!(urls.len(), 1);
+    assert_eq!(urls[0].url, "http://172.20.10.7:9000/t/0123456789abcdef/");
+    assert_eq!(urls[0].kind, LinkKind::Lan);
+  }
+
+  // Loopback fallbacks (no route at all) get no QR; an exit-node setup where
+  // the default route IS the tunnel yields one Tailscale URL, not two.
+  #[test]
+  fn pairing_urls_skip_loopback_and_duplicate_tunnel() {
+    use super::{pairing_urls, LinkKind};
+    let lo: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    assert!(pairing_urls(lo, None, 8080, "0123456789abcdef").is_empty());
+    let ts: std::net::IpAddr = "100.101.102.103".parse().unwrap();
+    let urls = pairing_urls(ts, Some(ts), 8080, "0123456789abcdef");
+    assert_eq!(urls.len(), 1);
+    assert_eq!(urls[0].kind, LinkKind::Tailscale);
   }
 
   // The pinned-port promise: an app quit leaves TIME_WAIT sockets on the

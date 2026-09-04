@@ -1158,12 +1158,16 @@ fn generate_case_report_inner(request: ReportRequest) -> Result<ReportOutcome, S
   // fails up-front instead of producing a half-finished report on disk.
   let mut photos = Vec::with_capacity(request.photos.len());
   for p in &request.photos {
-    let bytes = std::fs::read(&p.path).map_err(|_| {
+    let raw = std::fs::read(&p.path).map_err(|_| {
       format!(
         "Could not read the photo captured {}. It may have been moved or deleted. Reopen this patient's timeline and try again.",
         p.captured_label
       )
     })?;
+    // Photo files are AES-GCM encrypted at rest; legacy plaintext passes
+    // through unchanged (photo_crypto::decrypt_or_plain).
+    let bytes = crate::photo_crypto::decrypt_or_plain(&raw)
+      .map_err(|e| format!("The photo captured {} could not be decrypted: {e}", p.captured_label))?;
     let image = Image::from_jpeg(bytes.into(), true)
       .map_err(|_| format!("The photo captured {} is not a readable image file.", p.captured_label))?;
     photos.push(PhotoDraw { image, photo: p.clone() });

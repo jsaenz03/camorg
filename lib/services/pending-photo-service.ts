@@ -16,6 +16,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { appDataDir, join } from '@tauri-apps/api/path';
 import { exists, mkdir, readDir, readFile, writeFile, remove } from '@tauri-apps/plugin-fs';
 import { generateThumbnail } from '@/lib/utils/image-processing';
+import { decryptPhotoBytes, encryptPhotoBytes } from '@/lib/utils/photo-crypto';
 import type { CapturedPhoto } from '@/specs/001-role-you-are/contracts/camera-service';
 
 /** Unclaimed photos are stale, not restorable — drop them after this long. */
@@ -116,8 +117,10 @@ export async function storePendingPhoto(photo: CapturedPhoto): Promise<PendingPh
     width: photo.width,
     height: photo.height,
   };
-  await writeFile(await join(dir, `${id}.jpg`), bytes);
-  await writeFile(await join(dir, `${id}.thumb.jpg`), thumbBytes);
+  // Photo bytes are encrypted at rest (the .json sidecar holds no clinical
+  // content — ids, timestamps, dimensions — and stays plain).
+  await writeFile(await join(dir, `${id}.jpg`), await encryptPhotoBytes(bytes));
+  await writeFile(await join(dir, `${id}.thumb.jpg`), await encryptPhotoBytes(thumbBytes));
   await writeFile(await join(dir, `${id}.json`), new TextEncoder().encode(JSON.stringify(meta)));
   return { ...meta, thumbDataUrl: bytesToDataUrl(thumbBytes) };
 }
@@ -151,11 +154,13 @@ export async function listPendingPhotos(nowMs = Date.now()): Promise<PendingPhot
       await deletePendingPhoto(id);
       continue;
     }
-    const thumbBytes = await readFile(await join(dir, `${id}.thumb.jpg`)).catch(() => null);
-    if (!thumbBytes) {
+    const rawThumb = await readFile(await join(dir, `${id}.thumb.jpg`)).catch(() => null);
+    if (!rawThumb) {
       await deletePendingPhoto(id);
       continue;
     }
+    // Encrypted at rest; legacy plaintext passes through unchanged.
+    const thumbBytes = await decryptPhotoBytes(new Uint8Array(rawThumb));
     entries.push({ ...meta, thumbDataUrl: bytesToDataUrl(thumbBytes) });
   }
   entries.sort((a, b) => a.capturedAt - b.capturedAt);
@@ -166,7 +171,8 @@ export async function listPendingPhotos(nowMs = Date.now()): Promise<PendingPhot
 export async function loadPendingPhoto(id: string): Promise<CapturedPhoto> {
   if (!UUID_RE.test(id)) throw new Error('Invalid pending photo id');
   const dir = await pendingDir();
-  const bytes = await readFile(await join(dir, `${id}.jpg`));
+  // Encrypted at rest; legacy plaintext passes through unchanged.
+  const bytes = await decryptPhotoBytes(new Uint8Array(await readFile(await join(dir, `${id}.jpg`))));
   const blob = new Blob([bytes], { type: 'image/jpeg' });
   const bitmap = await createImageBitmap(blob);
   const raw = new TextDecoder().decode(await readFile(await join(dir, `${id}.json`)));

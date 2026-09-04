@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.4.5"
+version = "0.4.6"
 description = "Camog — Clinical Photo Documentation"
 authors = ["Camog"]
 license = ""
@@ -31,6 +31,8 @@ tiny_http = "0.12"
 socket2 = "0.6"
 base64 = "0.22"
 rand = "0.8"
+aes-gcm = "0.10"
+keyring = "2"
 krilla = "0.8"
 skrifa = "0.42"
 
