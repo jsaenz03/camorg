@@ -27,6 +27,9 @@ permissions:
 jobs:
   # Quality gate: everything here must pass before any installer is built.
   checks:
+    # v0.4.6 was pulled for its keychain permission prompt; its tag is kept
+    # only as a stub release pointing at the latest version — never rebuild it.
+    if: github.ref != 'refs/tags/v0.4.6'
     runs-on: ubuntu-latest
     permissions:
       contents: read

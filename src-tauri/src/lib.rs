@@ -193,6 +193,11 @@ pub fn run() {
           ])
           .build(),
       )?;
+      // The photo key file lives beside the database; point the crypto
+      // module at it before any command can need the key.
+      if let Ok(dir) = app.path().app_data_dir() {
+        photo_crypto::init_key_path(dir.join("photo-key"));
+      }
       diagnostics::record(
         diagnostics::Level::Info,
         "app",

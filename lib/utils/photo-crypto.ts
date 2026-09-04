@@ -1,13 +1,13 @@
 /**
  * At-rest photo encryption (webview side).
  *
- * Photo JPEGs are AES-256-GCM encrypted before they touch disk; the key lives
- * in the OS credential store and never reaches the webview — these helpers
- * just shuttle bytes (base64, to keep the Tauri IPC JSON-safe) through the
- * Rust commands in src-tauri/src/photo_crypto.rs. Encrypted files carry a
- * `CMGE1` magic prefix; legacy plaintext JPEGs (pre-encryption captures) are
- * detected and passed through by Rust, so reads work during and after the
- * boot migration.
+ * Photo JPEGs are AES-256-GCM encrypted before they touch disk; the key stays
+ * in the Rust process (a key file in the app data directory, no OS permission
+ * prompts) and never reaches the webview — these helpers just shuttle bytes
+ * (base64, to keep the Tauri IPC JSON-safe) through the Rust commands in
+ * src-tauri/src/photo_crypto.rs. Encrypted files carry a `CMGE1` magic
+ * prefix; legacy plaintext JPEGs (pre-encryption captures) are detected and
+ * passed through by Rust, so reads work during and after the boot migration.
  */
 
 import { invoke } from '@tauri-apps/api/core';

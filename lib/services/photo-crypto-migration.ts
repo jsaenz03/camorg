@@ -72,8 +72,8 @@ export async function runPhotoEncryptionMigration(): Promise<void> {
       await encryptDirJpegs(pendingDir);
     }
   } catch (err) {
-    // e.g. the OS credential store refused the key, or the photos folder is
-    // unreachable. New captures will surface the same error at write time.
+    // e.g. the photo key file is missing or unreadable, or the photos folder
+    // is unreachable. New captures will surface the same error at write time.
     recordDiagnostic(
       'error',
       'photo-crypto',

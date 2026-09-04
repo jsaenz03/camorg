@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.4.6"
+version = "0.4.7"
 description = "Camog — Clinical Photo Documentation"
 authors = ["Camog"]
 license = ""
@@ -32,6 +32,8 @@ socket2 = "0.6"
 base64 = "0.22"
 rand = "0.8"
 aes-gcm = "0.10"
+# 0.4.6 kept the photo key in the OS credential store; this reads that entry
+# once for the key-file migration, and can be dropped once 0.4.6 is gone.
 keyring = "2"
 krilla = "0.8"
 skrifa = "0.42"

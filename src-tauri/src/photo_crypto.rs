@@ -8,26 +8,41 @@
 //
 // File format: b"CMGE1" + 12-byte random nonce + AES-256-GCM ciphertext
 // (GCM appends a 16-byte auth tag). The key is a random 256-bit key created
-// on first use and stored in the OS credential store (macOS Keychain /
-// Windows Credential Manager), never on disk and never sent to the webview.
+// on first use and stored in a `photo-key` file inside the app data
+// directory (beside the database, owner-only permissions), never sent to the
+// webview. A file needs no OS permission dialog — the OS credential store
+// was tried first, but its access prompts (macOS re-prompts after every
+// update) read as invasive to clinicians. The file protects photos when the
+// photo files alone leak (a synced or backed-up photos folder); the whole
+// data directory is covered by full-disk encryption, which the privacy
+// policy already recommends.
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use rand::RngCore;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// 5-byte prefix marking an encrypted photo ("Camog Encrypted", version 1).
 pub const MAGIC: &[u8; 5] = b"CMGE1";
 /// Nonce length (GCM standard 96-bit).
 const NONCE_LEN: usize = 12;
-/// Keychain slot: service + user identify the single app-wide photo key.
+/// Credential-store slot written by 0.4.6; upgrading machines get their key
+/// rescued out of there once, then the entry is deleted.
 const KEY_SERVICE: &str = "com.camog.app";
 const KEY_USER: &str = "photo-encryption-key";
 
-/// The cached key; None until first use, Err if the OS credential store
-/// is unavailable (e.g. no Secret Service on a bare Linux session).
+/// Where the key file lives; set once at app startup from the app data dir,
+/// before any command (encrypt/decrypt, tether, report) can need it.
+static KEY_FILE: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn init_key_path(path: PathBuf) {
+  let _ = KEY_FILE.set(path);
+}
+
+/// The cached key; None until first use, Err if the key file is unreadable.
 static KEY: OnceLock<Result<[u8; 32], String>> = OnceLock::new();
 
 fn load_key() -> Result<[u8; 32], String> {
@@ -35,29 +50,77 @@ fn load_key() -> Result<[u8; 32], String> {
 }
 
 fn load_key_once() -> Result<[u8; 32], String> {
-  let entry = keyring::Entry::new(KEY_SERVICE, KEY_USER)
-    .map_err(|e| format!("Could not open the OS credential store: {e}"))?;
-  if let Ok(stored) = entry.get_password() {
-    let bytes = B64
-      .decode(stored.trim())
-      .map_err(|e| format!("Stored photo key is not valid base64: {e}"))?;
-    let key: [u8; 32] = bytes
-      .try_into()
-      .map_err(|v: Vec<u8>| format!("Stored photo key is {} bytes, expected 32", v.len()))?;
-    return Ok(key);
+  let path = KEY_FILE.get().ok_or_else(|| {
+    "photo key storage is not initialised (app setup has not run)".to_string()
+  })?;
+  // The key file is the one source of truth: created on first use, read on
+  // every later launch. A corrupt file is an error, never a silent
+  // regeneration — a fresh key would strand every encrypted photo.
+  if let Ok(stored) = std::fs::read_to_string(path) {
+    return decode_key(&stored);
   }
-  // No key yet (first encryption, or the user deleted the entry): generate,
-  // persist, return. A deleted entry followed by regeneration means existing
-  // encrypted photos become unreadable — decryption then fails loudly with
-  // the auth-tag error below rather than returning wrong bytes.
+  // No key file: a genuinely fresh install, or a 0.4.6 machine whose key
+  // still sits in the OS credential store. Rescue before minting — the
+  // photos that key encrypted are already on disk.
+  match keyring::Entry::new(KEY_SERVICE, KEY_USER).and_then(|entry| entry.get_password()) {
+    Ok(stored) => {
+      let key = decode_key(&stored)?;
+      write_key_file(path, &stored)?;
+      // Best effort: the entry is dead weight once the file exists.
+      if let Ok(entry) = keyring::Entry::new(KEY_SERVICE, KEY_USER) {
+        let _ = entry.delete_password();
+      }
+      crate::diagnostics::record(
+        crate::diagnostics::Level::Info,
+        "photo-crypto",
+        "Moved the photo encryption key from the OS credential store to the app data directory.",
+        None,
+      );
+      return Ok(key);
+    }
+    // Nothing stored (fresh install) or no usable store: mint a key.
+    Err(keyring::Error::NoEntry) | Err(keyring::Error::PlatformFailure(_)) => {}
+    // Anything else (e.g. access denied on the rescue prompt) must not fall
+    // through to a fresh key — that would silently orphan every encrypted
+    // photo on the machine.
+    Err(e) => {
+      return Err(format!(
+        "The photo encryption key could not be read from the OS credential store ({e}). \
+         Reopen Camog and allow access once, so the key can move to its new home."
+      ));
+    }
+  }
   let mut key = [0u8; 32];
   rand::rngs::OsRng
     .try_fill_bytes(&mut key)
     .map_err(|e| format!("Could not generate a photo key: {e}"))?;
-  entry
-    .set_password(&B64.encode(key))
-    .map_err(|e| format!("Could not store the photo key in the OS credential store: {e}"))?;
+  let encoded = B64.encode(key);
+  write_key_file(path, &encoded)?;
   Ok(key)
+}
+
+fn decode_key(stored: &str) -> Result<[u8; 32], String> {
+  let bytes = B64
+    .decode(stored.trim())
+    .map_err(|e| format!("Stored photo key is not valid base64: {e}"))?;
+  bytes
+    .try_into()
+    .map_err(|v: Vec<u8>| format!("Stored photo key is {} bytes, expected 32", v.len()))
+}
+
+fn write_key_file(path: &std::path::Path, encoded: &str) -> Result<(), String> {
+  if let Some(dir) = path.parent() {
+    std::fs::create_dir_all(dir).map_err(|e| format!("Could not create the app data dir: {e}"))?;
+  }
+  std::fs::write(path, encoded.trim())
+    .map_err(|e| format!("Could not store the photo key in the app data dir: {e}"))?;
+  // Owner-only on Unix; the Windows profile directory is already per-user.
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+  }
+  Ok(())
 }
 
 /// Does this byte stream carry our encrypted-photo prefix?
@@ -89,8 +152,8 @@ fn decrypt_with(key: &[u8; 32], bytes: &[u8]) -> Result<Vec<u8>, String> {
   Aes256Gcm::new(key.into())
     .decrypt(Nonce::from_slice(nonce), Payload::from(ciphertext))
     .map_err(|_| {
-      "This encrypted photo could not be opened. Its encryption key may have been \
-       removed from this device's credential store, or the file is damaged."
+      "This encrypted photo could not be opened. The app's photo key file is missing \
+       or was changed, or the file is damaged."
         .to_string()
     })
 }
@@ -169,15 +232,21 @@ mod tests {
     assert_eq!(decrypt_with(&[1u8; 32], b"CMG").unwrap(), b"CMG");
   }
 
-  // Exercises the real OS credential store (creates the app's key entry on
-  // this machine), so it stays out of the default test run.
-  // Run: cargo test -- --ignored
+  // Exercises the real key-file path end to end: init a scratch location,
+  // then the commands' internals roundtrip through disk. Runs on a machine
+  // with no credential-store entry, so it never touches the user's key.
   #[test]
-  #[ignore]
-  fn keychain_backed_roundtrip() {
+  fn file_backed_roundtrip() {
+    let dir = std::env::temp_dir().join(format!("camog-key-test-{}", std::process::id()));
+    let path = dir.join("photo-key");
+    let _ = std::fs::remove_file(&path);
+    init_key_path(path.clone());
     let photo = b"\xff\xd8\xff\xe0fake-jpeg-bytes".to_vec();
-    let sealed = encrypt(&photo).expect("keychain + encryption");
+    let sealed = encrypt(&photo).expect("key file + encryption");
     assert!(is_encrypted(&sealed));
     assert_eq!(decrypt_or_plain(&sealed).unwrap(), photo);
+    // The file now holds the base64 key (44 chars for 32 bytes).
+    assert_eq!(std::fs::read_to_string(&path).unwrap().len(), 44);
+    let _ = std::fs::remove_dir_all(&dir);
   }
 }
