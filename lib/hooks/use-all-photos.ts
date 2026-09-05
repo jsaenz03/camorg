@@ -59,9 +59,12 @@ export function useAllPhotos(options: UseAllPhotosOptions = {}): UseAllPhotosRet
     setPages(1);
   }, [filterKey]);
 
-  const load = useCallback(async () => {
+  // A background refresh keeps the current photos on screen: flipping
+  // isLoading would render the grid skeleton and flash any open dialog
+  // (e.g. Mark reviewed in the photo detail dialog) away mid-action.
+  const load = useCallback(async (background = false) => {
     const seq = ++seqRef.current;
-    setIsLoading(true);
+    if (!background) setIsLoading(true);
     setError(null);
     try {
       const [page, patients] = await Promise.all([
@@ -104,7 +107,7 @@ export function useAllPhotos(options: UseAllPhotosOptions = {}): UseAllPhotosRet
   }, []);
 
   const refresh = useCallback(async () => {
-    await load();
+    await load(true);
   }, [load]);
 
   return {

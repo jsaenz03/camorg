@@ -12,6 +12,7 @@ import type { Patient } from '@/types/patient';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { formatDateOfBirth, formatLastPhotoTime } from '@/lib/utils/date-formatting';
+import { ReviewBadge } from './review-badge';
 import { PhotoReviewDueBadge, type DueReviewCounts } from './photo-review-due-badge';
 
 interface PatientCardProps {
@@ -50,13 +51,22 @@ export function PatientCard({ patient, due, onClick }: PatientCardProps) {
             {patient.photoCount} {patient.photoCount === 1 ? 'photo' : 'photos'}
           </Badge>
         </div>
-        {/* Own row: the long review-due label truncates inside the card
-            instead of forcing the header row wider than it. */}
-        {due && due.due > 0 && (
-          <div className="mt-2 flex min-w-0">
-            <PhotoReviewDueBadge due={due.due} overdue={due.overdue} />
-          </div>
-        )}
+        {/* Own row: the long review labels truncate inside the card instead
+            of forcing the header row wider than it. ReviewBadge shows the
+            next review date whenever one is scheduled — red overdue, amber
+            due soon, muted further out — and renders nothing when there is
+            no schedule to flag (empty:hidden collapses the row). */}
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 empty:hidden">
+          <ReviewBadge patient={patient} />
+          {due && (
+            <PhotoReviewDueBadge
+              due={due.due}
+              overdue={due.overdue}
+              scheduled={due.scheduled}
+              nextDueAt={due.nextDueAt}
+            />
+          )}
+        </div>
       </CardHeader>
       <CardContent className="p-4 pt-2">
         <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">

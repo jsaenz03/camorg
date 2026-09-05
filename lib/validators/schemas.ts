@@ -29,6 +29,8 @@ export const photoRecordCreateSchema = z.object({
   laterality: lateralitySchema.optional(),
   subpart: z.string().max(100, 'Subpart must be 100 characters or less').optional().nullable(),
   clinicalNotes: z.string().max(2000, 'Clinical notes must be 2000 characters or less').optional().nullable(),
+  // Lesion series at creation — review follow-ups join the original's series.
+  lesionGroup: z.string().max(100, 'Series name must be 100 characters or less').optional().nullable(),
   // Body-map X mark: normalized 0..1 within 'pinSpace' ('body' | 'part');
   // 'pinView' records which face (front/back) was marked — palm vs back of hand.
   pinX: z.number().min(0).max(1).optional().nullable(),

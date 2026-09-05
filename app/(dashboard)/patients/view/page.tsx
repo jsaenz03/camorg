@@ -24,7 +24,7 @@ import { PhotoTimeline } from '@/components/photo/photo-timeline';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
 import { PhotoCompareDialog } from '@/components/photo/photo-compare-dialog';
 import { PhotoUpload } from '@/components/photo/photo-upload';
-import { useCapture } from '@/components/capture/capture-provider';
+import { useCapture, reviewFollowUpCapture } from '@/components/capture/capture-provider';
 import { ReviewBadge } from '@/components/patient/review-badge';
 import { PhotoReviewDueBadge } from '@/components/patient/photo-review-due-badge';
 import { EmptyState } from '@/components/empty-state';
@@ -164,6 +164,21 @@ function PatientTimelineView() {
         .catch(() => {});
     }
   }, [refresh, patientId]);
+
+  /** Opens capture for a review follow-up — prefilled with the original's
+      location and linked to it via a shared lesion series on save. */
+  const handleSnapReviewPhoto = useCallback(() => {
+    if (!patient || !activePhoto) return;
+    openCapture(
+      reviewFollowUpCapture(activePhoto, {
+        patientName: patient.name,
+        patientDob: patient.dateOfBirth
+          ? format(patient.dateOfBirth, 'd/M/yyyy')
+          : undefined,
+        onSaved: handleUploadSaved,
+      }),
+    );
+  }, [patient, activePhoto, openCapture, handleUploadSaved]);
 
   if (isLoadingPatient || isLoadingPhotos) {
     return (
@@ -343,6 +358,7 @@ function PatientTimelineView() {
         onChanged={handleDialogChanged}
         onDeleted={handleDialogDeleted}
         onOpenPhoto={handlePhotoClick}
+        onSnapReviewPhoto={handleSnapReviewPhoto}
       />
 
       <PhotoCompareDialog

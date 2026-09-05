@@ -13,7 +13,7 @@ import { Images, FilterX, Camera } from 'lucide-react';
 import { useAllPhotos } from '@/lib/hooks/use-all-photos';
 import { usePatients } from '@/lib/hooks/use-patients';
 import { useAuth } from '@/lib/auth/auth-context';
-import { useCapture } from '@/components/capture/capture-provider';
+import { useCapture, reviewFollowUpCapture } from '@/components/capture/capture-provider';
 import { BODY_PARTS, BodyPartLabels } from '@/types/body-part';
 import type { BodyPart } from '@/types/body-part';
 import type { PhotoRecord } from '@/types/photo';
@@ -81,6 +81,18 @@ export default function PhotosPage() {
   function handlePhotoClick(photo: PhotoRecord) {
     setActivePhoto(photo);
     setDialogOpen(true);
+  }
+
+  /** Opens capture for a review follow-up — prefilled with the original's
+      location and linked to it via a shared lesion series on save. */
+  function handleSnapReviewPhoto() {
+    if (!activePhoto) return;
+    openCapture(
+      reviewFollowUpCapture(activePhoto, {
+        patientName: photos.find((p) => p.id === activePhoto.id)?.patientName,
+        onSaved: refresh,
+      }),
+    );
   }
 
   return (
@@ -254,6 +266,7 @@ export default function PhotosPage() {
         onOpenChange={setDialogOpen}
         onChanged={refresh}
         onOpenPhoto={handlePhotoClick}
+        onSnapReviewPhoto={handleSnapReviewPhoto}
       />
     </div>
   );

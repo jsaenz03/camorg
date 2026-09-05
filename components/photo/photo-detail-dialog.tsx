@@ -22,6 +22,7 @@ import { format } from 'date-fns';
 import {
   ArchiveRestore,
   CalendarCheck,
+  Camera,
   Link2,
   Loader2,
   PenLine,
@@ -86,6 +87,13 @@ interface PhotoDetailDialogProps {
    * jump between before/after shots without closing).
    */
   onOpenPhoto?: (photo: PhotoRecord) => void;
+  /**
+   * Offer "snap a review photo" when Mark reviewed is clicked: called after
+   * the review is stamped and this dialog closed, so the parent can open the
+   * capture flow for the patient (the follow-up photo links to this one).
+   * When absent, Mark reviewed stays a one-click action.
+   */
+  onSnapReviewPhoto?: () => void;
 }
 
 export function PhotoDetailDialog({
@@ -95,6 +103,7 @@ export function PhotoDetailDialog({
   onChanged,
   onDeleted,
   onOpenPhoto,
+  onSnapReviewPhoto,
 }: PhotoDetailDialogProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isLoadingImage, setIsLoadingImage] = useState(true);
@@ -111,6 +120,9 @@ export function PhotoDetailDialog({
   const [lastReviewedAt, setLastReviewedAt] = useState<Date | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
+  // Mark-reviewed offer: null = one-click button, otherwise which follow-up
+  // choice is pending ('snap' opens the capture flow after stamping).
+  const [reviewOffer, setReviewOffer] = useState<'snap' | 'plain' | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -164,6 +176,7 @@ export function PhotoDetailDialog({
     setLastReviewedAt(photo.lastReviewedAt);
     setConfirmDelete(false);
     setAnnotate(false);
+    setReviewOffer(null);
   }, [photo]);
 
   // Series-name chips for this patient (the strip below covers siblings).
@@ -283,17 +296,26 @@ export function PhotoDetailDialog({
   }
 
   /** One-click review: stamps this photo, clears its scheduled date, and
-      counts as the patient's review. */
-  async function handleReview() {
+      counts as the patient's review. With snapPhoto, the review is stamped
+      first (identical to the no-photo path), then the dialog closes and the
+      parent's capture flow opens — the follow-up photo links to this one. */
+  async function handleReview(snapPhoto: boolean) {
     if (!photo) return;
     setIsReviewing(true);
     try {
       const updated = await photoService.reviewPhoto(photo.id);
       setLastReviewedAt(updated.lastReviewedAt);
       setReviewDueInput('');
+      setReviewOffer(null);
       notifyAttentionChanged();
-      toast.success('Marked reviewed — this also counts as the patient’s review');
       onChanged();
+      if (snapPhoto) {
+        toast.success('Marked reviewed — snap the follow-up to link it with this photo');
+        onOpenChange(false);
+        onSnapReviewPhoto?.();
+      } else {
+        toast.success('Marked reviewed — this also counts as the patient’s review');
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to record the review');
     } finally {
@@ -491,23 +513,63 @@ export function PhotoDetailDialog({
 
             {!photo.isDeleted && (
               <div className="space-y-2 rounded-md border p-3">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-medium">Review</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleReview}
-                    disabled={isReviewing || isSaving || isDeleting || isSavingAnnotation}
-                  >
-                    {isReviewing ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <CalendarCheck className="size-4" />
-                    )}
-                    Mark reviewed
-                  </Button>
+                  {reviewOffer ? (
+                    <div className="flex gap-1.5">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void handleReview(true)}
+                        disabled={isReviewing || isSaving || isDeleting || isSavingAnnotation}
+                      >
+                        {reviewOffer === 'snap' && isReviewing ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Camera className="size-4" />
+                        )}
+                        Snap photo
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleReview(false)}
+                        disabled={isReviewing || isSaving || isDeleting || isSavingAnnotation}
+                      >
+                        {reviewOffer === 'plain' && isReviewing ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <CalendarCheck className="size-4" />
+                        )}
+                        No photo needed
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        onSnapReviewPhoto ? setReviewOffer('snap') : void handleReview(false)
+                      }
+                      disabled={isReviewing || isSaving || isDeleting || isSavingAnnotation}
+                    >
+                      {isReviewing ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <CalendarCheck className="size-4" />
+                      )}
+                      Mark reviewed
+                    </Button>
+                  )}
                 </div>
+                {reviewOffer && (
+                  <p className="text-xs text-muted-foreground">
+                    Snap a follow-up photo now and it saves into the same series as
+                    this one — before/after linked in one strip.
+                  </p>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="photo-review-due">Next review date (optional)</Label>
                   <Input

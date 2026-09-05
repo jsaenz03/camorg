@@ -104,6 +104,8 @@ export function PatientsDataTable({ patients, dueByPatient, className }: Patient
                   <PhotoReviewDueBadge
                     due={dueByPatient?.get(patient.id)?.due ?? 0}
                     overdue={dueByPatient?.get(patient.id)?.overdue ?? 0}
+                    scheduled={dueByPatient?.get(patient.id)?.scheduled ?? 0}
+                    nextDueAt={dueByPatient?.get(patient.id)?.nextDueAt ?? null}
                   />
                 </div>
               </TableCell>

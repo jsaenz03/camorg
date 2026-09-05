@@ -312,9 +312,14 @@ const photoServiceSrc = read('lib/services/photo-service.ts');
 for (const needle of ['laterality, subpart, clinical_notes', 'validated.laterality ?? null', 'photo.laterality,']) {
   check(`photo-service writes laterality: ${needle}`, photoServiceSrc.includes(needle));
 }
+// Side comes from where you tap the body map (left/right half of a bilateral
+// region or its detail diagram) — the standalone Left/Right control was
+// removed as redundant.
 check(
-  'capture form offers the side control',
-  /radiogroup[\s\S]*?Patient's side/.test(read('components/photo/photo-metadata-form.tsx')),
+  'capture form takes the side from the body map (no separate control)',
+  /onSelect=\{\(part, side\) =>[\s\S]*?setValue\('laterality', side/.test(
+    read('components/photo/photo-metadata-form.tsx'),
+  ) && !read('components/photo/photo-metadata-form.tsx').includes('radiogroup'),
 );
 check(
   'body map derives the patient side (front view mirrors)',

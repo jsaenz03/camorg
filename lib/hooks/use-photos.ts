@@ -40,7 +40,10 @@ export function usePhotos(options: UsePhotosOptions = {}): UsePhotosReturn {
   // commit over the current one (same guard as use-patients).
   const seqRef = useRef(0);
 
-  const loadPhotos = useCallback(async () => {
+  // A background refresh keeps the current photos on screen: flipping
+  // isLoading would render the page skeleton and flash any open dialog
+  // (e.g. Mark reviewed in the photo detail dialog) away mid-action.
+  const loadPhotos = useCallback(async (background = false) => {
     if (!patientId) {
       setPhotos([]);
       setIsLoading(false);
@@ -48,7 +51,7 @@ export function usePhotos(options: UsePhotosOptions = {}): UsePhotosReturn {
     }
 
     const seq = ++seqRef.current;
-    setIsLoading(true);
+    if (!background) setIsLoading(true);
     setError(null);
 
     try {
@@ -72,7 +75,7 @@ export function usePhotos(options: UsePhotosOptions = {}): UsePhotosReturn {
   }, [loadPhotos]);
 
   const refresh = useCallback(async () => {
-    await loadPhotos();
+    await loadPhotos(true);
   }, [loadPhotos]);
 
   return {

@@ -83,24 +83,25 @@ export function PhotosOverTimeChart({ photos }: PhotosOverTimeChartProps) {
         {/* Range toggle floats over the chart's empty top-right so this
             card's header stays identical to its row siblings — an inline
             header control made the header taller and pushed the chart out
-            of alignment with the other two cards. */}
-        {!isEmpty && (
-          <div className="absolute right-0 top-0 z-10">
-            <ToggleGroup
-              type="single"
-              value={range}
-              onValueChange={(v) => v && setRange(v)}
-              size="sm"
-              variant="outline"
-            >
-              {RANGE_OPTIONS.map((o) => (
-                <ToggleGroupItem key={o.value} value={o.value}>
-                  {o.value}d
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
-        )}
+            of alignment with the other two cards. Always rendered (also over
+            the empty state) so switching ranges to find data stays possible;
+            right-6 aligns it with the chart's right edge, clear of the card
+            border. */}
+        <div className="absolute right-6 top-0 z-10">
+          <ToggleGroup
+            type="single"
+            value={range}
+            onValueChange={(v) => v && setRange(v)}
+            size="sm"
+            variant="outline"
+          >
+            {RANGE_OPTIONS.map((o) => (
+              <ToggleGroupItem key={o.value} value={o.value}>
+                {o.value}d
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
         {isEmpty ? (
           <div className="flex h-[220px] items-center justify-center">
             <EmptyState

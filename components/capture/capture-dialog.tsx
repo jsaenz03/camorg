@@ -34,6 +34,8 @@ import type {
   RemoteCameraPhotoEvent,
 } from '@/specs/001-role-you-are/contracts/camera-service';
 import { remotePhotoToCapturedPhoto } from '@/lib/services/camera-service';
+import { reviewSeriesName } from '@/lib/utils/lesion-group';
+import { bodyPartDisplayLabel } from '@/types/body-part';
 import {
   listPendingPhotos,
   loadPendingPhoto,
@@ -46,6 +48,7 @@ import { photoService } from '@/lib/services/photo-service';
 import { patientService } from '@/lib/services/patient-service';
 import { companionService } from '@/lib/services/companion-service';
 import { parseDobInput } from '@/lib/utils/date-formatting';
+import type { CapturePrefill } from '@/components/capture/capture-provider';
 import {
   saveCaptureDraft,
   readCaptureDraft,
@@ -69,11 +72,15 @@ export interface CaptureDialogProps {
   /** Prefill the patient fields (capture-for-patient from their timeline). */
   patientName?: string;
   patientDob?: string;
+  /** Review follow-up: link the saved photo to this one's lesion series. */
+  linkPhotoId?: string;
+  /** Prefill the metadata form — a review follow-up inherits the original's location. */
+  prefill?: CapturePrefill;
   /** Called with the patient id after a successful save; skips the timeline navigation. */
   onSaved?: (patientId: string) => void;
 }
 
-export function CaptureDialog({ open, onOpenChange, patientName, patientDob, onSaved }: CaptureDialogProps) {
+export function CaptureDialog({ open, onOpenChange, patientName, patientDob, linkPhotoId, prefill, onSaved }: CaptureDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Width tiers override the default sm:max-w-lg; the layout inside keys
@@ -84,13 +91,17 @@ export function CaptureDialog({ open, onOpenChange, patientName, patientDob, onS
             {patientName ? `Capture photo — ${patientName}` : 'Capture photo'}
           </DialogTitle>
           <DialogDescription>
-            Capture a clinical photograph and add patient metadata.
+            {linkPhotoId
+              ? 'Review follow-up — location is prefilled from the original; saving links the two photos as one series.'
+              : 'Capture a clinical photograph and add patient metadata.'}
           </DialogDescription>
         </DialogHeader>
         {open && (
           <CaptureFlow
             patientName={patientName}
             patientDob={patientDob}
+            linkPhotoId={linkPhotoId}
+            prefill={prefill}
             onSaved={onSaved}
             onClose={() => onOpenChange(false)}
           />
@@ -104,11 +115,15 @@ export function CaptureDialog({ open, onOpenChange, patientName, patientDob, onS
 function CaptureFlow({
   patientName,
   patientDob,
+  linkPhotoId,
+  prefill,
   onSaved,
   onClose,
 }: {
   patientName?: string;
   patientDob?: string;
+  linkPhotoId?: string;
+  prefill?: CapturePrefill;
   onSaved?: (patientId: string) => void;
   onClose: () => void;
 }) {
@@ -324,7 +339,27 @@ function CaptureFlow({
         toast.info(`Created new patient: ${formData.patientName}`);
       }
 
-      // 2. Create photo record (honour an optional capture-date override).
+      // 2. Resolve the review-follow-up link (if any): the new photo joins
+      // the original's lesion series, or starts one anchored to it. The
+      // original is only touched once the follow-up is actually saved —
+      // cancelling the capture leaves it untouched.
+      let linkGroup: string | null = null;
+      let needsOriginalLink: string | null = null;
+      if (linkPhotoId) {
+        const original = await photoService.getPhotoById(linkPhotoId).catch(() => null);
+        // A name edit that filed the photo under a different patient (or a
+        // deleted original) silently skips the link — never cross-links.
+        if (original && !original.isDeleted && original.patientId === patientId) {
+          linkGroup = original.lesionGroup ?? reviewSeriesName({
+            bodyPartLabel: bodyPartDisplayLabel(original.bodyPart, original.laterality),
+            subpart: original.subpart,
+            capturedAt: original.capturedAt,
+          });
+          if (!original.lesionGroup) needsOriginalLink = original.id;
+        }
+      }
+
+      // 3. Create photo record (honour an optional capture-date override).
       await photoService.createPhoto({
         patientId,
         imageBlob: capturedPhoto.blob,
@@ -338,9 +373,19 @@ function CaptureFlow({
         pinSpace: formData.pinSpace ?? null,
         pinView: formData.pinView ?? null,
         capturedAt: formData.capturedAt ?? capturedPhoto.capturedAt,
+        lesionGroup: linkGroup,
       });
 
-      toast.success('Photo saved');
+      // 4. Complete the link: the original joins the series too (it had none).
+      if (needsOriginalLink && linkGroup) {
+        try {
+          await photoService.updatePhoto(needsOriginalLink, { lesionGroup: linkGroup });
+        } catch {
+          toast.info('Photo saved, but it could not be linked into the original’s series.');
+        }
+      }
+
+      toast.success(linkGroup ? 'Photo saved — linked with the original photo' : 'Photo saved');
       clearCaptureDraft();
       // The staged copy has done its job once the photo is in the library.
       if (activePendingId) {
@@ -353,7 +398,7 @@ function CaptureFlow({
       // open) so the phone can review the new photo immediately.
       void companionService.publish().catch(() => {});
 
-      // 3. Stay in place when capturing for a known patient; otherwise show
+      // 5. Stay in place when capturing for a known patient; otherwise show
       // the new photo on the patient's timeline.
       if (onSaved) {
         onSaved(patientId);
@@ -577,6 +622,13 @@ function CaptureFlow({
                   defaultValues={{
                     patientName: patientName ?? '',
                     patientDob: patientDob ?? '',
+                    bodyPart: prefill?.bodyPart,
+                    laterality: prefill?.laterality,
+                    subpart: prefill?.subpart ?? '',
+                    pinX: prefill?.pinX,
+                    pinY: prefill?.pinY,
+                    pinSpace: prefill?.pinSpace,
+                    pinView: prefill?.pinView,
                   }}
                 />
               ) : (

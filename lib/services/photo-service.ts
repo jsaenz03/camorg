@@ -164,6 +164,7 @@ export class PhotoService implements IPhotoService {
       const now = new Date();
       const nowMs = now.getTime();
       const capturedMs = validated.capturedAt.getTime();
+      const lesionGroup = normalizeLesionGroup(validated.lesionGroup ?? null);
 
       const db = await getDB();
 
@@ -175,10 +176,10 @@ export class PhotoService implements IPhotoService {
       await db.execute(
         `INSERT INTO photos
            (id, patient_id, image_path, thumbnail_path, original_file_name,
-            mime_type, file_size_bytes, body_part, laterality, subpart, clinical_notes,
+            mime_type, file_size_bytes, body_part, laterality, subpart, clinical_notes, lesion_group,
             pin_x, pin_y, pin_space, pin_view,
             captured_at, created_at, updated_at, clinician_id, is_deleted, deleted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 0, NULL)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 0, NULL)`,
         [
           id,
           validated.patientId,
@@ -191,6 +192,7 @@ export class PhotoService implements IPhotoService {
           validated.laterality ?? null,
           validated.subpart ?? null,
           validated.clinicalNotes ?? null,
+          lesionGroup,
           validated.pinX ?? null,
           validated.pinY ?? null,
           validated.pinSpace ?? null,
@@ -209,7 +211,7 @@ export class PhotoService implements IPhotoService {
         entityType: 'photo',
         entityId: id,
         patientId: validated.patientId,
-        detail: `${validated.bodyPart}${validated.subpart ? ` · ${validated.subpart}` : ''}`,
+        detail: `${validated.bodyPart}${validated.subpart ? ` · ${validated.subpart}` : ''}${lesionGroup ? ` · series: ${lesionGroup}` : ''}`,
       });
 
       // Record subpart usage if provided.
@@ -237,7 +239,7 @@ export class PhotoService implements IPhotoService {
         pinView: validated.pinView ?? null,
         reviewDueAt: null,
         lastReviewedAt: null,
-        lesionGroup: null,
+        lesionGroup,
         capturedAt: validated.capturedAt,
         createdAt: now,
         updatedAt: now,

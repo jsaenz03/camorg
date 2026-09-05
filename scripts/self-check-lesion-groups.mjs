@@ -11,7 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { normalizeLesionGroup } from '../lib/utils/lesion-group.ts';
+import { normalizeLesionGroup, reviewSeriesName } from '../lib/utils/lesion-group.ts';
 
 // Plain names pass through untouched.
 assert.equal(normalizeLesionGroup('Left cheek mole'), 'Left cheek mole', 'plain name preserved');
@@ -33,5 +33,22 @@ assert.equal(normalizeLesionGroup('a'.repeat(100)).length, 100, 'exactly 100 kep
 
 // A name that is only whitespace after the cap boundary still normalises sane.
 assert.equal(normalizeLesionGroup(' x'.repeat(60)).length, 100, 'capped after collapsing');
+
+// Review follow-up series names: anchored to the original photo, formatted
+// "<part> (<subpart>) — from <date>", capped like any other series name.
+assert.equal(
+  reviewSeriesName({ bodyPartLabel: 'Left cheek', subpart: 'medial aspect', capturedAt: new Date(2024, 2, 4) }),
+  'Left cheek (medial aspect) — from 4 Mar 2024',
+  'review series name format',
+);
+assert.equal(
+  reviewSeriesName({ bodyPartLabel: 'Back', capturedAt: new Date(2025, 11, 25) }),
+  'Back — from 25 Dec 2025',
+  'subpart omitted when absent',
+);
+assert.ok(
+  reviewSeriesName({ bodyPartLabel: 'x'.repeat(120), subpart: 'y'.repeat(120), capturedAt: new Date() }).length <= 100,
+  'review series name capped at 100 chars',
+);
 
 console.log('self-check-lesion-groups: all assertions passed');

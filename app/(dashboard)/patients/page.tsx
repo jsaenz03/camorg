@@ -38,10 +38,19 @@ export default function PatientsPage() {
           const status = photoReviewStatus(review.reviewDueAt, {
             warningDays: reviewWarningDays,
           });
-          if (status === 'none') continue;
-          const entry = counts.get(review.patientId) ?? { due: 0, overdue: 0 };
-          entry.due += 1;
-          if (status === 'overdue') entry.overdue += 1;
+          const entry =
+            counts.get(review.patientId) ?? { due: 0, overdue: 0, scheduled: 0, nextDueAt: null };
+          if (status === 'none') {
+            // Beyond the alert window — no alarm colour, but the next date
+            // still shows so a review months out stays visible.
+            entry.scheduled += 1;
+          } else {
+            entry.due += 1;
+            if (status === 'overdue') entry.overdue += 1;
+          }
+          if (review.reviewDueAt && (!entry.nextDueAt || review.reviewDueAt < entry.nextDueAt)) {
+            entry.nextDueAt = review.reviewDueAt;
+          }
           counts.set(review.patientId, entry);
         }
         setDueByPatient(counts);

@@ -20,7 +20,7 @@ import { patientService } from '@/lib/services/patient-service';
 import { photoService, type PhotoSummary } from '@/lib/services/photo-service';
 import { BodyMapBadge } from '@/components/patient/body-map-badge';
 import { useAuth } from '@/lib/auth/auth-context';
-import { useCapture } from '@/components/capture/capture-provider';
+import { useCapture, reviewFollowUpCapture } from '@/components/capture/capture-provider';
 import { useCompanion } from '@/components/companion/companion-provider';
 import { PhoneLinkDialog } from '@/components/companion/phone-link-dialog';
 import { formatRelativeTime } from '@/lib/utils/date-formatting';
@@ -164,8 +164,10 @@ export default function HomePage() {
     setDialogOpen(true);
   }
 
+  // Background refresh: keeps the page (and any open photo dialog) on
+  // screen while the data reloads — flipping isLoading here used to flash
+  // the skeleton over the dialog on Mark reviewed / Save.
   function handleRefresh() {
-    setIsLoading(true);
     Promise.all([
       patientService.getAllPatients({ includeArchived: false }),
       photoService.getAllPhotoSummaries({ includeDeleted: showDeleted }),
@@ -185,8 +187,19 @@ export default function HomePage() {
       })
       .catch((err: unknown) => {
         setLoadError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => setIsLoading(false));
+      });
+  }
+
+  /** Opens capture for a review follow-up — prefilled with the original's
+      location and linked to it via a shared lesion series on save. */
+  function handleSnapReviewPhoto() {
+    if (!activePhoto) return;
+    openCapture(
+      reviewFollowUpCapture(activePhoto, {
+        patientName: activePhoto.patientName,
+        onSaved: handleRefresh,
+      }),
+    );
   }
 
   if (isLoading) {
@@ -372,6 +385,7 @@ export default function HomePage() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onChanged={handleRefresh}
+        onSnapReviewPhoto={handleSnapReviewPhoto}
       />
     </div>
   );

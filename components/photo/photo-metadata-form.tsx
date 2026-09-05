@@ -17,7 +17,6 @@ import {
   BodyPart,
   BodyPartLabels,
   BILATERAL_BODY_PARTS,
-  type Laterality,
 } from '@/types/body-part';
 import { parseDobInput } from '@/lib/utils/date-formatting';
 import { BodyMapPicker } from '@/components/patient/body-map-picker';
@@ -281,50 +280,8 @@ export function PhotoMetadataForm({
           )}
         />
 
-        {/* Laterality (bilateral regions only) */}
-        {isBilateral && (
-          <FormField
-            control={form.control}
-            name="laterality"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Side</FormLabel>
-                <FormControl>
-                  <div
-                    role="radiogroup"
-                    aria-label="Patient's side"
-                    className="flex w-fit gap-1 rounded-md border p-0.5"
-                  >
-                    {(['left', 'right'] as Laterality[]).map((side) => (
-                      <button
-                        key={side}
-                        type="button"
-                        role="radio"
-                        aria-checked={field.value === side}
-                        disabled={isSubmitting}
-                        onClick={() => {
-                          field.onChange(side);
-                          clearPin();
-                        }}
-                        className={cn(
-                          'rounded px-4 py-1.5 text-sm font-medium capitalize transition-colors',
-                          field.value === side
-                            ? 'bg-primary text-primary-foreground'
-                            : 'text-muted-foreground hover:text-foreground',
-                        )}
-                      >
-                        {side}
-                      </button>
-                    ))}
-                  </div>
-                </FormControl>
-                <FormDescription>
-                  The patient&rsquo;s own {field.value ?? 'left/right'} side.
-                </FormDescription>
-              </FormItem>
-            )}
-          />
-        )}
+        {/* Side comes from the body map: tapping a bilateral region (or its
+            detail diagram) sets the patient's side — no separate control. */}
 
         {/* Subpart */}
         <FormField
