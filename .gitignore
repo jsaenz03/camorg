@@ -53,3 +53,6 @@ next-env.d.ts
 # playwright artifacts
 playwright-report/
 test-results/
+
+# user guide (HTML/PDF + screenshots)
+guide/
