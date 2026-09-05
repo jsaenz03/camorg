@@ -26,14 +26,24 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { setCaptureScreenActive, isCaptureScreenActive, companionService } from '@/lib/services/companion-service';
+import {
+  setCaptureScreenActive,
+  isCaptureScreenActive,
+  companionService,
+  armReviewFollowUp,
+  clearReviewFollowUp,
+  consumeReviewFollowUp,
+} from '@/lib/services/companion-service';
+import { claimRemoteCapture } from '@/lib/utils/capture-dedupe';
+import { ATTENTION_CHANGED_EVENT } from '@/lib/services/attention-events';
 import { useCapture } from '@/components/capture/capture-provider';
 import { auditService } from '@/lib/services/audit-service';
-import { patientService } from '@/lib/services/patient-service';
+import { photoService } from '@/lib/services/photo-service';
 import { storePendingPhoto, listPendingPhotos } from '@/lib/services/pending-photo-service';
 import { remotePhotoToCapturedPhoto } from '@/lib/services/camera-service';
 import type {
   CompanionPatientRequestEvent,
+  CompanionPhotoReviewRequestEvent,
   RemoteCameraInfo,
   RemoteCameraUrl,
   RemoteCameraPhotoEvent,
@@ -195,58 +205,96 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
     if (!active) return;
     let unlistenPhoto: UnlistenFn | undefined;
     let unlistenStatus: UnlistenFn | undefined;
-    let unlistenReview: UnlistenFn | undefined;
+    let unlistenPhotoReview: UnlistenFn | undefined;
     let unlistenReport: UnlistenFn | undefined;
+    // A listen that resolves after this effect has been torn down (a fast
+    // stop/unmount, or dev StrictMode's mount-cleanup-mount) would otherwise
+    // leak and double-handle every later photo.
+    let disposed = false;
 
     void (async () => {
-      unlistenPhoto = await listen<RemoteCameraPhotoEvent>(
-        'remote-camera-photo',
-        async (event) => {
-          if (isCaptureScreenActive()) return;
-          try {
-            const photo = await remotePhotoToCapturedPhoto(event.payload.data);
-            await storePendingPhoto(photo);
-            // Count the tray (not just this photo) so a burst of snaps reads
-            // correctly in one toast.
-            const waiting = (await listPendingPhotos().catch(() => [])).length;
-            toast('Photo received from your phone', {
-              description:
-                waiting > 1
-                  ? `${waiting} photos are waiting in Capture for review.`
-                  : 'Open Capture to review and save it.',
-              action: {
-                label: 'Review',
-                onClick: () => openCapture(),
-              },
-            });
-          } catch (error) {
-            console.error('Failed to process photo from phone:', error);
-            toast.error('Received the photo from your phone but could not read it. Try again.');
-          }
-        },
-      );
-      unlistenStatus = await listen<RemoteCameraStatusEvent>('remote-camera-status', (event) => {
+      const photo = await listen<RemoteCameraPhotoEvent>('remote-camera-photo', async (event) => {
+        if (isCaptureScreenActive()) return;
+        // Same-event dedupe (claim before any await so a leaked duplicate
+        // listener always loses the race): must not run before the deferral
+        // guard above, or the capture screen's own handler would see the
+        // capture as a repeat and drop it.
+        if (!claimRemoteCapture(event.payload.captureId)) return;
+        try {
+          const photo = await remotePhotoToCapturedPhoto(event.payload.data);
+          // A "Snap photo" review follow-up: this snap joins the reviewed
+          // photo's lesion series when it is saved from the tray. A
+          // patient-tagged snap (the phone's Take photo on a patient screen)
+          // carries that patient so the save prefills their details.
+          const linkPhotoId = consumeReviewFollowUp();
+          await storePendingPhoto(
+            photo,
+            linkPhotoId ?? undefined,
+            event.payload.patientId ?? undefined,
+          );
+          // Count the tray (not just this photo) so a burst of snaps reads
+          // correctly in one toast.
+          const waiting = (await listPendingPhotos().catch(() => [])).length;
+          toast('Photo received from your phone', {
+            description: linkPhotoId
+              ? 'Review follow-up — saving it links it into the reviewed photo’s series.'
+              : waiting > 1
+                ? `${waiting} photos are waiting in Capture for review.`
+                : 'Open Capture to review and save it.',
+            action: {
+              label: 'Review',
+              onClick: () => openCapture(),
+            },
+          });
+        } catch (error) {
+          console.error('Failed to process photo from phone:', error);
+          toast.error('Received the photo from your phone but could not read it. Try again.');
+        }
+      });
+      if (disposed) {
+        photo();
+        return;
+      }
+      unlistenPhoto = photo;
+      const status = await listen<RemoteCameraStatusEvent>('remote-camera-status', (event) => {
         setPhoneConnected(event.payload.connected);
       });
-      unlistenReview = await listen<CompanionPatientRequestEvent>(
-        'companion-review-request',
+      if (disposed) {
+        status();
+        return;
+      }
+      unlistenStatus = status;
+      const photoReview = await listen<CompanionPhotoReviewRequestEvent>(
+        'companion-photo-review-request',
         async (event) => {
-          const { patientId } = event.payload;
+          const { photoId, snap } = event.payload;
+          // Arm before anything slow: the phone flips to its camera the
+          // moment the shell answers, so the follow-up snap can arrive a
+          // second later — never make it race the review bookkeeping.
+          if (snap) armReviewFollowUp(photoId);
           try {
-            await patientService.markReviewed(patientId);
+            // The same service the desktop photo dialog runs: stamps the
+            // photo's review AND counts as the patient's review.
+            await photoService.reviewPhoto(photoId);
             if (stateRef.current.shareLibrary) {
               await companionService.publish().catch(() => {});
             }
-            toast.success('Patient marked as reviewed (from your phone).');
+            toast.success('Photo marked as reviewed (from your phone).');
           } catch (error) {
-            console.error('Phone review request failed:', error);
+            if (snap) clearReviewFollowUp();
+            console.error('Phone photo review request failed:', error);
             toast.error(
-              error instanceof Error ? error.message : 'Could not mark the patient reviewed.',
+              error instanceof Error ? error.message : 'Could not mark the photo reviewed.',
             );
           }
         },
       );
-      unlistenReport = await listen<CompanionPatientRequestEvent>(
+      if (disposed) {
+        photoReview();
+        return;
+      }
+      unlistenPhotoReview = photoReview;
+      const report = await listen<CompanionPatientRequestEvent>(
         'companion-report-request',
         async (event) => {
           const { patientId } = event.payload;
@@ -260,12 +308,18 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
           }
         },
       );
+      if (disposed) {
+        report();
+        return;
+      }
+      unlistenReport = report;
     })();
 
     return () => {
+      disposed = true;
       unlistenPhoto?.();
       unlistenStatus?.();
-      unlistenReview?.();
+      unlistenPhotoReview?.();
       unlistenReport?.();
     };
   }, [active, openCapture]);
@@ -298,6 +352,22 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
+  }, [active, shareLibrary]);
+
+  // Bilateral sync, desktop half: every count-affecting mutation (review
+  // stamps, rescheduled reviews, photo saves) fires the attention event, so
+  // republish the manifest the instant it lands. The phone's held long-poll
+  // (library-wait) wakes on the publish and refetches — updates arrive on
+  // the action that caused them, the same way the phone's snaps arrive here.
+  useEffect(() => {
+    if (!active || !shareLibrary) return;
+    const onAttention = () => {
+      if (stateRef.current.active && stateRef.current.shareLibrary) {
+        void companionService.publish().catch(() => {});
+      }
+    };
+    window.addEventListener(ATTENTION_CHANGED_EVENT, onAttention);
+    return () => window.removeEventListener(ATTENTION_CHANGED_EVENT, onAttention);
   }, [active, shareLibrary]);
 
   // A webview reload wipes this React state while the Rust server (and the

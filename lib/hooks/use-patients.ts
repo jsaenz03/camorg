@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Patient } from '@/types/patient';
 import { patientService } from '@/lib/services/patient-service';
+import { ATTENTION_CHANGED_EVENT } from '@/lib/services/attention-events';
 
 interface UsePatientsOptions {
   includeArchived?: boolean;
@@ -52,9 +53,12 @@ export function usePatients(options: UsePatientsOptions = {}): UsePatientsReturn
     };
   }, []);
 
-  const loadPatients = useCallback(async () => {
+  // Background mode keeps the current rows on screen: flipping isLoading
+  // would render the page skeleton mid-action (same reasoning as the photo
+  // hooks, where a flash could close an open dialog).
+  const loadPatients = useCallback(async (background = false) => {
     const seq = ++loadSeqRef.current;
-    setIsLoading(true);
+    if (!background) setIsLoading(true);
     setError(null);
 
     try {
@@ -89,6 +93,18 @@ export function usePatients(options: UsePatientsOptions = {}): UsePatientsReturn
 
   const refresh = useCallback(async () => {
     await loadPatients();
+  }, [loadPatients]);
+
+  // Review-affecting actions land anywhere — the phone companion, photo and
+  // patient dialogs — and fire the attention event. Row badges (review
+  // schedule, due dates) refetch so they track those actions the same way
+  // the sidebar counters do, without a skeleton flash.
+  useEffect(() => {
+    const onAttention = () => {
+      void loadPatients(true);
+    };
+    window.addEventListener(ATTENTION_CHANGED_EVENT, onAttention);
+    return () => window.removeEventListener(ATTENTION_CHANGED_EVENT, onAttention);
   }, [loadPatients]);
 
   const search = useCallback((term: string) => {

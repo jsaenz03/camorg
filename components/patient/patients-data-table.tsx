@@ -1,9 +1,9 @@
 /**
  * PatientsDataTable
  *
- * shadcn Table view of patients: name, photos, last capture, registered.
- * Row click navigates to the patient timeline. Column headers sort the rows
- * client-side (datasets are small, single-user desktop app).
+ * shadcn Table view of patients: name, photos, last capture, next review,
+ * registered. Row click navigates to the patient timeline. Column headers
+ * sort the rows client-side (datasets are small, single-user desktop app).
  */
 
 'use client';
@@ -16,6 +16,7 @@ import type { Patient } from '@/types/patient';
 import { formatDateOfBirth, formatRelativeTime } from '@/lib/utils/date-formatting';
 import { ReviewBadge } from '@/components/patient/review-badge';
 import { PhotoReviewDueBadge, type DueReviewCounts } from '@/components/patient/photo-review-due-badge';
+import { ConsentBadge } from '@/components/patient/consent-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,7 +29,7 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 
-type SortKey = 'name' | 'photoCount' | 'lastPhotoAt' | 'createdAt';
+type SortKey = 'name' | 'photoCount' | 'lastPhotoAt' | 'reviewDueAt' | 'createdAt';
 type SortDir = 'asc' | 'desc';
 
 interface PatientsDataTableProps {
@@ -60,6 +61,17 @@ export function PatientsDataTable({ patients, dueByPatient, className }: Patient
           cmp = at - bt;
           break;
         }
+        case 'reviewDueAt': {
+          const at = a.reviewDueAt?.getTime() ?? null;
+          const bt = b.reviewDueAt?.getTime() ?? null;
+          // Undated patients sink regardless of direction.
+          if (at === null || bt === null) {
+            if (at === bt) return 0;
+            return at === null ? 1 : -1;
+          }
+          cmp = at - bt;
+          break;
+        }
         case 'createdAt':
           cmp = a.createdAt.getTime() - b.createdAt.getTime();
           break;
@@ -74,7 +86,8 @@ export function PatientsDataTable({ patients, dueByPatient, className }: Patient
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortKey(key);
-      setSortDir(key === 'name' ? 'asc' : 'desc');
+      // Soonest-first is the useful first press for review dates.
+      setSortDir(key === 'name' || key === 'reviewDueAt' ? 'asc' : 'desc');
     }
   }
 
@@ -87,6 +100,7 @@ export function PatientsDataTable({ patients, dueByPatient, className }: Patient
             <TableHead className="w-32">DOB</TableHead>
             <SortHeader label="Photos" sortKey="photoCount" current={sortKey} dir={sortDir} onSort={toggleSort} className="w-24 text-right" />
             <SortHeader label="Last capture" sortKey="lastPhotoAt" current={sortKey} dir={sortDir} onSort={toggleSort} className="w-40" />
+            <SortHeader label="Review" sortKey="reviewDueAt" current={sortKey} dir={sortDir} onSort={toggleSort} className="w-40" />
             <SortHeader label="Registered" sortKey="createdAt" current={sortKey} dir={sortDir} onSort={toggleSort} className="w-40" />
           </TableRow>
         </TableHeader>
@@ -107,6 +121,7 @@ export function PatientsDataTable({ patients, dueByPatient, className }: Patient
                     scheduled={dueByPatient?.get(patient.id)?.scheduled ?? 0}
                     nextDueAt={dueByPatient?.get(patient.id)?.nextDueAt ?? null}
                   />
+                  <ConsentBadge patient={patient} />
                 </div>
               </TableCell>
               <TableCell className="text-muted-foreground">
@@ -117,6 +132,9 @@ export function PatientsDataTable({ patients, dueByPatient, className }: Patient
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {patient.lastPhotoAt ? formatRelativeTime(patient.lastPhotoAt) : 'Never'}
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                {patient.reviewDueAt ? format(patient.reviewDueAt, 'd MMM yyyy') : '—'}
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {format(patient.createdAt, 'd MMM yyyy')}

@@ -23,6 +23,7 @@ export type AuditAction =
   | 'result_file.add'
   | 'result_file.delete'
   | 'backup.create'
+  | 'audit.export'
   | 'companion.start'
   | 'companion.stop'
   | 'companion.new_code';
@@ -37,6 +38,14 @@ export interface AuditEntry {
   patientId: string | null;
   detail: string | null;
   createdAt: Date;
+  /** Resolved from the patients table at read time (JOIN, not stored) —
+   *  patients are archived rather than deleted, so the name survives.
+   *  Null unless the viewer may see the patient's identity (see
+   *  mapAuditRow in lib/utils/audit.ts). */
+  patientName: string | null;
+  /** For photo actions: "Left arm · 05/09/2026" from the photos table.
+   *  Same visibility rule as patientName. */
+  photoLabel: string | null;
 }
 
 /** Human labels for the settings viewer. */
@@ -60,6 +69,7 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'result_file.add': 'Attached a result file',
   'result_file.delete': 'Removed a result file',
   'backup.create': 'Created backup',
+  'audit.export': 'Downloaded the audit log',
   'companion.start': 'Opened phone link session',
   'companion.stop': 'Closed phone link session',
   'companion.new_code': 'Generated a new phone link code',

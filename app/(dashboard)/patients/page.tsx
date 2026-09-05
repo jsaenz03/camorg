@@ -16,6 +16,7 @@ import { usePatients } from '@/lib/hooks/use-patients';
 import { useBranding } from '@/components/branding-boot';
 import { photoService } from '@/lib/services/photo-service';
 import { photoReviewStatus } from '@/lib/utils/photo-review';
+import { ATTENTION_CHANGED_EVENT } from '@/lib/services/attention-events';
 import type { DueReviewCounts } from '@/components/patient/photo-review-due-badge';
 
 export default function PatientsPage() {
@@ -27,41 +28,46 @@ export default function PatientsPage() {
     () => new Map(),
   );
 
-  useEffect(() => {
-    let mounted = true;
-    photoService
-      .getPhotosWithReviewDue()
-      .then((reviews) => {
-        if (!mounted) return;
-        const counts = new Map<string, DueReviewCounts>();
-        for (const review of reviews) {
-          const status = photoReviewStatus(review.reviewDueAt, {
-            warningDays: reviewWarningDays,
-          });
-          const entry =
-            counts.get(review.patientId) ?? { due: 0, overdue: 0, scheduled: 0, nextDueAt: null };
-          if (status === 'none') {
-            // Beyond the alert window — no alarm colour, but the next date
-            // still shows so a review months out stays visible.
-            entry.scheduled += 1;
-          } else {
-            entry.due += 1;
-            if (status === 'overdue') entry.overdue += 1;
-          }
-          if (review.reviewDueAt && (!entry.nextDueAt || review.reviewDueAt < entry.nextDueAt)) {
-            entry.nextDueAt = review.reviewDueAt;
-          }
-          counts.set(review.patientId, entry);
+  const loadDueCounts = useCallback(async () => {
+    try {
+      const reviews = await photoService.getPhotosWithReviewDue();
+      const counts = new Map<string, DueReviewCounts>();
+      for (const review of reviews) {
+        const status = photoReviewStatus(review.reviewDueAt, {
+          warningDays: reviewWarningDays,
+        });
+        const entry =
+          counts.get(review.patientId) ?? { due: 0, overdue: 0, scheduled: 0, nextDueAt: null };
+        if (status === 'none') {
+          // Beyond the alert window — no alarm colour, but the next date
+          // still shows so a review months out stays visible.
+          entry.scheduled += 1;
+        } else {
+          entry.due += 1;
+          if (status === 'overdue') entry.overdue += 1;
         }
-        setDueByPatient(counts);
-      })
-      .catch(() => {
-        if (mounted) setDueByPatient(new Map());
-      });
-    return () => {
-      mounted = false;
-    };
+        if (review.reviewDueAt && (!entry.nextDueAt || review.reviewDueAt < entry.nextDueAt)) {
+          entry.nextDueAt = review.reviewDueAt;
+        }
+        counts.set(review.patientId, entry);
+      }
+      setDueByPatient(counts);
+    } catch {
+      setDueByPatient(new Map());
+    }
   }, [reviewWarningDays]);
+
+  useEffect(() => {
+    void loadDueCounts();
+  }, [loadDueCounts]);
+
+  // The "photos due for review" badges must track review-affecting actions
+  // the same way the sidebar counters do: a review stamped on the phone
+  // fires the attention event, and these banners refetch with it.
+  useEffect(() => {
+    window.addEventListener(ATTENTION_CHANGED_EVENT, loadDueCounts);
+    return () => window.removeEventListener(ATTENTION_CHANGED_EVENT, loadDueCounts);
+  }, [loadDueCounts]);
 
   const handleSearch = useCallback(
     (term: string) => {

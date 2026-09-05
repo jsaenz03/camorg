@@ -12,7 +12,10 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import type { AuditAction, AuditEntry } from '@/types/audit';
+import { bodyPartDisplayLabel } from '@/types/body-part';
+import type { BodyPart, Laterality } from '@/types/body-part';
 import { getDB } from '@/lib/db/database';
+import { mapAuditRow, photoAuditLabel, type AuditRow } from '@/lib/utils/audit';
 
 export interface AuditContext {
   entityType?: string;
@@ -29,7 +32,22 @@ export interface AuditListOptions {
   /** 'all' (default, admin-only) or 'mine' — the current clinician's own
    *  entries, available to any signed-in user (dashboard activity feed). */
   scope?: 'all' | 'mine';
+  /** Inclusive bounds on created_at. Null/omitted = open-ended that side. */
+  from?: Date | null;
+  to?: Date | null;
 }
+
+/** Audit rows joined to the human-readable identities they point at: the
+ *  patient behind patient_id, and for photo actions the photos row itself
+ *  (works for soft-deleted photos). Read-time JOINs rather than stored names
+ *  — patients are archived, never hard-deleted, so the name always resolves.
+ *  Redaction of those identities happens in mapAuditRow (lib/utils/audit.ts). */
+const AUDIT_SELECT = `a.*, p.name AS patient_name,
+    ph.body_part AS photo_body_part, ph.laterality AS photo_laterality,
+    ph.captured_at AS photo_captured_at
+  FROM audit_log a
+  LEFT JOIN patients p ON p.id = a.patient_id
+  LEFT JOIN photos ph ON a.entity_type = 'photo' AND ph.id = a.entity_id`;
 
 class AuditService {
   async record(action: AuditAction, ctx: AuditContext = {}): Promise<void> {
@@ -61,16 +79,21 @@ class AuditService {
     }
   }
 
-  /** Newest-first audit history. 'all' is admin-only; 'mine' is per-user. */
+  /**
+   * Newest-first audit history. 'all' is admin-only; 'mine' is per-user.
+   * Patient name and photo label are resolved with read-time JOINs (patients
+   * are archived, never deleted; photos soft-deleted) and redacted unless the
+   * viewer may see that identity — see mapAuditRow in lib/utils/audit.ts.
+   */
   async list(options: AuditListOptions = {}): Promise<AuditEntry[]> {
-    const { limit = 100, patientId, scope = 'all' } = options;
+    const { limit = 100, patientId, scope = 'all', from, to } = options;
     const { accessService } = await import('@/lib/services/access-service');
-    if (scope === 'all') {
-      await accessService.requireAdmin();
-    }
+    // True only where the viewer is admin or has been access-checked for the
+    // one patient whose history they asked for.
+    let resolveIdentity: boolean;
+    const where: string[] = [];
+    const params: (string | number)[] = [];
 
-    const db = await getDB();
-    let rows: Record<string, unknown>[];
     if (patientId) {
       // Patient-scoped history must stay behind the same access rule as the
       // patient itself: admins see everything, others only patients they can
@@ -79,35 +102,48 @@ class AuditService {
       if (!admin && !(await accessService.canAccessPatient(patientId))) {
         return [];
       }
-      rows = await db.select<Record<string, unknown>[]>(
-        `SELECT * FROM audit_log WHERE patient_id = $1 ORDER BY created_at DESC LIMIT $2`,
-        [patientId, limit],
-      );
+      resolveIdentity = true;
+      where.push(`a.patient_id = $${params.length + 1}`);
+      params.push(patientId);
     } else if (scope === 'mine') {
       const me = await accessService.getCurrentClinician();
       if (!me) return [];
-      rows = await db.select<Record<string, unknown>[]>(
-        `SELECT * FROM audit_log WHERE clinician_id = $1 ORDER BY created_at DESC LIMIT $2`,
-        [me.id, limit],
-      );
+      resolveIdentity = false;
+      where.push(`a.clinician_id = $${params.length + 1}`);
+      params.push(me.id);
     } else {
-      rows = await db.select<Record<string, unknown>[]>(
-        `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT $1`,
-        [limit],
-      );
+      await accessService.requireAdmin();
+      resolveIdentity = true;
     }
 
-    return rows.map((row) => ({
-      id: row.id as string,
-      clinicianId: row.clinician_id as string,
-      clinicianName: row.clinician_name as string,
-      action: row.action as AuditAction,
-      entityType: (row.entity_type as string | null) ?? null,
-      entityId: (row.entity_id as string | null) ?? null,
-      patientId: (row.patient_id as string | null) ?? null,
-      detail: (row.detail as string | null) ?? null,
-      createdAt: new Date(row.created_at as number),
-    }));
+    if (from != null) {
+      where.push(`a.created_at >= $${params.length + 1}`);
+      params.push(from.getTime());
+    }
+    if (to != null) {
+      where.push(`a.created_at <= $${params.length + 1}`);
+      params.push(to.getTime());
+    }
+
+    const db = await getDB();
+    // AUDIT_SELECT carries the FROM + JOINs; only WHERE/ORDER/LIMIT vary.
+    const rows = await db.select<AuditRow[]>(
+      `SELECT ${AUDIT_SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY a.created_at DESC LIMIT $${params.length + 1}`,
+      [...params, limit],
+    );
+    return rows.map((row) =>
+      mapAuditRow(
+        row,
+        resolveIdentity,
+        photoAuditLabel(
+          row.photo_body_part
+            ? bodyPartDisplayLabel(row.photo_body_part as BodyPart, (row.photo_laterality ?? null) as Laterality | null)
+            : null,
+          row.photo_captured_at,
+        ),
+      ),
+    );
   }
 }
 

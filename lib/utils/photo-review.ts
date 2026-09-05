@@ -34,3 +34,63 @@ export function photoReviewStatus(
   if (reviewDueAt.getTime() <= now.getTime() + warningDays * DAY_MS) return 'due-soon';
   return 'none';
 }
+
+/**
+ * The full review state of a photo — the same due-date rules as above, plus
+ * the scheduled state and staleness measured from the photo's own last
+ * review-or-capture (mirroring the patient-level reviewStatus shape). This is
+ * what the phone link's review banners and per-photo Mark reviewed flag on,
+ * so the phone flags exactly the photos the desktop would.
+ *
+ * Kept here (dependency-free) beside the alert derivation so both derivations
+ * read from one place. Defaults mirror DEFAULT_REVIEW_WARNING_DAYS /
+ * DEFAULT_REVIEW_STALE_DAYS in types/patient.
+ */
+export type PhotoReviewState = 'none' | 'scheduled' | 'due-soon' | 'overdue' | 'stale';
+
+export function photoReviewState(
+  photo: {
+    reviewDueAt: Date | null;
+    lastReviewedAt: Date | null;
+    capturedAt: Date;
+  },
+  options: { warningDays?: number; staleDays?: number; now?: Date } = {},
+): PhotoReviewState {
+  const { warningDays = 7, staleDays = 90, now = new Date() } = options;
+
+  if (photo.reviewDueAt) {
+    // Due dates are stored day-precision (local midnight), so anything
+    // before today's local midnight is past due — today itself is "due soon".
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (photo.reviewDueAt.getTime() < todayStart.getTime()) return 'overdue';
+    if (photo.reviewDueAt.getTime() <= now.getTime() + warningDays * DAY_MS) {
+      return 'due-soon';
+    }
+    return 'scheduled';
+  }
+
+  const lastActivity = Math.max(
+    photo.lastReviewedAt?.getTime() ?? 0,
+    photo.capturedAt.getTime(),
+  );
+  if (now.getTime() - lastActivity > staleDays * DAY_MS) {
+    return 'stale';
+  }
+  return 'none';
+}
+
+/**
+ * Patient-row review state for the phone's patients list: the patient's own
+ * status, escalated when one of their photos is due or overdue at the photo
+ * level (the phone has no dashboard alert list, so that banner is the only
+ * place a photo-level review surfaces). Quieter photo states never escalate —
+ * the photo grid already shows those.
+ */
+export function escalatePatientReview(
+  patientReview: PhotoReviewState,
+  worstPhotoReview: PhotoReviewState | undefined,
+): PhotoReviewState {
+  if (worstPhotoReview === 'overdue') return 'overdue';
+  if (worstPhotoReview === 'due-soon' && patientReview !== 'overdue') return 'due-soon';
+  return patientReview;
+}

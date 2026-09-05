@@ -113,16 +113,20 @@ the signed-in clinician:
   one to save it or delete it, and anything left unclaimed for a week is
   dropped automatically.
 - **Patients** (toggleable, on by default) — the phone mirrors what you can
-  open on the PC: searchable patient list with review/consent flags and
-  patient details (DOB, treating clinician, consent scope), per-patient
-  photo grids, and a full-screen viewer with swipe navigation, double-tap
-  zoom, metadata and notes. Every thumbnail carries a small body-map badge
-  (bottom-right) showing where on the patient the photo was taken,
-  left/right aware — same on the desktop timeline and dashboard tiles.
+  open on the PC: searchable patient list with a due-for-review banner (how
+  many photos need review and the next date, like the desktop patients page),
+  review flags on each patient card that name their dates however far out
+  they sit, consent flags, patient details (DOB, treating clinician, consent
+  scope), per-patient photo grids, and a full-screen viewer with swipe
+  navigation, double-tap zoom, metadata and notes. Every thumbnail carries a
+  small body-map badge (bottom-right) showing where on the patient the photo
+  was taken, left/right aware — same on the desktop timeline and dashboard
+  tiles.
 - **Photos** — the phone twin of the desktop Photos page: every patient's
   photos in one newest-first grid, searchable by patient or body part, each
-  thumbnail naming the patient; the viewer titles photos with the patient's
-  name and swipes across the whole library.
+  thumbnail naming the patient, plus the same due-for-review banner; the
+  viewer titles photos with the patient's name and swipes across the whole
+  library.
 - **Review actions** — mark a patient reviewed, request a PDF case report
   (prepared by the desktop, then delivered to the phone — opened in the
   browser, downloaded or shared to Files from the home-screen app), compare
@@ -136,14 +140,20 @@ The phone mirrors your access exactly — it uses the same access-filtered
 queries as the desktop UI and only ever sees patients you can see; review and
 report requests run through the same permission-checked services. The pairing
 address is persistent: **pair once, and the phone stays paired** — the link
-can survive app restarts, and with **Start automatically** on (the default)
-it opens itself whenever Camog starts, so nobody scans the QR again. The
+can survive app restarts (a phone whose session expired quietly re-links
+through its saved pairing URL), and with **Start automatically** on (the
+default) it opens itself whenever Camog starts, so nobody scans the QR
+again. If a pairing ever does break (a rotated code, say), the phone lands
+on a small link page instead of a dead end — one tap restores the saved
+link, or it can scan the new QR from that page where the phone's browser
+can read QR codes. The
 phone can **add Camog to its home screen** (with the app logo) from its
 browser menu and launch it like an app. The link closes itself after 30
 minutes of inactivity, ending the session from the dialog stops it now, and
 sessions are audited. The connection is local and unencrypted, so end it
 when you are done. The phone interface starts in light mode; dark is one
-tap away and remembered per phone.
+tap away, remembered per phone, and every surface follows it (compare keeps
+its photo panes black in both, like the desktop dialog).
 
 Body parts on paired regions (arms, hands, legs, feet) record the patient's
 side — pick it on the body map or with the Side control in the capture form

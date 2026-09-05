@@ -20,7 +20,7 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
 import { NotAuthenticatedError } from '@/lib/validators/errors';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 
 const ACTIVITY_EVENTS: (keyof WindowEventMap)[] = [
@@ -139,9 +139,8 @@ export function IdleLockOverlay({ timeoutMs }: { timeoutMs: number }) {
         <form onSubmit={handleUnlock} className="space-y-3">
           <div className="space-y-1.5">
             <Label htmlFor="idle-lock-passcode">Passcode</Label>
-            <Input
+            <PasswordInput
               id="idle-lock-passcode"
-              type="password"
               autoComplete="current-password"
               autoFocus
               value={passcode}

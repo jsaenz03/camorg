@@ -572,13 +572,29 @@ export function PhotoDetailDialog({
                 )}
                 <div className="space-y-1.5">
                   <Label htmlFor="photo-review-due">Next review date (optional)</Label>
-                  <Input
-                    id="photo-review-due"
-                    type="date"
-                    value={reviewDueInput}
-                    onChange={(e) => setReviewDueInput(e.target.value)}
-                    disabled={isSaving || isDeleting || isReviewing}
-                  />
+                  {reviewDueInput ? (
+                    <Input
+                      id="photo-review-due"
+                      type="date"
+                      value={reviewDueInput}
+                      onChange={(e) => setReviewDueInput(e.target.value)}
+                      disabled={isSaving || isDeleting || isReviewing}
+                    />
+                  ) : (
+                    // No date is ever pre-filled: an empty date input can render
+                    // with today's date in some webviews, which reads as
+                    // scheduled when it isn't — offer an explicit setter instead.
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setReviewDueInput(format(new Date(), 'yyyy-MM-dd'))}
+                      disabled={isSaving || isDeleting || isReviewing}
+                    >
+                      <CalendarCheck className="size-4" />
+                      Set a review date
+                    </Button>
+                  )}
                   <p className="text-xs text-muted-foreground">{dueHint}</p>
                 </div>
                 <p className="text-xs text-muted-foreground">

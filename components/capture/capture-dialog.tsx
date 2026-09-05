@@ -46,7 +46,8 @@ import {
 } from '@/lib/services/pending-photo-service';
 import { photoService } from '@/lib/services/photo-service';
 import { patientService } from '@/lib/services/patient-service';
-import { companionService } from '@/lib/services/companion-service';
+import { companionService, consumeReviewFollowUp } from '@/lib/services/companion-service';
+import { claimRemoteCapture } from '@/lib/utils/capture-dedupe';
 import { parseDobInput } from '@/lib/utils/date-formatting';
 import type { CapturePrefill } from '@/components/capture/capture-provider';
 import {
@@ -111,6 +112,25 @@ export function CaptureDialog({ open, onOpenChange, patientName, patientDob, lin
   );
 }
 
+/** A review follow-up's save-time series link plus the prefills that make the
+ * saved snap land on the original's patient and location — without them, a
+ * typed name variant resolves to a different patient and the series link is
+ * silently skipped. */
+interface FollowUpLink {
+  linkPhotoId: string;
+  patientName?: string;
+  patientDob?: string;
+  prefill?: CapturePrefill;
+}
+
+/** The patient a phone snap was addressed to (the phone's patient-screen
+ * Take photo): prefills the form's patient fields the same way a
+ * capture-for-patient visit does. */
+interface PatientHint {
+  patientName: string;
+  patientDob?: string;
+}
+
 /** One capture visit: mounts on dialog open, unmounts (state reset) on close. */
 function CaptureFlow({
   patientName,
@@ -134,6 +154,44 @@ function CaptureFlow({
   // Tray photo currently loaded into the form; its file is deleted on save
   // or discard, and it stays listed until then so nothing staged goes dark.
   const [activePendingId, setActivePendingId] = useState<string | null>(null);
+  // Series link for a phone review follow-up (sidecar tag or the armed
+  // follow-up on a straight-to-form snap): saving joins the original's
+  // lesion series, exactly like the desktop's review-follow-up capture.
+  const [pendingLink, setPendingLink] = useState<FollowUpLink | null>(null);
+  // The patient a phone snap was addressed to; resolved before the photo
+  // enters the form so its prefill lands on the first render.
+  const [patientHint, setPatientHint] = useState<PatientHint | null>(null);
+
+  /** Resolve a follow-up's link + patient/location prefill from its original photo. */
+  const resolveFollowUp = async (photoId: string): Promise<FollowUpLink | null> => {
+    const original = await photoService.getPhotoById(photoId).catch(() => null);
+    if (!original || original.isDeleted) return null;
+    const patient = await patientService.getPatientById(original.patientId).catch(() => null);
+    return {
+      linkPhotoId: photoId,
+      patientName: patient?.name,
+      patientDob: patient?.dateOfBirth ? format(patient.dateOfBirth, 'd/M/yyyy') : undefined,
+      prefill: {
+        bodyPart: original.bodyPart,
+        laterality: original.laterality ?? undefined,
+        subpart: original.subpart ?? '',
+        pinX: original.pinX ?? undefined,
+        pinY: original.pinY ?? undefined,
+        pinSpace: original.pinSpace ?? undefined,
+        pinView: original.pinView ?? undefined,
+      },
+    };
+  };
+
+  /** Resolve a phone snap's capture-for-patient hint from its stamped id. */
+  const resolvePatientHint = async (patientId: string): Promise<PatientHint | null> => {
+    const patient = await patientService.getPatientById(patientId).catch(() => null);
+    if (!patient) return null;
+    return {
+      patientName: patient.name,
+      patientDob: patient.dateOfBirth ? format(patient.dateOfBirth, 'd/M/yyyy') : undefined,
+    };
+  };
 
   // Read-only licence gate — the capture flow is the core licensed capability.
   const { writable, loading: licenceLoading, openActivation } = useLicence();
@@ -158,7 +216,18 @@ function CaptureFlow({
       const draft = readCaptureDraft();
       if (draft) {
         const linked = entries.find((e) => e.capturedAt === draft.capturedAt);
-        if (linked) setActivePendingId(linked.id);
+        if (linked) {
+          setActivePendingId(linked.id);
+          if (linked.linkPhotoId) {
+            void resolveFollowUp(linked.linkPhotoId).then((link) => {
+              if (link) setPendingLink(link);
+            });
+          } else if (linked.patientId) {
+            void resolvePatientHint(linked.patientId).then((hint) => {
+              if (hint) setPatientHint(hint);
+            });
+          }
+        }
         try {
           const photo = await draftToCapturedPhoto(draft);
           setCapturedPhoto(photo);
@@ -179,21 +248,45 @@ function CaptureFlow({
   useEffect(() => {
     setCaptureScreenActive(true);
     let unlistenPhoto: UnlistenFn | undefined;
+    // A listen that resolves after this effect has been torn down (a fast
+    // dialog close, or dev StrictMode's mount-cleanup-mount) would otherwise
+    // leak and double-handle every later photo for the whole app session.
+    let disposed = false;
     void (async () => {
-      unlistenPhoto = await listen<RemoteCameraPhotoEvent>(
+      const unlisten = await listen<RemoteCameraPhotoEvent>(
         'remote-camera-photo',
         async (event) => {
+          // This dialog owns phone photos while mounted, so it claims the
+          // capture here: a repeat claim is a resent delivery and is dropped.
+          if (!claimRemoteCapture(event.payload.captureId)) return;
           try {
             const photo = await remotePhotoToCapturedPhoto(event.payload.data);
+            // A phone review follow-up ("Snap photo") arms a series link for
+            // the next snap; a snap from a patient screen carries that
+            // patient's id. Both resolve their prefills BEFORE the photo
+            // enters the form, so the form renders already addressed.
+            const linkPhotoId = consumeReviewFollowUp();
+            const link = linkPhotoId ? await resolveFollowUp(linkPhotoId).catch(() => null) : null;
+            const hint = !link && event.payload.patientId
+              ? await resolvePatientHint(event.payload.patientId).catch(() => null)
+              : null;
             if (stateRef.current.capturedPhoto || !stateRef.current.writable) {
-              const entry = await storePendingPhoto(photo);
+              const entry = await storePendingPhoto(
+                photo,
+                linkPhotoId ?? undefined,
+                event.payload.patientId ?? undefined,
+              );
               setPending((p) => [...p, entry].sort((a, b) => a.capturedAt - b.capturedAt));
               toast('Photo received from your phone', {
-                description: 'It is waiting in the review tray below.',
+                description: linkPhotoId
+                  ? 'Review follow-up — saving it links it into the reviewed photo’s series.'
+                  : 'It is waiting in the review tray below.',
               });
               return;
             }
             setCapturedPhoto(photo);
+            setPendingLink(link);
+            setPatientHint(hint);
             if (!saveCaptureDraft(photo)) {
               console.warn('[capture] draft could not be persisted (storage quota)');
             }
@@ -204,8 +297,14 @@ function CaptureFlow({
           }
         },
       );
+      if (disposed) {
+        unlisten();
+        return;
+      }
+      unlistenPhoto = unlisten;
     })();
     return () => {
+      disposed = true;
       setCaptureScreenActive(false);
       unlistenPhoto?.();
     };
@@ -225,6 +324,9 @@ function CaptureFlow({
 
   const handlePhotoCaptured = (photo: CapturedPhoto) => {
     setCapturedPhoto(photo);
+    // A fresh local capture is never a phone review follow-up.
+    setPendingLink(null);
+    setPatientHint(null);
     if (!saveCaptureDraft(photo)) {
       console.warn('[capture] draft could not be persisted (storage quota)');
     }
@@ -242,8 +344,17 @@ function CaptureFlow({
     }
     try {
       const photo = await loadPendingPhoto(id);
+      // Resolve the follow-up link / capture-for hint before the form mounts
+      // so its prefill lands.
+      const entry = pending.find((e) => e.id === id);
+      const link = entry?.linkPhotoId ? await resolveFollowUp(entry.linkPhotoId).catch(() => null) : null;
+      const hint = !link && entry?.patientId
+        ? await resolvePatientHint(entry.patientId).catch(() => null)
+        : null;
       setActivePendingId(id);
       setCapturedPhoto(photo);
+      setPendingLink(link);
+      setPatientHint(hint);
       // Best-effort mirror; the staged file is the real recovery path here.
       saveCaptureDraft(photo);
     } catch (error) {
@@ -260,6 +371,8 @@ function CaptureFlow({
     if (activePendingId === id) {
       setActivePendingId(null);
       setCapturedPhoto(null);
+      setPendingLink(null);
+      setPatientHint(null);
       clearCaptureDraft();
     }
   };
@@ -278,6 +391,8 @@ function CaptureFlow({
     if (activePendingId) {
       setActivePendingId(null);
       setCapturedPhoto(null);
+      setPendingLink(null);
+      setPatientHint(null);
       clearCaptureDraft();
     }
     toast.info('Phone photos discarded');
@@ -342,11 +457,14 @@ function CaptureFlow({
       // 2. Resolve the review-follow-up link (if any): the new photo joins
       // the original's lesion series, or starts one anchored to it. The
       // original is only touched once the follow-up is actually saved —
-      // cancelling the capture leaves it untouched.
+      // cancelling the capture leaves it untouched. The link comes either
+      // from a desktop review-follow-up capture or from a phone snap staged
+      // after the phone marked a photo reviewed.
       let linkGroup: string | null = null;
       let needsOriginalLink: string | null = null;
-      if (linkPhotoId) {
-        const original = await photoService.getPhotoById(linkPhotoId).catch(() => null);
+      const followUpPhotoId = pendingLink?.linkPhotoId ?? linkPhotoId;
+      if (followUpPhotoId) {
+        const original = await photoService.getPhotoById(followUpPhotoId).catch(() => null);
         // A name edit that filed the photo under a different patient (or a
         // deleted original) silently skips the link — never cross-links.
         if (original && !original.isDeleted && original.patientId === patientId) {
@@ -387,6 +505,7 @@ function CaptureFlow({
 
       toast.success(linkGroup ? 'Photo saved — linked with the original photo' : 'Photo saved');
       clearCaptureDraft();
+      setPatientHint(null);
       // The staged copy has done its job once the photo is in the library.
       if (activePendingId) {
         const stagedId = activePendingId;
@@ -446,6 +565,8 @@ function CaptureFlow({
       setActivePendingId(null);
     }
     setCapturedPhoto(null);
+    setPendingLink(null);
+    setPatientHint(null);
     clearCaptureDraft();
   };
 
@@ -616,19 +737,32 @@ function CaptureFlow({
             <CardContent>
               {capturedPhoto ? (
                 <PhotoMetadataForm
+                  // The key remounts the form when a late-resolving prefill
+                  // lands (a restored draft's follow-up link or patient
+                  // hint resolves after the photo entered the form).
+                  key={
+                    pendingLink
+                      ? `followup-${pendingLink.linkPhotoId}`
+                      : patientHint
+                        ? `hint-${patientHint.patientName}`
+                        : 'capture-form'
+                  }
                   onSubmit={handleFormSubmit}
                   onCancel={handleCancel}
                   isSubmitting={isSubmitting}
                   defaultValues={{
-                    patientName: patientName ?? '',
-                    patientDob: patientDob ?? '',
-                    bodyPart: prefill?.bodyPart,
-                    laterality: prefill?.laterality,
-                    subpart: prefill?.subpart ?? '',
-                    pinX: prefill?.pinX,
-                    pinY: prefill?.pinY,
-                    pinSpace: prefill?.pinSpace,
-                    pinView: prefill?.pinView,
+                    // The photo's own address wins: a review follow-up
+                    // resolves from its original, then a patient-tagged
+                    // phone snap, then the dialog's capture-for context.
+                    patientName: pendingLink?.patientName ?? patientHint?.patientName ?? patientName ?? '',
+                    patientDob: pendingLink?.patientDob ?? patientHint?.patientDob ?? patientDob ?? '',
+                    bodyPart: (pendingLink?.prefill ?? prefill)?.bodyPart,
+                    laterality: (pendingLink?.prefill ?? prefill)?.laterality,
+                    subpart: (pendingLink?.prefill ?? prefill)?.subpart ?? '',
+                    pinX: (pendingLink?.prefill ?? prefill)?.pinX,
+                    pinY: (pendingLink?.prefill ?? prefill)?.pinY,
+                    pinSpace: (pendingLink?.prefill ?? prefill)?.pinSpace,
+                    pinView: (pendingLink?.prefill ?? prefill)?.pinView,
                   }}
                 />
               ) : (

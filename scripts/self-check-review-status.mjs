@@ -15,6 +15,7 @@ import {
   DEFAULT_REVIEW_WARNING_DAYS,
   DEFAULT_REVIEW_STALE_DAYS,
 } from '../types/patient.ts';
+import { escalatePatientReview, photoReviewState } from '../lib/utils/photo-review.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 // Fixed "now": 30 Aug 2026, 10:00 local — keeps every case deterministic.
@@ -113,5 +114,43 @@ assert.equal(
 // Migration defaults match the docs.
 assert.equal(DEFAULT_REVIEW_WARNING_DAYS, 7);
 assert.equal(DEFAULT_REVIEW_STALE_DAYS, 90);
+
+// ---- photoReviewState (per-photo flavour: staleness runs off the photo) --
+
+// Same due-date rules as the patient: due yesterday overdue, today due-soon,
+// a week out at the warning edge due-soon, past it scheduled.
+const photoBase = { reviewDueAt: null, lastReviewedAt: null, capturedAt: new Date(now.getTime() - 5 * DAY) };
+assert.equal(photoReviewState({ ...photoBase, reviewDueAt: new Date(todayStart.getTime() - DAY) }, { now }), 'overdue');
+assert.equal(photoReviewState({ ...photoBase, reviewDueAt: todayStart }, { now }), 'due-soon');
+assert.equal(photoReviewState({ ...photoBase, reviewDueAt: new Date(now.getTime() + 7 * DAY) }, { now, warningDays: 7 }), 'due-soon');
+assert.equal(photoReviewState({ ...photoBase, reviewDueAt: new Date(now.getTime() + 7 * DAY + 1000) }, { now, warningDays: 7 }), 'scheduled');
+
+// No schedule: a recent capture is none; a capture older than the stale
+// window (never reviewed) goes stale; a recent review rescues it.
+assert.equal(photoReviewState(photoBase, { now }), 'none', 'recent capture must be none');
+assert.equal(
+  photoReviewState({ ...photoBase, capturedAt: new Date(now.getTime() - 91 * DAY) }, { now }),
+  'stale',
+  'old unreviewed photo must be stale',
+);
+assert.equal(
+  photoReviewState(
+    { ...photoBase, capturedAt: new Date(now.getTime() - 91 * DAY), lastReviewedAt: new Date(now.getTime() - 2 * DAY) },
+    { now },
+  ),
+  'none',
+  'recent review must rescue an old photo',
+);
+
+// Patient rows escalate on their photos' worst state — a photo due/overdue
+// flags the patient even when the patient record itself is quiet; quieter
+// photo states never change the patient's own banner.
+assert.equal(escalatePatientReview('none', 'overdue'), 'overdue', 'photo overdue flags the patient');
+assert.equal(escalatePatientReview('scheduled', 'overdue'), 'overdue', 'photo overdue beats a scheduled patient date');
+assert.equal(escalatePatientReview('overdue', 'due-soon'), 'overdue', 'patient overdue never downgrades');
+assert.equal(escalatePatientReview('none', 'due-soon'), 'due-soon', 'photo due-soon flags the patient');
+assert.equal(escalatePatientReview('none', 'scheduled'), 'none', 'quiet photo state never escalates');
+assert.equal(escalatePatientReview('stale', 'stale'), 'stale', 'stale stands on its own');
+assert.equal(escalatePatientReview('none', undefined), 'none', 'no photos leaves the patient row alone');
 
 console.log('review-status self-check passed');

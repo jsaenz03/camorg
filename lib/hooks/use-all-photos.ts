@@ -16,6 +16,7 @@ import type { PhotoRecord } from '@/types/photo';
 import type { BodyPart } from '@/types/body-part';
 import { photoService } from '@/lib/services/photo-service';
 import { patientService } from '@/lib/services/patient-service';
+import { ATTENTION_CHANGED_EVENT } from '@/lib/services/attention-events';
 
 export interface PhotoWithPatient extends PhotoRecord {
   patientName: string;
@@ -109,6 +110,14 @@ export function useAllPhotos(options: UseAllPhotosOptions = {}): UseAllPhotosRet
   const refresh = useCallback(async () => {
     await load(true);
   }, [load]);
+
+  // Review-affecting actions land anywhere (the phone companion, photo
+  // dialogs) and fire the attention event; tiles carry due-review flags, so
+  // refetch in the background to keep them in step with the counters.
+  useEffect(() => {
+    window.addEventListener(ATTENTION_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(ATTENTION_CHANGED_EVENT, refresh);
+  }, [refresh]);
 
   return {
     photos,

@@ -241,6 +241,22 @@ for (const needle of [
 ]) {
   check(`notification-service wires ${needle}`, notificationSrc.includes(needle));
 }
+// Banner/counter parity: every surface that shows review state must refetch
+// when a review-affecting action fires the attention event. A phone review
+// stamp used to update the counters while the patients-page due banners
+// stalled until a reload.
+for (const [file, what] of [
+  ['lib/hooks/use-notifications.ts', 'alert counters'],
+  ['lib/hooks/use-patients.ts', 'patient row review badges'],
+  ['lib/hooks/use-photos.ts', 'timeline due flags'],
+  ['lib/hooks/use-all-photos.ts', 'photos grid due flags'],
+  ['app/(dashboard)/patients/page.tsx', 'patients-page due banners'],
+]) {
+  check(
+    `${what} refetch on attention events`,
+    read(file).includes('ATTENTION_CHANGED_EVENT'),
+  );
+}
 const needsAttentionSrc = read('components/dashboard/needs-attention.tsx');
 for (const kind of ['photo-review-overdue', 'photo-review-due-soon']) {
   check(`needs-attention maps ${kind}`, needsAttentionSrc.includes(`'${kind}'`));
@@ -330,10 +346,11 @@ check(
   read('components/photo/photo-card.tsx').includes('BodyMapBadge'),
 );
 
-// 14. Companion actions: the shell relays review/report requests, stages the
-//     report, tracks idle time; the provider listens and auto-ends.
+// 14. Companion actions: the shell relays photo-review/report requests,
+//     stages the report, tracks idle time; the provider listens and
+//     auto-ends.
 for (const needle of [
-  '"review"',
+  '"photo-review"',
   '"report-request"',
   '"report"',
   'fn stage_remote_report',
@@ -350,7 +367,7 @@ check(
   /allowedPatients[\s\S]*?stage_remote_report/.test(read('lib/services/companion-service.ts')),
 );
 const providerSrc = read('components/companion/companion-provider.tsx');
-for (const needle of ['companion-review-request', 'companion-report-request', 'remote_camera_idle_ms', 'IDLE_LIMIT_MS']) {
+for (const needle of ['companion-photo-review-request', 'companion-report-request', 'remote_camera_idle_ms', 'IDLE_LIMIT_MS']) {
   check(`companion provider: ${needle}`, providerSrc.includes(needle));
 }
 

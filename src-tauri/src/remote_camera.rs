@@ -9,8 +9,9 @@
 // patient away from the desk. The webview owns all data decisions: it pushes
 // an access-filtered manifest plus an explicit filename whitelist via
 // update_remote_library, and this shell only ever serves files on that
-// whitelist from the photos directory. No DB access lives here. The phone can
-// additionally ask the desktop to mark a patient reviewed or prepare a case
+// whitelist from the photos directory. No DB access lives here. The phone
+// can also ask the desktop to mark a photo reviewed (which counts as the
+// patient's review too, exactly like the desktop dialog) or prepare a case
 // report; both arrive as Tauri events, the webview does the work through the
 // normal services, and a finished report is staged back via
 // stage_remote_report for the phone to download.
@@ -26,7 +27,7 @@ use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -37,7 +38,7 @@ use tiny_http::{Header, Method, Response, Server};
 
 const PHOTO_EVENT: &str = "remote-camera-photo";
 const STATUS_EVENT: &str = "remote-camera-status";
-const REVIEW_EVENT: &str = "companion-review-request";
+const PHOTO_REVIEW_EVENT: &str = "companion-photo-review-request";
 const REPORT_EVENT: &str = "companion-report-request";
 // Generous ceiling: a 12MP JPEG straight from a phone camera is ~4-8 MB.
 // ponytail: fixed cap, no streaming; raise if phones ever send RAW/HEIC.
@@ -69,9 +70,65 @@ pub struct RemoteCameraInfo {
   pub urls: Vec<RemoteCameraUrl>,
 }
 
+// camelCase so the payload keys match the webview's contract (captureId,
+// patientId) — snake_case keys would silently read as undefined there.
 #[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct RemoteCameraPhoto {
   data: String,
+  /// Id the phone minted when it sent this capture (X-Capture-Id). The
+  /// webview claims it before staging so a transport-level resend of the
+  /// same POST stages one photo, not two.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  capture_id: Option<String>,
+  /// Patient the phone said it was capturing for (X-Patient-Id), when the
+  /// snap was started from a patient's screen. Only an id the shared
+  /// library actually allows is relayed; the webview prefills the photo's
+  /// metadata form from it.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  patient_id: Option<String>,
+}
+
+/// The phone stamps every photo POST with an id minted at send time; the
+/// webview claims it before staging so a transport-level resend of the same
+/// request (a dropped keep-alive connection replayed below the app — both
+/// copies arrive complete) stages one photo, not two. Strict shape — it rides
+/// in event payloads and diagnostics lines — and a missing or malformed id
+/// simply means "no dedupe key" (an old phone page).
+fn capture_id_from_headers(headers: &[Header]) -> Option<String> {
+  let raw = headers
+    .iter()
+    .find(|h| h.field.equiv("X-Capture-Id"))
+    .map(|h| h.value.as_str())?;
+  strict_header_id(raw)
+}
+
+/// The X-Patient-Id companion of the capture id: same strict shape, but it
+/// must also be a patient the shared library actually advertises (pass the
+/// manifest's allowed set, or None with no library shared) — the webview
+/// resolves a patient record from it, so a stale or forged id is dropped
+/// here rather than prefilled into a form. Pure; unit-tested without the
+/// global library state.
+fn patient_id_from_headers(
+  headers: &[Header],
+  allowed_patients: Option<&HashSet<String>>,
+) -> Option<String> {
+  let raw = headers
+    .iter()
+    .find(|h| h.field.equiv("X-Patient-Id"))
+    .map(|h| h.value.as_str())?;
+  let id = strict_header_id(raw)?;
+  if allowed_patients?.contains(&id) { Some(id) } else { None }
+}
+
+/// Shape rules shared by the phone's id headers: non-empty, bounded, and
+/// alphanumeric-or-dash only.
+fn strict_header_id(raw: &str) -> Option<String> {
+  let id = raw.trim();
+  if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    return None;
+  }
+  Some(id.to_string())
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -79,12 +136,21 @@ struct RemoteCameraStatus {
   connected: bool,
 }
 
-/// Body of the phone's control requests (mark reviewed / prepare report).
-/// Serialized back out as the Tauri event payload (camelCase both ways).
+/// Body of the phone's control requests (prepare report). Serialized back
+/// out as the Tauri event payload (camelCase both ways).
 #[derive(serde::Serialize, Deserialize)]
 struct PatientRequest {
   #[serde(rename = "patientId")]
   patient_id: String,
+}
+
+/// Body of the phone's photo review request: mark one shared photo reviewed,
+/// optionally arming the series follow-up for the next photo it snaps.
+#[derive(serde::Serialize, Deserialize)]
+struct PhotoReviewRequest {
+  #[serde(rename = "photoId")]
+  photo_id: String,
+  snap: bool,
 }
 
 struct RemoteCamera {
@@ -118,6 +184,43 @@ struct LibraryState {
 
 static REMOTE_CAMERA: Mutex<Option<RemoteCamera>> = Mutex::new(None);
 static LIBRARY: Mutex<Option<LibraryState>> = Mutex::new(None);
+
+// Version of the shared library, bumped on every publish and clear, with a
+// condvar the library long-poll sleeps on. Publish takes the lock only to
+// notify — a waiter checks the generation under the same lock before it
+// sleeps, so a change landing in that window can never be slept through.
+static LIBRARY_GEN: AtomicU64 = AtomicU64::new(0);
+static LIBRARY_GEN_LOCK: Mutex<()> = Mutex::new(());
+static LIBRARY_GEN_CV: Condvar = Condvar::new();
+
+fn signal_library_changed() {
+  LIBRARY_GEN.fetch_add(1, Ordering::Release);
+  let lock = LIBRARY_GEN_LOCK.lock().unwrap();
+  LIBRARY_GEN_CV.notify_all();
+  drop(lock);
+}
+
+/// Hold a long-poll until the shared library changes. Returns true when a
+/// publish or clear landed since this call started, false when the link shut
+/// down or `cap` elapsed first (the phone then simply asks again).
+fn wait_for_library_change(shutdown: &AtomicBool, cap: Duration) -> bool {
+  let mut lock = LIBRARY_GEN_LOCK.lock().unwrap();
+  let seen = LIBRARY_GEN.load(Ordering::Acquire);
+  let deadline = Instant::now() + cap;
+  loop {
+    if LIBRARY_GEN.load(Ordering::Acquire) != seen {
+      return true;
+    }
+    if shutdown.load(Ordering::Relaxed) || Instant::now() >= deadline {
+      return false;
+    }
+    let (woken, _) = LIBRARY_GEN_CV
+      .wait_timeout(lock, deadline.saturating_duration_since(Instant::now()))
+      .unwrap();
+    lock = woken;
+  }
+}
+
 // The case report the webview has prepared for the phone, if any.
 static STAGED_REPORT: Mutex<Option<PathBuf>> = Mutex::new(None);
 
@@ -651,10 +754,10 @@ fn handle_image(request: tiny_http::Request, filename: &str) {
   }
 }
 
-/// Shared tail of the review / report control requests: read the small JSON
-/// body, gate the patient against the shared manifest, and relay it to the
-/// webview as a Tauri event. The actual work happens webview-side through the
-/// normal services (access checks, DB writes, report generation).
+/// Shared tail of the report control request: read the small JSON body, gate
+/// the patient against the shared manifest, and relay it to the webview as a
+/// Tauri event. The actual work happens webview-side through the normal
+/// services (access checks, DB writes, report generation).
 fn handle_patient_request<R: Runtime>(
   app: &AppHandle<R>,
   mut request: tiny_http::Request,
@@ -693,6 +796,48 @@ fn handle_patient_request<R: Runtime>(
   }
 }
 
+/// The phone's "mark this photo reviewed" request: gate the photo against the
+/// shared manifest (photo ids are exactly the whitelisted `<id>.jpg` names)
+/// and relay `{photoId, snap}` to the webview, which runs the same review
+/// service the desktop dialog does and, for `snap`, arms the series
+/// follow-up for the phone's next photo.
+fn handle_photo_review_request<R: Runtime>(
+  app: &AppHandle<R>,
+  mut request: tiny_http::Request,
+) {
+  let outcome = (|| -> Result<(), (u16, &'static str)> {
+    if request.body_length().is_some_and(|len| len > MAX_CONTROL_BODY) {
+      return Err((413, "Request too large"));
+    }
+    let mut body = Vec::new();
+    let read = request
+      .as_reader()
+      .take(MAX_CONTROL_BODY as u64 + 1)
+      .read_to_end(&mut body);
+    if read.is_err() {
+      return Err((400, "Bad request"));
+    }
+    let parsed: PhotoReviewRequest =
+      serde_json::from_slice(&body).map_err(|_| (400, "Bad request"))?;
+    let allowed = LIBRARY
+      .lock()
+      .unwrap()
+      .as_ref()
+      .is_some_and(|lib| lib.allowed_files.contains(&format!("{}.jpg", parsed.photo_id)));
+    if !allowed {
+      return Err((404, "Not found"));
+    }
+    app
+      .emit(PHOTO_REVIEW_EVENT, &parsed)
+      .map_err(|_| (500, "Could not reach the app"))?;
+    Ok(())
+  })();
+  match outcome {
+    Ok(()) => respond_text(request, 200, "ok"),
+    Err((status, msg)) => respond_text(request, status, msg),
+  }
+}
+
 fn handle_report_download(request: tiny_http::Request) {
   let staged = STAGED_REPORT.lock().unwrap().clone();
   let Some(path) = staged else {
@@ -714,12 +859,21 @@ fn handle_report_download(request: tiny_http::Request) {
 
 // Runtime-generic so the mock runtime can drive the same wiring the live
 // app uses, in the live-HTTP integration test below.
+/// The one brand asset served without a credential (wired in handle_request):
+/// iOS's home-screen icon loader fetches apple-touch-icon as a bare request
+/// that carries no cookies, so behind the auth gate it 404'd and newly saved
+/// icons lost the app logo. Static bytes, no secrets in the response.
+fn is_public_asset(url: &str) -> bool {
+  url == "/logo.png"
+}
+
 fn handle_request<R: Runtime>(
   app: &AppHandle<R>,
   token: &str,
   sessions: &SessionStore,
   last_seen_ms: &AtomicU64,
   guard: &AuthGuard,
+  shutdown: &AtomicBool,
   mut request: tiny_http::Request,
 ) {
   let url = request.url().to_string();
@@ -729,6 +883,18 @@ fn handle_request<R: Runtime>(
     .iter()
     .find(|h| h.field.equiv("Cookie"))
     .map(|h| h.value.as_str());
+
+  // The public brand asset comes first: it must answer the cookieless icon
+  // fetch (see is_public_asset) and never count toward the throttle or the
+  // connected indicator. Everything else goes through the gate below.
+  // The manifest deliberately stays gated — its start_url embeds the
+  // pairing code.
+  if request.method() == &Method::Get && is_public_asset(&url) {
+    let _ = request.respond(
+      Response::from_data(LOGO_PNG.to_vec()).with_header(content_type("image/png")),
+    );
+    return;
+  }
 
   // Auth order (Tier 2): the live pairing code exchanges for a session
   // cookie; a live cookie routes; everything else counts toward the
@@ -765,10 +931,11 @@ fn handle_request<R: Runtime>(
     // path.
     AuthAction::Authenticated => url.strip_prefix('/').unwrap_or(&url),
     AuthAction::Rejected { noted } => {
-      // Wrong code, or a missing/dead cookie. Same 404 as any unknown
-      // route, but the source is tracked and throttled — a scanner gets
-      // refused quietly after a burst. Nothing from the URL or cookie is
-      // logged: either may contain a guessed or leaked secret fragment.
+      // Wrong code, or a missing/dead cookie. The same response for every
+      // rejected request, but the source is tracked and throttled — a
+      // scanner gets refused quietly after a burst. Nothing from the URL
+      // or cookie is logged: either may contain a guessed or leaked
+      // secret fragment.
       if let Some(ip) = source_ip {
         match noted {
           Some(true) => crate::diagnostics::record(
@@ -788,7 +955,23 @@ fn handle_request<R: Runtime>(
           None => {}
         }
       }
-      respond_text(request, 404, "Not found");
+      // GETs get the link page — a phone whose pairing died needs a way
+      // back in (restore the saved link or scan the QR again), not a bare
+      // 404 dead end. Static and secret-free, and identical for every
+      // rejected request, so it widens no oracle. The 404 status is
+      // load-bearing: it is how the companion page tells "credential dead"
+      // apart from "server gone" (a 200 here would read as connected), and
+      // a browser navigating straight to a dead link still renders the
+      // body. Non-GETs (photo posts, beacons) keep the plain refusal.
+      if request.method() == &Method::Get {
+        let _ = request.respond(
+          Response::from_string(LINK_HTML)
+            .with_status_code(404)
+            .with_header(content_type("text/html; charset=utf-8")),
+        );
+      } else {
+        respond_text(request, 404, "Not found");
+      }
       return;
     }
   };
@@ -808,8 +991,21 @@ fn handle_request<R: Runtime>(
     // Phone page pings on load so the desktop knows pairing succeeded.
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: true });
     respond_text(request, 200, "ok");
+  } else if method == Method::Get && path == "link-code" {
+    // Tells the paired phone its own pairing code so a dead session can
+    // heal itself through the saved /t/<code>/ URL (and the link page can
+    // offer Restore). Session-gated: a live session is the same class of
+    // credential as the code, so this hands nothing to a new principal.
+    respond_json(request, 200, format!("{{\"code\":\"{token}\"}}"));
   } else if method == Method::Get && path == "library" {
     handle_library(request);
+  } else if method == Method::Get && path == "library-wait" {
+    // Long-poll: hold until the shared library changes (desktop publish or
+    // share-off clear), the link shuts down, or the cap elapses. The phone
+    // re-opens this the moment it answers, so manifest updates ride events —
+    // review dates, new photos — instead of refresh timers.
+    let changed = wait_for_library_change(shutdown, Duration::from_secs(25));
+    respond_json(request, 200, format!(r#"{{"changed":{changed}}}"#));
   } else if method == Method::Get && path.starts_with("img/") {
     handle_image(request, &path["img/".len()..]);
   } else if method == Method::Get && path == "report" {
@@ -819,8 +1015,8 @@ fn handle_request<R: Runtime>(
     // "connected" indicator instead of showing it forever.
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: false });
     respond_text(request, 200, "ok");
-  } else if method == Method::Post && path == "review" {
-    handle_patient_request(app, request, REVIEW_EVENT);
+  } else if method == Method::Post && path == "photo-review" {
+    handle_photo_review_request(app, request);
   } else if method == Method::Post && path == "report-request" {
     handle_patient_request(app, request, REPORT_EVENT);
   } else if method == Method::Post && path == "photo" {
@@ -842,8 +1038,26 @@ fn handle_request<R: Runtime>(
       return;
     }
 
+    let capture_id = capture_id_from_headers(request.headers());
+    let patient_id = LIBRARY.lock().unwrap().as_ref().and_then(|lib| {
+      patient_id_from_headers(request.headers(), Some(&lib.allowed_patients))
+    });
+    // One line per delivery: a transport-level resend shows up as two lines
+    // sharing a capture id — the receipt for the webview's dedupe dropping
+    // the repeat instead of staging the photo twice.
+    crate::diagnostics::record(
+      crate::diagnostics::Level::Info,
+      "phone-camera",
+      &match &capture_id {
+        Some(id) => format!("Received photo from phone ({id}, {} bytes).", body.len()),
+        None => format!("Received photo from phone ({} bytes).", body.len()),
+      },
+      None,
+    );
     let photo = RemoteCameraPhoto {
       data: base64::engine::general_purpose::STANDARD.encode(&body),
+      capture_id,
+      patient_id,
     };
     match app.emit(PHOTO_EVENT, photo) {
       Ok(()) => respond_text(request, 200, "ok"),
@@ -874,7 +1088,20 @@ fn spawn_handler<R: Runtime>(
   std::thread::spawn(move || {
     while !shutdown.load(Ordering::Relaxed) {
       match server.recv() {
-        Ok(request) => handle_request(&app, &token, &sessions, &last_seen_ms, &guard, request),
+        Ok(request) => {
+          // One thread per request: the library long-poll holds its
+          // connection open for up to 25s and must not starve photo
+          // uploads, hello, or anything else behind the sequential recv.
+          let app = app.clone();
+          let token = token.clone();
+          let sessions = Arc::clone(&sessions);
+          let last_seen_ms = Arc::clone(&last_seen_ms);
+          let shutdown = Arc::clone(&shutdown);
+          let guard = Arc::clone(&guard);
+          std::thread::spawn(move || {
+            handle_request(&app, &token, &sessions, &last_seen_ms, &guard, &shutdown, request);
+          });
+        }
         // stop_remote_camera() unblocks the listener to wake us up.
         Err(_) => break,
       }
@@ -1059,6 +1286,8 @@ pub fn update_remote_library(
     allowed_files: allowed_files.into_iter().collect(),
     allowed_patients: allowed_patients.into_iter().collect(),
   });
+  // Wake any held library long-poll so the phone sees this publish now.
+  signal_library_changed();
   Ok(())
 }
 
@@ -1068,6 +1297,8 @@ pub fn update_remote_library(
 pub fn clear_remote_library() {
   *LIBRARY.lock().unwrap() = None;
   *STAGED_REPORT.lock().unwrap() = None;
+  // A held long-poll must wake so the phone reverts to capture-only now.
+  signal_library_changed();
 }
 
 /// Hand the phone a case report the webview has just generated.
@@ -1103,7 +1334,67 @@ include!("remote_camera_page.rs");
 
 #[cfg(test)]
 mod tests {
-  use super::{is_safe_filename, PAGE_HTML};
+  use super::{capture_id_from_headers, is_safe_filename, LINK_HTML, PAGE_HTML};
+  use tiny_http::Header;
+
+  fn capture_header(value: &str) -> Vec<Header> {
+    vec![Header::from_bytes("X-Capture-Id", value).expect("valid header")]
+  }
+
+  // The dedupe key survives the relay: a well-formed id is passed on, a
+  // missing one (old page) and a malformed one (not ours, or hostile) are
+  // both "no key" rather than a crash or a spoofed log entry.
+  #[test]
+  fn capture_id_header_strict() {
+    assert_eq!(
+      capture_id_from_headers(&capture_header("6f8ef090-64c1-4497-ac33-ac1386e1e00e")),
+      Some("6f8ef090-64c1-4497-ac33-ac1386e1e00e".to_string())
+    );
+    assert_eq!(capture_id_from_headers(&capture_header(" c7x9k2m1p0 ")), Some("c7x9k2m1p0".to_string()));
+    assert_eq!(capture_id_from_headers(&[]), None);
+    assert_eq!(capture_id_from_headers(&capture_header("")), None);
+    assert_eq!(capture_id_from_headers(&capture_header("has space")), None);
+    // 65 chars of valid alphabet is still refused.
+    assert_eq!(capture_id_from_headers(&capture_header(&"a".repeat(65))), None);
+    assert_eq!(capture_id_from_headers(&capture_header(&"a".repeat(64))), Some("a".repeat(64)));
+    // Only the id header is read; other headers never produce a key.
+    let other = vec![Header::from_bytes("Cookie", "session=x").expect("valid header")];
+    assert_eq!(capture_id_from_headers(&other), None);
+  }
+
+  // The phone page stamps every send with the dedupe id header, and a
+  // patient-scoped capture additionally carries the patient header.
+  #[test]
+  fn phone_page_stamps_capture_id() {
+    assert!(PAGE_HTML.contains("'X-Capture-Id': newCaptureId()"));
+    assert!(PAGE_HTML.contains("function newCaptureId()"));
+    assert!(PAGE_HTML.contains("headers['X-Patient-Id'] = capturePatientId"));
+  }
+
+  // The capture-for-patient header only survives for patients the shared
+  // library actually advertises: a valid id from the manifest relays into
+  // the event (prefills the desktop form), while an unknown or malformed id
+  // — and any id with no library shared at all — arrives as nothing.
+  #[test]
+  fn patient_id_header_gated_on_shared_library() {
+    use super::patient_id_from_headers;
+    use std::collections::HashSet;
+
+    fn patient_header(value: &str) -> Vec<Header> {
+      vec![Header::from_bytes("X-Patient-Id", value).expect("valid header")]
+    }
+    let mut allowed = HashSet::new();
+    allowed.insert("p1".to_string());
+    // No library shared: nothing to resolve the patient against.
+    assert_eq!(patient_id_from_headers(&patient_header("p1"), None), None);
+    // A shared patient relays; an unknown one and a malformed one do not.
+    assert_eq!(
+      patient_id_from_headers(&patient_header("p1"), Some(&allowed)),
+      Some("p1".to_string())
+    );
+    assert_eq!(patient_id_from_headers(&patient_header("p-other"), Some(&allowed)), None);
+    assert_eq!(patient_id_from_headers(&patient_header("has space"), Some(&allowed)), None);
+  }
 
   // Guards the branded phone page: the logo route, wordmark, theme tokens,
   // and the [hidden] override that keeps screens toggleable.
@@ -1140,7 +1431,7 @@ mod tests {
     assert!(PAGE_HTML.contains("cmp-left"));
     assert!(PAGE_HTML.contains("cmp-overlay"));
     assert!(PAGE_HTML.contains("cell-fig"));
-    assert!(PAGE_HTML.contains("'review'"));
+    assert!(PAGE_HTML.contains("'photo-review'"));
     assert!(PAGE_HTML.contains("'report-request'"));
     assert!(PAGE_HTML.contains("blurred"));
   }
@@ -1160,6 +1451,172 @@ mod tests {
     assert!(PAGE_HTML.contains("p.dob"));
     assert!(PAGE_HTML.contains("p.ownerName"));
     assert!(PAGE_HTML.contains("p.consentScopeLabel"));
+  }
+
+  // Review lives at the photo level, exactly like the desktop: the viewer
+  // carries the status banner and the Mark reviewed offer (snap the
+  // follow-up or not), grids flag photos that need review, and the old
+  // patient-level button is gone (photo reviews count as the patient's).
+  // The bottom bar still starts hidden so the camera hero loads clean.
+  #[test]
+  fn phone_page_review_offer_and_lazy_tabbar() {
+    assert!(PAGE_HTML.contains(r#"<nav id="tabbar" role="tablist" aria-label="Sections" hidden>"#));
+    // The fixed chrome (tab bar + theme button) mounts only when the boot
+    // splash hands over — updateChrome first runs at the settled viewport,
+    // so WebKit never composites a fixed element at the cold-start offset
+    // (the "shifted upward on connect" glitch).
+    assert!(PAGE_HTML.contains("function updateChrome"));
+    assert!(PAGE_HTML.contains("var chromeReady = false;"));
+    assert!(PAGE_HTML.contains(r#"id="theme" aria-label="Switch light or dark appearance" hidden"#));
+    // Viewer: banner + per-photo offer (snap, phone library, or none).
+    assert!(PAGE_HTML.contains(r#"id="viewer-flag""#));
+    assert!(PAGE_HTML.contains(r#"id="viewer-review-btn""#));
+    assert!(PAGE_HTML.contains(r#"id="photo-review-snap""#));
+    assert!(PAGE_HTML.contains(r#"id="photo-review-library""#));
+    assert!(PAGE_HTML.contains(r#"id="photo-review-plain""#));
+    assert!(PAGE_HTML.contains("Review overdue"));
+    assert!(PAGE_HTML.contains("Snap photo"));
+    assert!(PAGE_HTML.contains("No photo needed"));
+    // A dismissed camera/picker leaves the three-choice offer up (the
+    // banner updates in place) instead of collapsing back to the
+    // one-click "Mark reviewed" button.
+    assert!(PAGE_HTML.contains("function renderViewerBanner"));
+    // Grids flag photos needing review; patient rows keep their banners.
+    assert!(PAGE_HTML.contains("cell-review"));
+    assert!(PAGE_HTML.contains("function reviewDot"));
+    // The patient-level review button is gone.
+    assert!(!PAGE_HTML.contains(r#"id="review-btn""#));
+  }
+
+  // The due-review banner on the patients and photos tabs (the phone's
+  // counterpart of the desktop's review badge), a compare surface whose
+  // chrome follows the theme (only the photo panes stay black, like the
+  // desktop dialog), and the app-shell scroll: screens scroll internally so
+  // the fixed tab bar never rides the page's rubber-band overscroll.
+  #[test]
+  fn phone_page_due_banner_themed_compare_and_scroll_shell() {
+    assert!(PAGE_HTML.contains(r#"id="lib-due""#));
+    assert!(PAGE_HTML.contains(r#"id="all-due""#));
+    assert!(PAGE_HTML.contains("function renderDueBanner"));
+    assert!(PAGE_HTML.contains("due for review"));
+    assert!(PAGE_HTML.contains("Next photo review"));
+    // Patient cards carry the date however far out it sits (desktop
+    // ReviewBadge + PhotoReviewDueBadge parity).
+    assert!(PAGE_HTML.contains("was due"));
+    assert!(PAGE_HTML.contains("p.reviewOwn || p.review"));
+    // Theme: the compare surface reads the tokens instead of hardcoding dark.
+    assert!(PAGE_HTML.contains("#screen-viewer, #screen-compare { background: var(--bg); }"));
+    assert!(!PAGE_HTML.contains("#screen-compare { background: #000; }"));
+    assert!(PAGE_HTML.contains("border: 1px solid var(--border); background: var(--card); color: var(--fg);"));
+    // Scroll shell: the document is a fixed-height shell; screens scroll.
+    assert!(PAGE_HTML.contains("height: 100dvh; overflow: hidden; overscroll-behavior: none;"));
+    assert!(PAGE_HTML.contains("overscroll-behavior: contain"));
+  }
+
+  // Boot splash (the breathing-logo loading notice) plus the scroll guard:
+  // the splash owns the first paint until the link answers AND the layout
+  // has settled (a short settle + two frames before the fade), so the fixed
+  // tab bar never composites at a stale cold-start offset and the whole UI
+  // reveals finished; restored scroll can't open the page mid-list. The
+  // patients tab sorts by name, review due, recency and photo count,
+  // persisted per phone, and OPENS on Review due (soonest first) so the
+  // urgent patients lead without a tap.
+  #[test]
+  fn phone_page_boot_splash_and_patient_sort() {
+    assert!(PAGE_HTML.contains(r#"id="boot""#));
+    assert!(PAGE_HTML.contains("@keyframes breathe"));
+    // The splash rides the document (absolute), never the fixed layer
+    // WebKit locks at the cold-start offset, and reveal forces a full
+    // relayout at the settled metrics before anything shows.
+    assert!(PAGE_HTML.contains("position: absolute; inset: 0; z-index: 40;"));
+    assert!(PAGE_HTML.contains("function forceRelayout"));
+    assert!(PAGE_HTML.contains("function reveal"));
+    assert!(PAGE_HTML.contains("history.scrollRestoration = 'manual'"));
+    assert!(PAGE_HTML.contains(r#"id="sort""#));
+    assert!(PAGE_HTML.contains("'camog-sort'"));
+    // Ascending/descending: a persisted direction with a visible flip
+    // button; review order keys on the earliest date a card advertises
+    // (patient schedule or next photo review), not the schedule alone.
+    assert!(PAGE_HTML.contains(r#"id="sort-dir""#));
+    assert!(PAGE_HTML.contains("'camog-sort-dir'"));
+    assert!(PAGE_HTML.contains("nextPhotoDue"));
+    assert!(PAGE_HTML.contains("function sortedPatients"));
+    // Default sort: review due, ascending (soonest/overdue first).
+    assert!(PAGE_HTML.contains("sort: 'review', sortDir: 'asc'"));
+    assert!(PAGE_HTML.contains("localStorage.getItem(SORT_KEY) || 'review'"));
+    // The topbar wraps instead of crushing the sort out of view.
+    assert!(PAGE_HTML.contains("flex-wrap: wrap;"));
+  }
+
+  // Capture for a patient, phone half: the patient screen's Take photo
+  // opens the camera inside the tap and Send from library runs the same
+  // multi-pick pipeline — both stamp the snap's POST with the patient id
+  // (chip visible + clearable on the start screen). The "Snap photo" review
+  // follow-up opens the camera the same way instead of parking the user on
+  // the start screen, and its note drops back to the default once the photo
+  // is sent.
+  #[test]
+  fn phone_page_capture_for_patient_and_direct_snap() {
+    assert!(PAGE_HTML.contains(r#"id="patient-capture""#));
+    assert!(PAGE_HTML.contains(r#"id="patient-pick""#));
+    assert!(PAGE_HTML.contains("Send from library"));
+    assert!(PAGE_HTML.contains(r#"id="capture-for""#));
+    assert!(PAGE_HTML.contains("function setCapturePatient"));
+    assert!(PAGE_HTML.contains("headers['X-Patient-Id'] = capturePatientId"));
+    // The library pick opened from a patient screen still lands on the
+    // camera tab's review screens.
+    assert!(PAGE_HTML.contains("if ($('screen-cam').hidden) setTab('cam');"));
+    // Camera opens inside the gesture (both entry points), not after it.
+    assert!(PAGE_HTML.contains("function markPhotoReviewed"));
+    assert!(PAGE_HTML.contains("snapFollowUp = true"));
+    assert!(PAGE_HTML.contains("setConn('Review marked. Send this photo to link it with the original.')"));
+    // The note resets once the photo is sent (fresh camera reads clean).
+    assert!(PAGE_HTML.contains("id=\"sent-hint\""));
+    assert!(PAGE_HTML.contains("setConn(null); // the note has served; the next snap reads clean"));
+  }
+
+  // Bilateral sync, phone half: the page holds a library-wait long-poll and
+  // refetches the moment the desktop publishes — updates ride the action
+  // that caused them, with no polling timers.
+  #[test]
+  fn phone_page_watches_library_changes() {
+    assert!(PAGE_HTML.contains("function watchLibrary"));
+    assert!(PAGE_HTML.contains("'library-wait'"));
+    assert!(PAGE_HTML.contains("if (shared) watchLibrary();"));
+  }
+
+  // Trust boundary: exactly one brand route answers without a credential —
+  // the home-screen icon fetch carries no cookies (is_public_asset) — while
+  // the data routes and the manifest (its start_url embeds the pairing code)
+  // stay behind the gate.
+  #[test]
+  fn public_asset_gate() {
+    use super::is_public_asset;
+    assert!(is_public_asset("/logo.png"));
+    assert!(!is_public_asset("/hello"));
+    assert!(!is_public_asset("/library"));
+    assert!(!is_public_asset("/manifest.webmanifest"));
+    assert!(!is_public_asset("/t/1234/"));
+    assert!(!is_public_asset("/logo.png/extra"));
+  }
+
+  // The link page handed to rejected requests: the phone's way back in
+  // (restore the saved link or scan the QR again) instead of a bare 404
+  // dead end. The companion page feeds it — it remembers the pairing code
+  // the desktop shares over its live session and self-heals a dead session
+  // through the saved /t/<code>/ URL once.
+  #[test]
+  fn link_page_offers_restore_and_scan() {
+    assert!(LINK_HTML.contains(r#"id="restore""#));
+    assert!(LINK_HTML.contains(r#"id="scan""#));
+    assert!(LINK_HTML.contains("BarcodeDetector"));
+    assert!(LINK_HTML.contains("'/t/' + code + '/'"));
+    assert!(LINK_HTML.contains("camog-link-tried"));
+    // The companion page's half of the handshake.
+    assert!(PAGE_HTML.contains("fetch('link-code')"));
+    assert!(PAGE_HTML.contains("rememberLink"));
+    assert!(PAGE_HTML.contains("location.href = '/t/' + code + '/';"));
+    assert!(PAGE_HTML.contains(r#"id="relink""#));
   }
 
   // Trust boundary: only plain UUID-derived names may reach the filesystem.
@@ -1518,9 +1975,12 @@ mod tests {
       response
     };
 
-    // Unauthenticated root: 404, like any unknown route.
+    // Unauthenticated root: still a 404 (that status is how the page tells
+    // "credential dead" from "server gone"), but the body is the link page
+    // — the way back in — rather than a bare dead end.
     let res = get("/", None);
     assert!(res.starts_with("HTTP/1.1 404"), "no-cookie root must 404: {res}");
+    assert!(res.contains("Restore saved link"), "rejected GET must serve the link page: {res}");
 
     // The exchange: valid code → 303 to / plus the session cookie.
     let res = get(&format!("/t/{token}/"), None);
@@ -1569,6 +2029,128 @@ mod tests {
     let _ = thread.join();
   }
 
+  // Bilateral sync: a held library long-poll must wake the moment the
+  // desktop publishes (this is the whole phone update channel — review
+  // dates and new photos ride it instead of refresh timers), wake on a
+  // share-off clear as well, and answer changed:false when the link shuts
+  // down. Runs over real HTTP through the same spawn_handler wiring.
+  #[test]
+  fn http_library_wait_wakes_on_publish() {
+    use super::{AuthGuard, SessionStore, spawn_handler};
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use tauri::test;
+    use tiny_http::Server;
+
+    let app = test::mock_app();
+    let token = "0123456789abcdef";
+    let listener = super::bind_listener("127.0.0.1".parse().unwrap(), 0).expect("test bind");
+    let port = listener.local_addr().unwrap().port();
+    let server = Arc::new(Server::from_listener(listener, None).expect("test server"));
+    let last_seen_ms = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sessions = Arc::new(SessionStore::new());
+    let thread = spawn_handler(
+      app.handle().clone(),
+      Arc::clone(&server),
+      token.to_string(),
+      Arc::clone(&sessions),
+      Arc::clone(&last_seen_ms),
+      Arc::clone(&shutdown),
+      Arc::new(AuthGuard::new()),
+    );
+
+    // Exchange the pairing code for a session cookie.
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    write!(
+      stream,
+      "GET /t/{token}/ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .expect("write");
+    let mut res = String::new();
+    stream.read_to_string(&mut res).expect("read");
+    let session = res
+      .lines()
+      .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
+      .expect("exchange sets a cookie")
+      .strip_prefix("Set-Cookie: ")
+      .expect("server-sent header case")
+      .split(';')
+      .next()
+      .expect("name=value pair")
+      .to_string();
+
+    let get = |path: &str| -> String {
+      let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+      write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\nConnection: close\r\n\r\n"
+      )
+      .expect("write");
+      let mut response = String::new();
+      stream.read_to_string(&mut response).expect("read");
+      response
+    };
+
+    // A held wait answers changed:true as soon as a publish lands.
+    let wait = |session: &str| -> std::thread::JoinHandle<String> {
+      let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+      write!(
+        stream,
+        "GET /library-wait HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\nConnection: close\r\n\r\n"
+      )
+      .expect("write");
+      std::thread::spawn(move || {
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("read");
+        response
+      })
+    };
+    let waiter = wait(&session);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    super::update_remote_library(
+      r#"{"viewing":true}"#.to_string(),
+      ".".to_string(),
+      vec![],
+      vec![],
+    )
+    .expect("publish");
+    let res = waiter.join().expect("waiter thread");
+    assert!(res.starts_with("HTTP/1.1 200"), "wait must 200: {res}");
+    assert!(
+      res.contains(r#"{"changed":true}"#),
+      "held long-poll must wake on publish: {res}"
+    );
+
+    // A share-off clear wakes the next wait too (the phone reverts to
+    // camera-only without being asked).
+    let waiter = wait(&session);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    super::clear_remote_library();
+    let res = waiter.join().expect("waiter thread");
+    assert!(
+      res.contains(r#"{"changed":true}"#),
+      "held long-poll must wake on clear: {res}"
+    );
+    let res = get("/library");
+    assert!(
+      res.contains(r#"{"viewing":false}"#),
+      "library must degrade after clear: {res}"
+    );
+
+    // With nothing publishing, the wait ends only when the link shuts down.
+    let waiter = wait(&session);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+    server.unblock();
+    let res = waiter.join().expect("waiter thread");
+    assert!(
+      res.contains(r#"{"changed":false}"#),
+      "shutdown must release the hold without a change: {res}"
+    );
+    let _ = thread.join();
+  }
+
   // The stale-code UX contract: probe and heartbeat must check res.ok, or a
   // rotated pairing code leaves the phone claiming "Connected" while every
   // real request 404s.
@@ -1580,13 +2162,16 @@ mod tests {
 
   // Tier 2's dead-session UX: a 404 from a reachable server means this
   // page's cookie died (code rotated, or the link restarted without
-  // rotation) — the page must say "re-scan" and stop its retry loop rather
-  // than hammering the throttle, because no retry can revive the cookie.
+  // rotation) — the page stops its retry loop rather than hammering the
+  // throttle, hops once through its saved pairing URL (the exchange mints
+  // a fresh cookie), and only then says "re-scan", pointing at the link
+  // page for restore/scan.
   #[test]
   fn phone_page_distinguishes_expired_pairing() {
     assert!(PAGE_HTML.contains("res.status === 404"));
     assert!(PAGE_HTML.contains("function pairingExpired()"));
-    assert!(PAGE_HTML.contains("re-scan the code in Camog."));
+    assert!(PAGE_HTML.contains("location.href = '/t/' + code + '/';"));
+    assert!(PAGE_HTML.contains("scan the QR in Camog again"));
     let start = PAGE_HTML
       .find("function pairingExpired()")
       .expect("expired handler present");

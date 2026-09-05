@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { PhotoRecord } from '@/types/photo';
 import type { BodyPart } from '@/types/body-part';
 import { photoService } from '@/lib/services/photo-service';
+import { ATTENTION_CHANGED_EVENT } from '@/lib/services/attention-events';
 
 interface UsePhotosOptions {
   patientId?: string;
@@ -77,6 +78,15 @@ export function usePhotos(options: UsePhotosOptions = {}): UsePhotosReturn {
   const refresh = useCallback(async () => {
     await loadPhotos(true);
   }, [loadPhotos]);
+
+  // Review-affecting actions land anywhere — the phone companion marks a
+  // photo reviewed, a dialog stamps one here — and fire the attention event.
+  // Timeline tiles carry due-review flags, so refetch in the background to
+  // track those actions the way the sidebar counters do.
+  useEffect(() => {
+    window.addEventListener(ATTENTION_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(ATTENTION_CHANGED_EVENT, refresh);
+  }, [refresh]);
 
   return {
     photos,

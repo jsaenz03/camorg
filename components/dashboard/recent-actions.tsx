@@ -71,6 +71,9 @@ export function RecentActions() {
                   {isAdmin && entry.clinicianName && (
                     <span className="text-muted-foreground"> · {entry.clinicianName}</span>
                   )}
+                  {entry.patientName && (
+                    <span className="text-muted-foreground"> · {entry.patientName}</span>
+                  )}
                   {entry.detail && (
                     <span className="block truncate text-xs text-muted-foreground">
                       {entry.detail}
@@ -87,7 +90,7 @@ export function RecentActions() {
         {isAdmin && (
           <p className="mt-3 border-t pt-2 text-xs text-muted-foreground">
             Full history in{' '}
-            <Link href="/settings" className="underline underline-offset-2 hover:text-foreground">
+            <Link href="/settings?tab=audit" className="underline underline-offset-2 hover:text-foreground">
               Settings → Audit log
             </Link>
           </p>

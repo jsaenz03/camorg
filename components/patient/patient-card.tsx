@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { formatDateOfBirth, formatLastPhotoTime } from '@/lib/utils/date-formatting';
 import { ReviewBadge } from './review-badge';
 import { PhotoReviewDueBadge, type DueReviewCounts } from './photo-review-due-badge';
+import { ConsentBadge } from './consent-badge';
 
 interface PatientCardProps {
   patient: Patient;
@@ -66,6 +67,7 @@ export function PatientCard({ patient, due, onClick }: PatientCardProps) {
               nextDueAt={due.nextDueAt}
             />
           )}
+          <ConsentBadge patient={patient} />
         </div>
       </CardHeader>
       <CardContent className="p-4 pt-2">

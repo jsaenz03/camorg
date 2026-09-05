@@ -31,6 +31,18 @@ export interface PendingPhotoMeta {
   receivedAt: number;
   width: number;
   height: number;
+  /**
+   * Review follow-up: the phone marked this photo's original reviewed and
+   * snapped the follow-up — saving joins the original's lesion series.
+   * Absent for ordinary snaps.
+   */
+  linkPhotoId?: string;
+  /**
+   * Patient the phone said it was capturing for (its Take photo button on
+   * the patient screen) — the capture form prefills this patient. Id only:
+   * the plain-JSON sidecar holds no clinical content.
+   */
+  patientId?: string;
 }
 
 /** A tray row for the Capture screen. */
@@ -96,14 +108,29 @@ export function parsePendingSidecar(raw: string, id: string): PendingPhotoMeta |
     ) {
       return null;
     }
-    return { id, capturedAt: d.capturedAt, receivedAt: d.receivedAt, width: d.width, height: d.height };
+    return {
+      id,
+      capturedAt: d.capturedAt,
+      receivedAt: d.receivedAt,
+      width: d.width,
+      height: d.height,
+      // Optional review-follow-up link and capture-for-patient hint; a bad
+      // type is simply no marker (and no key, so ordinary snaps parse
+      // identically to before).
+      ...(typeof d.linkPhotoId === 'string' ? { linkPhotoId: d.linkPhotoId } : {}),
+      ...(typeof d.patientId === 'string' ? { patientId: d.patientId } : {}),
+    };
   } catch {
     return null;
   }
 }
 
 /** Stage a photo for review. The sidecar is written last (completion marker). */
-export async function storePendingPhoto(photo: CapturedPhoto): Promise<PendingPhotoEntry> {
+export async function storePendingPhoto(
+  photo: CapturedPhoto,
+  linkPhotoId?: string,
+  patientId?: string,
+): Promise<PendingPhotoEntry> {
   const id = uuidv4();
   const dir = await pendingDir();
   const bytes = new Uint8Array(await photo.blob.arrayBuffer());
@@ -116,6 +143,8 @@ export async function storePendingPhoto(photo: CapturedPhoto): Promise<PendingPh
     receivedAt: Date.now(),
     width: photo.width,
     height: photo.height,
+    ...(linkPhotoId ? { linkPhotoId } : {}),
+    ...(patientId ? { patientId } : {}),
   };
   // Photo bytes are encrypted at rest (the .json sidecar holds no clinical
   // content — ids, timestamps, dimensions — and stays plain).

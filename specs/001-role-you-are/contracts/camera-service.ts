@@ -53,6 +53,12 @@ export interface RemoteCameraInfo {
 /** Payload of the `remote-camera-photo` Tauri event. */
 export interface RemoteCameraPhotoEvent {
   data: string;            // Base64-encoded JPEG sent by the phone
+  captureId?: string;      // Id the phone minted at send time; lets the app
+                           // drop transport-level resends of the same capture
+  patientId?: string;      // Patient the phone was capturing for (from a
+                           // patient screen's Take photo) — already checked
+                           // against the shared manifest by the shell; the
+                           // capture form prefills the patient from it
 }
 
 /** Payload of the `remote-camera-status` Tauri event. */
@@ -77,7 +83,13 @@ export interface CompanionPatient {
   photoCount: number;
   lastPhotoAt: number | null;      // Unix ms of the most recent photo
   consent: 'none' | 'valid' | 'expired';
+  /** Patient's own review status, escalated to overdue/due-soon when any of
+   *  their shared photos is due at the photo level (no dashboard on the phone). */
   review: 'none' | 'scheduled' | 'due-soon' | 'overdue' | 'stale';
+  /** The patient's own review status before escalation, so the phone's
+   *  patient card can label its own schedule exactly like the desktop's
+   *  ReviewBadge (amber "due soon" vs a muted date months out). */
+  reviewOwn: 'none' | 'scheduled' | 'due-soon' | 'overdue' | 'stale';
   reviewDueAt: number | null;      // Unix ms of the scheduled review
   dob: string | null;              // Pre-formatted display DOB ("24 Jan 1990")
   ownerName: string | null;        // Treating clinician's display name
@@ -94,6 +106,9 @@ export interface CompanionPhoto {
   subpart: string | null;
   notes: string | null;            // clinicalNotes
   capturedAt: number;              // Unix ms
+  review: 'none' | 'scheduled' | 'due-soon' | 'overdue' | 'stale';
+  reviewDueAt: number | null;      // Unix ms of the scheduled review
+  lastReviewedAt: number | null;   // Unix ms of the last photo review
 }
 
 /** The manifest served to the phone at `/library`. */
@@ -105,13 +120,24 @@ export interface CompanionLibrary {
 }
 
 /**
- * Payload of the companion-review-request / companion-report-request events:
- * the phone asked the desktop to act on a shared patient (mark reviewed /
- * prepare case report). The shell has already checked the id against the
- * shared manifest.
+ * Payload of the companion-report-request event: the phone asked the desktop
+ * to prepare a case report for a shared patient. The shell has already
+ * checked the id against the shared manifest.
  */
 export interface CompanionPatientRequestEvent {
   patientId: string;
+}
+
+/**
+ * Payload of the companion-photo-review-request event: the phone asked the
+ * desktop to mark one shared photo reviewed — the same service the desktop
+ * dialog runs, which counts as the patient's review too. `snap` arms the
+ * series follow-up: the next photo arriving from the phone is staged to join
+ * the reviewed photo's lesion series when saved.
+ */
+export interface CompanionPhotoReviewRequestEvent {
+  photoId: string;
+  snap: boolean;
 }
 
 export interface ICameraService {

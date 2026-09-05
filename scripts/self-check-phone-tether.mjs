@@ -37,7 +37,20 @@ for (const needle of ['phone-link-token', 'phone-link.json', 'pairing_token']) {
 }
 // Home-screen app: the manifest (with the logo icon) is served by the shell.
 assert(rust.includes('manifest.webmanifest'), 'remote_camera.rs missing PWA manifest route');
-assert(rust.includes('WEB_MANIFEST'), 'remote_camera.rs missing WEB_MANIFEST');
+assert(rust.includes('web_manifest'), 'remote_camera.rs missing web_manifest');
+
+// Photo review page/shell side: the page POSTs the reviewed photo id (with
+// its snap choice) and the shell relays it as an event. (The webview side is
+// pinned below, once the provider/capture-dialog sources are read.)
+const pageSrc = read('../src-tauri/src/remote_camera_page.rs');
+for (const needle of ["'photo-review'", 'id="photo-review-snap"', 'id="viewer-flag"']) {
+  assert(pageSrc.includes(needle), `phone page missing photo review wiring: ${needle}`);
+}
+for (const needle of ['companion-photo-review-request', 'handle_photo_review_request']) {
+  assert(rust.includes(needle), `remote_camera.rs missing photo review wiring: ${needle}`);
+}
+const tray = read('../lib/services/pending-photo-service.ts');
+assert(tray.includes('linkPhotoId'), 'pending-photo-service.ts missing review follow-up link');
 // The phone page must use the native camera (getUserMedia is blocked on
 // plain LAN http) and re-encode to JPEG like the desktop path.
 const phonePage = read('../src-tauri/src/remote_camera_page.rs');
@@ -65,6 +78,20 @@ for (const needle of ['remote-camera-photo', 'storePendingPhoto', 'setCaptureScr
 const provider = read('../components/companion/companion-provider.tsx');
 for (const needle of ['remote-camera-photo', 'storePendingPhoto']) {
   assert(provider.includes(needle), `companion-provider.tsx missing: ${needle}`);
+}
+// Photo review webview side: the provider runs the desktop review service
+// and arms the series follow-up; the capture dialog consumes the link so the
+// saved snap joins the reviewed photo's series.
+for (const needle of [
+  'companion-photo-review-request',
+  'photoService.reviewPhoto',
+  'armReviewFollowUp',
+  'consumeReviewFollowUp',
+]) {
+  assert(provider.includes(needle), `companion-provider.tsx missing photo review wiring: ${needle}`);
+}
+for (const needle of ['consumeReviewFollowUp', 'pendingLink']) {
+  assert(captureDialog.includes(needle), `capture dialog missing photo review wiring: ${needle}`);
 }
 // Remembered link: the provider reads the preference and auto-starts the
 // link on launch, and the dialog carries the toggle.

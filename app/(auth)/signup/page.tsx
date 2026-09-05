@@ -56,6 +56,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Button } from '@/components/ui/button';
 
 interface BootState {
@@ -262,7 +263,7 @@ function SignupInner() {
                   <FormItem>
                     <FormLabel>Passcode</FormLabel>
                     <FormControl>
-                      <Input type="password" autoComplete="new-password" {...field} />
+                      <PasswordInput autoComplete="new-password" {...field} />
                     </FormControl>
                     <FormDescription>
                       At least 8 characters with a letter and a number.
@@ -365,7 +366,7 @@ function SignupInner() {
                   <FormItem>
                     <FormLabel>Passcode</FormLabel>
                     <FormControl>
-                      <Input type="password" autoComplete="new-password" {...field} />
+                      <PasswordInput autoComplete="new-password" {...field} />
                     </FormControl>
                     <FormDescription>
                       At least 8 characters with a letter and a number.
@@ -528,7 +529,7 @@ function SignupInner() {
                   <FormItem>
                     <FormLabel>Passcode</FormLabel>
                     <FormControl>
-                      <Input type="password" autoComplete="new-password" {...field} />
+                      <PasswordInput autoComplete="new-password" {...field} />
                     </FormControl>
                     <FormDescription>
                       At least 8 characters with a letter and a number.

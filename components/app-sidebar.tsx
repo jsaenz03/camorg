@@ -14,6 +14,7 @@ import {
   Aperture,
   Users,
   Images,
+  Columns2,
   Settings as SettingsIcon,
   ShieldCheck,
 } from 'lucide-react';
@@ -53,6 +54,7 @@ const NAV_SECTIONS: { label: string; items: NavLink[] }[] = [
     items: [
       { href: '/patients', label: 'Patients', icon: Users },
       { href: '/photos', label: 'Photos', icon: Images },
+      { href: '/compare', label: 'Compare', icon: Columns2 },
     ],
   },
   {

@@ -12,7 +12,8 @@
 import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
 import { toast } from 'sonner';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 import type { Clinician } from '@/types/clinician';
 import type { BodyPart } from '@/types/body-part';
@@ -72,7 +73,27 @@ function formatDuration(ms: number): string {
 }
 
 export default function SettingsPage() {
+  // useSearchParams needs a Suspense boundary for the static prerender.
+  return (
+    <Suspense fallback={null}>
+      <SettingsContent />
+    </Suspense>
+  );
+}
+
+function SettingsContent() {
   const { clinician, refresh } = useAuth();
+  // Deep link: /settings?tab=audit opens straight onto the Audit tab (the
+  // dashboard "Full history" link). Controlled tab state so the tab follows
+  // the param whenever it resolves — a hash read at mount was racy under
+  // client-side navigation and left the page on Profile.
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState('profile');
+  const isAdmin = clinician?.role === 'admin';
+
+  useEffect(() => {
+    if (isAdmin && searchParams.get('tab') === 'audit') setTab('audit');
+  }, [isAdmin, searchParams]);
 
   if (!clinician) {
     return (
@@ -82,8 +103,6 @@ export default function SettingsPage() {
     );
   }
 
-  const isAdmin = clinician.role === 'admin';
-
   return (
     <div className="container mx-auto max-w-3xl px-4 py-8 md:px-6 md:py-10">
       <PageHeader
@@ -92,7 +111,7 @@ export default function SettingsPage() {
         actions={<Badge variant="secondary">{clinician.role}</Badge>}
       />
 
-      <Tabs defaultValue="profile">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           {isAdmin && <TabsTrigger value="users">Users</TabsTrigger>}

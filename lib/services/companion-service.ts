@@ -39,6 +39,11 @@ import {
   bodyPartDisplayLabel,
   type BodyPart,
 } from '@/types/body-part';
+import {
+  escalatePatientReview,
+  photoReviewState,
+  type PhotoReviewState,
+} from '@/lib/utils/photo-review';
 import { formatDateOfBirth } from '@/lib/utils/date-formatting';
 
 class CompanionService {
@@ -59,20 +64,6 @@ class CompanionService {
     const warningDays = settings?.reviewWarningDays ?? DEFAULT_REVIEW_WARNING_DAYS;
     const staleDays = settings?.reviewStaleDays ?? DEFAULT_REVIEW_STALE_DAYS;
 
-    const patientRows: CompanionPatient[] = patients.map((p) => ({
-      id: p.id,
-      name: p.name,
-      photoCount: p.photoCount,
-      lastPhotoAt: p.lastPhotoAt?.getTime() ?? null,
-      consent: consentStatus(p),
-      review: reviewStatus(p, { warningDays, staleDays }),
-      reviewDueAt: p.reviewDueAt?.getTime() ?? null,
-      // Desktop-parity detail lines on the phone's patient screen.
-      dob: formatDateOfBirth(p.dateOfBirth),
-      ownerName: p.ownerName,
-      consentScopeLabel: p.consentScope ? ConsentScopeLabels[p.consentScope] : null,
-    }));
-
     const photoRows: CompanionPhoto[] = photos
       .filter((ph) => visible.has(ph.patientId))
       .map((ph) => ({
@@ -84,7 +75,48 @@ class CompanionService {
         subpart: ph.subpart,
         notes: ph.clinicalNotes,
         capturedAt: ph.capturedAt.getTime(),
+        // Review state drives the phone's review banners and its per-photo
+        // Mark reviewed button (same computation the desktop UI shows).
+        review: photoReviewState(ph, { warningDays, staleDays }),
+        reviewDueAt: ph.reviewDueAt?.getTime() ?? null,
+        lastReviewedAt: ph.lastReviewedAt?.getTime() ?? null,
       }));
+
+    // Worst photo-level review state per patient: the patients list banners
+    // escalate on it, since the phone has no dashboard alert list to surface
+    // photo-level reviews.
+    const reviewRank: Record<PhotoReviewState, number> = {
+      none: 0, scheduled: 1, stale: 1, 'due-soon': 2, overdue: 3,
+    };
+    const worstPhotoReview = new Map<string, PhotoReviewState>();
+    for (const row of photoRows) {
+      const current = worstPhotoReview.get(row.patientId);
+      if (!current || reviewRank[row.review] > reviewRank[current]) {
+        worstPhotoReview.set(row.patientId, row.review);
+      }
+    }
+
+    const patientRows: CompanionPatient[] = patients.map((p) => ({
+      id: p.id,
+      name: p.name,
+      photoCount: p.photoCount,
+      lastPhotoAt: p.lastPhotoAt?.getTime() ?? null,
+      consent: consentStatus(p),
+      review: escalatePatientReview(
+        reviewStatus(p, { warningDays, staleDays }),
+        worstPhotoReview.get(p.id),
+      ),
+      // The patient's own state before escalation: the phone's patient card
+      // labels the patient's own schedule exactly like the desktop ReviewBadge
+      // (amber "due soon" vs a muted date months out) even when a photo's
+      // escalation masks it.
+      reviewOwn: reviewStatus(p, { warningDays, staleDays }),
+      reviewDueAt: p.reviewDueAt?.getTime() ?? null,
+      // Desktop-parity detail lines on the phone's patient screen.
+      dob: formatDateOfBirth(p.dateOfBirth),
+      ownerName: p.ownerName,
+      consentScopeLabel: p.consentScope ? ConsentScopeLabels[p.consentScope] : null,
+    }));
 
     return {
       viewing: true,
@@ -205,4 +237,32 @@ export function setCaptureScreenActive(active: boolean): void {
 
 export function isCaptureScreenActive(): boolean {
   return captureScreenActive;
+}
+
+// Review follow-up arming. When the phone marks a photo reviewed and chooses
+// "Snap photo", the NEXT photo arriving from that phone is staged to join the
+// reviewed photo's lesion series (mirroring the desktop's review-follow-up
+// capture). The link rides on the staged photo's sidecar, so it survives
+// until the photo is saved from the tray. ponytail: one armed follow-up with
+// a 15-minute fuse — the snap is immediate in practice; a wrong-patient save
+// still never cross-links (the capture save path checks the original's
+// patient before linking).
+const FOLLOW_UP_ARM_MS = 15 * 60 * 1000;
+let armedFollowUp: { photoId: string; at: number } | null = null;
+
+export function armReviewFollowUp(photoId: string): void {
+  armedFollowUp = { photoId, at: Date.now() };
+}
+
+/** Consume the armed follow-up, or null when none is live (expired too). */
+export function consumeReviewFollowUp(): string | null {
+  const armed = armedFollowUp;
+  armedFollowUp = null;
+  if (armed && Date.now() - armed.at <= FOLLOW_UP_ARM_MS) return armed.photoId;
+  return null;
+}
+
+/** Drop an armed follow-up without consuming it (the review it belonged to failed). */
+export function clearReviewFollowUp(): void {
+  armedFollowUp = null;
 }

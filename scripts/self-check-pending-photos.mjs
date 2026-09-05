@@ -39,7 +39,18 @@ function parsePendingSidecar(raw, id) {
     ) {
       return null;
     }
-    return { id, capturedAt: d.capturedAt, receivedAt: d.receivedAt, width: d.width, height: d.height };
+    return {
+      id,
+      capturedAt: d.capturedAt,
+      receivedAt: d.receivedAt,
+      width: d.width,
+      height: d.height,
+      // Optional review-follow-up link and capture-for-patient hint; a bad
+      // type is simply no marker (and no key, so ordinary snaps parse
+      // identically to before).
+      ...(typeof d.linkPhotoId === 'string' ? { linkPhotoId: d.linkPhotoId } : {}),
+      ...(typeof d.patientId === 'string' ? { patientId: d.patientId } : {}),
+    };
   } catch {
     return null;
   }
@@ -83,6 +94,26 @@ assert.equal(parsePendingSidecar(JSON.stringify({ ...good, id: B }), A), null); 
 assert.equal(parsePendingSidecar(JSON.stringify({ ...good, width: 'x' }), A), null); // bad type
 assert.equal(parsePendingSidecar('not json', A), null); // corrupt
 assert.equal(parsePendingSidecar(JSON.stringify(good), 'not-a-uuid'), null); // bad filename id
+
+// Optional review-follow-up link: passes through as a string, drops on a bad
+// type, and ordinary snaps simply have no link field.
+assert.equal(
+  parsePendingSidecar(JSON.stringify({ ...good, linkPhotoId: B }), A).linkPhotoId,
+  B,
+);
+assert.equal(
+  parsePendingSidecar(JSON.stringify({ ...good, linkPhotoId: 42 }), A).linkPhotoId,
+  undefined,
+);
+assert.equal(parsePendingSidecar(JSON.stringify(good), A).linkPhotoId, undefined);
+// Capture-for-patient hint: a string id passes through; anything else is
+// dropped the same way.
+assert.equal(
+  parsePendingSidecar(JSON.stringify({ ...good, patientId: 'p-abc-123' }), A).patientId,
+  'p-abc-123',
+);
+assert.equal(parsePendingSidecar(JSON.stringify({ ...good, patientId: 42 }), A).patientId, undefined);
+assert.equal(parsePendingSidecar(JSON.stringify(good), A).patientId, undefined);
 
 // Age purge predicate as used by listPendingPhotos: receivedAt older than a
 // week is stale and deleted, exactly-one-week-old is not.
