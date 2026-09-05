@@ -203,6 +203,156 @@ impl AuthGuard {
   }
 }
 
+// ---- Tier 2: session pairing ------------------------------------------------
+// The pairing code in the URL is an exchange credential: presenting it once
+// mints a per-device session cookie, and every later request authenticates
+// by that cookie on token-less paths. The long-lived code stops riding in
+// per-request URLs (intermediate logs, browser history expansion, each
+// cleartext LAN request), and sessions become revocable server-side —
+// stopping the link drops this store and kills every session without
+// rotating the code. Stage 2 wires the below into handle_request; until
+// then the allows stay and the unit tests are the consumers.
+// ponytail: HashSet of raw ids, no expiry — link lifetime (plus the idle
+// auto-close) bounds it; per-session revoke arrives with a device-list UI.
+
+/// Cookie name carrying the session id.
+#[allow(dead_code)] // Stage 2
+const SESSION_COOKIE: &str = "camog_session";
+
+#[allow(dead_code)] // Stage 2
+#[derive(Default)]
+struct SessionStore {
+  sessions: Mutex<HashSet<[u8; 16]>>,
+}
+
+#[allow(dead_code)] // Stage 2
+impl SessionStore {
+  fn new() -> Self {
+    Self::default()
+  }
+
+  /// Mint a fresh 128-bit session id. Two u64 draws rather than one array
+  /// draw, matching how the pairing token itself is minted.
+  fn mint(&self) -> [u8; 16] {
+    let mut id = [0u8; 16];
+    id[..8].copy_from_slice(&rand::random::<u64>().to_be_bytes());
+    id[8..].copy_from_slice(&rand::random::<u64>().to_be_bytes());
+    self.sessions.lock().unwrap().insert(id);
+    id
+  }
+
+  fn contains(&self, id: &[u8; 16]) -> bool {
+    self.sessions.lock().unwrap().contains(id)
+  }
+
+  /// Groundwork for a future per-device kill switch; today revocation is
+  /// dropping the whole store when the link stops.
+  #[allow(dead_code)] // no runtime caller yet; tested for when the UI lands
+  fn remove_all(&self) {
+    self.sessions.lock().unwrap().clear();
+  }
+}
+
+/// Parse the session id out of a request's Cookie header value. Phones send
+/// exactly the one cookie we set, but splitting on ';' keeps the parse
+/// honest if an engine ever appends its own.
+#[allow(dead_code)] // Stage 2
+fn session_from_cookie(header: Option<&str>) -> Option<[u8; 16]> {
+  let header = header?;
+  header
+    .split(';')
+    .find_map(|pair| parse_session_id(pair.trim().strip_prefix("camog_session=")?.trim()))
+}
+
+#[allow(dead_code)] // Stage 2
+fn parse_session_id(text: &str) -> Option<[u8; 16]> {
+  if text.len() != 32 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+    return None;
+  }
+  let mut id = [0u8; 16];
+  for (i, byte) in id.iter_mut().enumerate() {
+    *byte = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).ok()?;
+  }
+  Some(id)
+}
+
+#[allow(dead_code)] // Stage 2
+fn session_id_hex(id: &[u8; 16]) -> String {
+  id.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The Set-Cookie line for a fresh session. Session-scoped on purpose (no
+/// Max-Age/Expires — it dies with the browser session, fine for a
+/// standalone PWA), HttpOnly, SameSite=Strict (every request is
+/// same-origin), and deliberately no Secure: the link is plain HTTP, where
+/// a Secure cookie would never come back.
+#[allow(dead_code)] // Stage 2
+fn session_cookie_header(id: &[u8; 16]) -> Header {
+  let value = format!(
+    "{SESSION_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict",
+    session_id_hex(id)
+  );
+  Header::from_bytes(&b"Set-Cookie"[..], value.as_bytes()).expect("static header value")
+}
+
+/// What handle_request should do with an incoming request, decided before
+/// any routing.
+#[allow(dead_code)] // Stage 2
+#[derive(Debug, PartialEq)]
+enum AuthAction {
+  /// The URL presented the live pairing code: mint a session (Some — set
+  /// the cookie) or reuse the live one the request already carries (None),
+  /// then redirect to /. Reusing keeps an old page still sitting on a
+  /// /t/<code>/ URL from minting a session on every relative fetch.
+  Exchange { fresh: Option<[u8; 16]> },
+  /// A live session cookie authenticated the request.
+  Authenticated,
+  /// Wrong code, or a missing/dead cookie: count it (unless the source is
+  /// already blocked) and answer with the same 404 as any unknown route.
+  /// `noted` is AuthGuard::note_failure's result so the caller can emit the
+  /// once-only diagnostics lines.
+  Rejected { noted: Option<bool> },
+}
+
+/// The auth evaluation order as a pure function: pairing code first — a
+/// valid code always wins, even from a blocked address, because the
+/// re-scanned phone is legitimate and its old URL's retry loop is what
+/// filled the failure history — then the session cookie, then the
+/// 404-plus-count fallback. Guard and store are updated here so the whole
+/// ordering is unit-testable without an AppHandle.
+#[allow(dead_code)] // Stage 2
+fn classify_auth(
+  url: &str,
+  cookie_header: Option<&str>,
+  token: &str,
+  store: &SessionStore,
+  guard: &AuthGuard,
+  source_ip: Option<IpAddr>,
+  now: Instant,
+) -> AuthAction {
+  if url.starts_with(&format!("/t/{token}/")) {
+    if let Some(ip) = source_ip {
+      guard.clear(ip);
+    }
+    let fresh = if session_from_cookie(cookie_header).is_some_and(|id| store.contains(&id)) {
+      None
+    } else {
+      Some(store.mint())
+    };
+    return AuthAction::Exchange { fresh };
+  }
+  if session_from_cookie(cookie_header).is_some_and(|id| store.contains(&id)) {
+    if let Some(ip) = source_ip {
+      guard.clear(ip);
+    }
+    return AuthAction::Authenticated;
+  }
+  let noted = source_ip
+    .filter(|ip| !guard.is_blocked(*ip, now))
+    .and_then(|ip| guard.note_failure(ip, now));
+  AuthAction::Rejected { noted }
+}
+
 /// The pairing token is the bearer secret for the LAN link, and it persists
 /// across restarts: the same URL is served every session, so the phone's
 /// saved bookmark (or home-screen icon) keeps working without re-scanning
@@ -986,7 +1136,7 @@ mod tests {
 
     // Below the limit: never blocked, first failure of the window flagged.
     assert_eq!(guard.note_failure(ip, t0), Some(false));
-    for i in 2..FAIL_LIMIT {
+    for _ in 2..FAIL_LIMIT {
       assert_eq!(guard.note_failure(ip, t0), None);
       assert!(!guard.is_blocked(ip, t0));
     }
@@ -1028,6 +1178,241 @@ mod tests {
     guard.clear(phone);
     assert!(!guard.is_blocked(phone, t0));
     assert_eq!(guard.note_failure(phone, t0), Some(false));
+  }
+
+  // Tier 2's §3.4 decision table, exercised without an AppHandle: a valid
+  // pairing code mints a session (and clears the block its own dead URL's
+  // retry loop built), a live cookie routes, everything else counts.
+  #[test]
+  fn auth_exchange_mints_session_and_clears_guard() {
+    use super::{
+      AuthAction, AuthGuard, SessionStore, FAIL_LIMIT, classify_auth, session_from_cookie,
+      session_id_hex,
+    };
+    use std::net::IpAddr;
+    use std::time::Instant;
+    let store = SessionStore::new();
+    let guard = AuthGuard::new();
+    let phone: IpAddr = "192.168.1.20".parse().unwrap();
+    let t0 = Instant::now();
+    for _ in 0..FAIL_LIMIT {
+      guard.note_failure(phone, t0);
+    }
+    assert!(guard.is_blocked(phone, t0));
+
+    let action = classify_auth(
+      "/t/0123456789abcdef/",
+      None,
+      "0123456789abcdef",
+      &store,
+      &guard,
+      Some(phone),
+      t0,
+    );
+    match action {
+      AuthAction::Exchange { fresh: Some(id) } => {
+        assert!(store.contains(&id));
+        // The minted id round-trips through the cookie serialisation the
+        // response will use.
+        let cookie = format!("camog_session={}", session_id_hex(&id));
+        assert_eq!(session_from_cookie(Some(&cookie)), Some(id));
+      }
+      other => panic!("expected a fresh exchange, got {other:?}"),
+    }
+    // Presenting the valid code cleared the block: the next failure reads
+    // as the first of a fresh window, not as a blocked source.
+    assert!(!guard.is_blocked(phone, t0));
+    assert_eq!(guard.note_failure(phone, t0), Some(false));
+  }
+
+  #[test]
+  fn auth_valid_cookie_routes_and_clears_guard() {
+    use super::{AuthAction, AuthGuard, SessionStore, FAIL_LIMIT, classify_auth, session_id_hex};
+    use std::net::IpAddr;
+    use std::time::Instant;
+    let store = SessionStore::new();
+    let guard = AuthGuard::new();
+    let phone: IpAddr = "192.168.1.21".parse().unwrap();
+    let t0 = Instant::now();
+    let id = store.mint();
+    let cookie = format!("camog_session={}", session_id_hex(&id));
+    for _ in 0..FAIL_LIMIT {
+      guard.note_failure(phone, t0);
+    }
+
+    // Token-less path, cookie only — routed even from a blocked address
+    // (the credential is proof the phone is legitimate, Tier 1's property).
+    assert_eq!(
+      classify_auth(
+        "/library",
+        Some(&cookie),
+        "0123456789abcdef",
+        &store,
+        &guard,
+        Some(phone),
+        t0
+      ),
+      AuthAction::Authenticated
+    );
+    assert!(!guard.is_blocked(phone, t0));
+  }
+
+  // The cookie-eviction / post-restart case: parseable cookie, dead
+  // session, counts exactly like a wrong code.
+  #[test]
+  fn auth_dead_cookie_counts_failure() {
+    use super::{AuthAction, AuthGuard, SessionStore, FAIL_LIMIT, classify_auth, session_id_hex};
+    use std::net::IpAddr;
+    use std::time::Instant;
+    let store = SessionStore::new();
+    let guard = AuthGuard::new();
+    let phone: IpAddr = "192.168.1.22".parse().unwrap();
+    let t0 = Instant::now();
+    let stale = format!("camog_session={}", session_id_hex(&store.mint()));
+    store.remove_all();
+
+    assert_eq!(
+      classify_auth(
+        "/hello",
+        Some(&stale),
+        "0123456789abcdef",
+        &store,
+        &guard,
+        Some(phone),
+        t0
+      ),
+      AuthAction::Rejected { noted: Some(false) }
+    );
+    assert_eq!(
+      classify_auth("/hello", None, "0123456789abcdef", &store, &guard, Some(phone), t0),
+      AuthAction::Rejected { noted: None }
+    );
+    // Keep counting to the limit, then: blocked sources are answered
+    // without further counting.
+    for _ in 2..FAIL_LIMIT {
+      classify_auth("/hello", None, "0123456789abcdef", &store, &guard, Some(phone), t0);
+    }
+    assert!(guard.is_blocked(phone, t0));
+    assert_eq!(
+      classify_auth("/hello", None, "0123456789abcdef", &store, &guard, Some(phone), t0),
+      AuthAction::Rejected { noted: None }
+    );
+  }
+
+  #[test]
+  fn auth_wrong_code_counts_failure() {
+    use super::{AuthAction, AuthGuard, SessionStore, classify_auth};
+    use std::net::IpAddr;
+    use std::time::Instant;
+    let store = SessionStore::new();
+    let guard = AuthGuard::new();
+    let scanner: IpAddr = "10.0.0.9".parse().unwrap();
+    assert_eq!(
+      classify_auth(
+        "/t/feedfacefeedface/",
+        None,
+        "0123456789abcdef",
+        &store,
+        &guard,
+        Some(scanner),
+        Instant::now()
+      ),
+      AuthAction::Rejected { noted: Some(false) }
+    );
+  }
+
+  // An old page still sitting on /t/<code>/ (saved icon kept open across
+  // the upgrade): the exchange must reuse the live cookie it already has,
+  // not mint a session per relative fetch.
+  #[test]
+  fn auth_exchange_reuses_live_cookie() {
+    use super::{AuthAction, AuthGuard, SessionStore, classify_auth, session_id_hex};
+    use std::time::Instant;
+    let store = SessionStore::new();
+    let guard = AuthGuard::new();
+    let id = store.mint();
+    let cookie = format!("camog_session={}", session_id_hex(&id));
+    assert_eq!(
+      classify_auth(
+        "/t/0123456789abcdef/hello",
+        Some(&cookie),
+        "0123456789abcdef",
+        &store,
+        &guard,
+        None,
+        Instant::now()
+      ),
+      AuthAction::Exchange { fresh: None }
+    );
+    // While a request with no cookie at all mints one.
+    match classify_auth(
+      "/t/0123456789abcdef/hello",
+      None,
+      "0123456789abcdef",
+      &store,
+      &guard,
+      None,
+      Instant::now(),
+    ) {
+      AuthAction::Exchange { fresh: Some(id) } => assert!(store.contains(&id)),
+      other => panic!("expected a fresh exchange, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn session_ids_unique_and_revocable() {
+    use super::SessionStore;
+    let store = SessionStore::new();
+    let a = store.mint();
+    let b = store.mint();
+    assert_ne!(a, b);
+    assert!(store.contains(&a));
+    store.remove_all();
+    assert!(!store.contains(&a));
+    assert!(!store.contains(&b));
+  }
+
+  #[test]
+  fn session_cookie_parsing() {
+    use super::{parse_session_id, session_from_cookie, session_id_hex};
+    let id = [0xabu8; 16];
+    let hex = session_id_hex(&id);
+    assert_eq!(hex.len(), 32);
+    assert_eq!(session_from_cookie(None), None);
+    assert_eq!(session_from_cookie(Some("other=1")), None);
+    // Exact name only — a longer cookie name must not match.
+    assert_eq!(session_from_cookie(Some("camog_sessionX=1")), None);
+    assert_eq!(session_from_cookie(Some(&format!("camog_session={hex}"))), Some(id));
+    // Whatever else the browser appends around ours.
+    assert_eq!(
+      session_from_cookie(Some(&format!("a=1; camog_session={hex}; b=2"))),
+      Some(id)
+    );
+    // Malformed values never reach the store lookup.
+    assert_eq!(session_from_cookie(Some("camog_session=short")), None);
+    assert_eq!(
+      session_from_cookie(Some(&format!("camog_session={}", "z".repeat(32)))),
+      None
+    );
+    assert_eq!(parse_session_id(""), None);
+  }
+
+  // The cookie contract from the protocol design: HttpOnly, Strict,
+  // session-scoped, Path=/ — and no Secure, which on plain HTTP would stop
+  // the phone from ever sending it back.
+  #[test]
+  fn session_cookie_header_shape() {
+    use super::session_cookie_header;
+    let header = session_cookie_header(&[0x12u8; 16]);
+    assert!(header.field.equiv("Set-Cookie"));
+    let value = header.value.as_str();
+    assert_eq!(
+      value,
+      "camog_session=12121212121212121212121212121212; Path=/; HttpOnly; SameSite=Strict"
+    );
+    assert!(!value.to_ascii_lowercase().contains("secure"));
+    assert!(!value.to_ascii_lowercase().contains("max-age"));
+    assert!(!value.to_ascii_lowercase().contains("expires"));
   }
 
   // The stale-code UX contract: probe and heartbeat must check res.ok, or a
