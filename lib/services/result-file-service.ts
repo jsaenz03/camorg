@@ -8,6 +8,11 @@
  * storage locations (cloud-synced folders) cover results too, and the fs
  * scope grant (recursive) already covers the subfolder.
  *
+ * Bytes are encrypted at rest with the same key and CMGE1 format as photos
+ * (photo_encrypt_bytes / photo_decrypt_bytes); legacy plaintext files pass
+ * through decrypt unchanged, so reads work during and after the boot
+ * migration (photo-crypto-migration walks this directory too).
+ *
  * Remove is a soft delete; bytes stay on disk like photos do, so the record
  * of what was attached survives for the audit trail.
  */
@@ -20,6 +25,12 @@ import { getDB, getPhotosDir } from '@/lib/db/database';
 import { ensureWritable } from '@/lib/licence/guard';
 import { accessService } from '@/lib/services/access-service';
 import { auditService } from '@/lib/services/audit-service';
+// Attachment changes must reach every open surface: the photo grids badge
+// attachment counts (they background-refetch on the attention event) and the
+// phone's shared library carries the count in its manifest.
+import { notifyAttentionChanged } from '@/lib/services/attention-events';
+import { companionService } from '@/lib/services/companion-service';
+import { encryptPhotoBytes, decryptPhotoBytes } from '@/lib/utils/photo-crypto';
 import { resolveResultFileType } from '@/types/result-file';
 import type { ResultFileRecord } from '@/types/result-file';
 import { NotFoundError, StorageQuotaError, ValidationError } from '@/lib/validators/errors';
@@ -110,7 +121,7 @@ class ResultFileService {
     const storedName = `${id}.${resolved.extension}`;
     const targetPath = await join(await this.resultsDir(), storedName);
     try {
-      await writeFile(targetPath, bytes);
+      await writeFile(targetPath, await encryptPhotoBytes(bytes));
     } catch (error) {
       if (
         error instanceof Error &&
@@ -148,6 +159,8 @@ class ResultFileService {
       patientId,
       detail: `attached ${originalName} (${(bytes.byteLength / 1024).toFixed(0)} KB)`,
     });
+    notifyAttentionChanged();
+    void companionService.publish().catch(() => {});
 
     return {
       id,
@@ -201,8 +214,10 @@ class ResultFileService {
     }
 
     const dir = await this.resultsDir();
-    const bytes = await readFile(await join(dir, file.storedName));
-    await writeFile(targetPath, new Uint8Array(bytes));
+    const bytes = await decryptPhotoBytes(
+      new Uint8Array(await readFile(await join(dir, file.storedName))),
+    );
+    await writeFile(targetPath, bytes);
 
     void auditService.record('photo.export', {
       entityType: 'photo',
@@ -231,7 +246,9 @@ class ResultFileService {
     }
 
     const dir = await this.resultsDir();
-    const bytes = new Uint8Array(await readFile(await join(dir, file.storedName)));
+    const bytes = await decryptPhotoBytes(
+      new Uint8Array(await readFile(await join(dir, file.storedName))),
+    );
     return { bytes, mimeType: file.mimeType, originalName: file.originalName };
   }
 
@@ -259,6 +276,8 @@ class ResultFileService {
       patientId: file.patientId,
       detail: `removed ${file.originalName}`,
     });
+    notifyAttentionChanged();
+    void companionService.publish().catch(() => {});
   }
 }
 

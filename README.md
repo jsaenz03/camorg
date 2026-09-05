@@ -127,6 +127,12 @@ the signed-in clinician:
   thumbnail naming the patient, plus the same due-for-review banner; the
   viewer titles photos with the patient's name and swipes across the whole
   library.
+- **Compare** — a tab of its own, the phone twin of the desktop Compare
+  page: pick any two patients you can see (the same patient twice gives the
+  before/after workflow), narrow both sides to one body part, and put their
+  photos side by side or overlaid — the same linked panes, anchor toggle
+  and zoom as the per-patient dialog, with each pane chip naming its
+  patient.
 - **Review actions** — mark a patient reviewed, request a PDF case report
   (prepared by the desktop, then delivered to the phone — opened in the
   browser, downloaded or shared to Files from the home-screen app), compare

@@ -40,6 +40,7 @@ export default function PhotosPage() {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
   const [bodyPart, setBodyPart] = useState<BodyPart | 'all'>('all');
   const [patientId, setPatientId] = useState<string | 'all'>('all');
+  const [attachments, setAttachments] = useState<'any' | 'with' | 'without'>('any');
 
   const [activePhoto, setActivePhoto] = useState<PhotoRecord | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -65,17 +66,19 @@ export default function PhotosPage() {
     ...dayFilter,
     bodyPart: bodyPart === 'all' ? undefined : bodyPart,
     patientId: patientId === 'all' ? undefined : patientId,
+    hasAttachments: attachments === 'any' ? undefined : attachments === 'with',
     includeDeleted: clinician?.preferences.showDeletedPhotos ?? false,
   });
   const { patients } = usePatients({ includeArchived: true });
 
   const hasFilters =
-    selectedDate !== undefined || bodyPart !== 'all' || patientId !== 'all';
+    selectedDate !== undefined || bodyPart !== 'all' || patientId !== 'all' || attachments !== 'any';
 
   function clearFilters() {
     setSelectedDate(undefined);
     setBodyPart('all');
     setPatientId('all');
+    setAttachments('any');
   }
 
   function handlePhotoClick(photo: PhotoRecord) {
@@ -180,6 +183,23 @@ export default function PhotosPage() {
                         {p.name}
                       </SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Attachments</label>
+                <Select
+                  value={attachments}
+                  onValueChange={(v) => setAttachments(v as 'any' | 'with' | 'without')}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Any photo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any">Any photo</SelectItem>
+                    <SelectItem value="with">With attachments</SelectItem>
+                    <SelectItem value="without">Without attachments</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

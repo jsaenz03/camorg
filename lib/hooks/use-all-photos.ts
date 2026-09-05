@@ -28,6 +28,8 @@ interface UseAllPhotosOptions {
   bodyPart?: BodyPart;
   patientId?: string;
   includeDeleted?: boolean;
+  /** true → only photos with attached documents; false → only without. */
+  hasAttachments?: boolean;
   pageSize?: number;
 }
 
@@ -43,7 +45,7 @@ interface UseAllPhotosReturn {
 }
 
 export function useAllPhotos(options: UseAllPhotosOptions = {}): UseAllPhotosReturn {
-  const { from, to, bodyPart, patientId, includeDeleted = false, pageSize = 200 } = options;
+  const { from, to, bodyPart, patientId, includeDeleted = false, hasAttachments, pageSize = 200 } = options;
 
   const [photos, setPhotos] = useState<PhotoWithPatient[]>([]);
   const [total, setTotal] = useState(0);
@@ -55,7 +57,7 @@ export function useAllPhotos(options: UseAllPhotosOptions = {}): UseAllPhotosRet
   const seqRef = useRef(0);
 
   // Any filter change resets to the first page.
-  const filterKey = `${from?.getTime() ?? ''}|${to?.getTime() ?? ''}|${bodyPart ?? ''}|${patientId ?? ''}|${includeDeleted}`;
+  const filterKey = `${from?.getTime() ?? ''}|${to?.getTime() ?? ''}|${bodyPart ?? ''}|${patientId ?? ''}|${includeDeleted}|${hasAttachments ?? ''}`;
   useEffect(() => {
     setPages(1);
   }, [filterKey]);
@@ -75,6 +77,7 @@ export function useAllPhotos(options: UseAllPhotosOptions = {}): UseAllPhotosRet
           bodyPart,
           patientId,
           includeDeleted,
+          hasAttachments,
           limit: pageSize * pages,
           offset: 0,
         }),
@@ -97,7 +100,7 @@ export function useAllPhotos(options: UseAllPhotosOptions = {}): UseAllPhotosRet
     } finally {
       if (seq === seqRef.current) setIsLoading(false);
     }
-  }, [from, to, bodyPart, patientId, includeDeleted, pageSize, pages]);
+  }, [from, to, bodyPart, patientId, includeDeleted, hasAttachments, pageSize, pages]);
 
   useEffect(() => {
     void load();

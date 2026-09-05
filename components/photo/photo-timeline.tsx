@@ -45,6 +45,7 @@ export function PhotoTimeline({
 }: PhotoTimelineProps) {
   const [bodyPartFilter, setBodyPartFilter] = useState<BodyPart | 'all'>('all');
   const [seriesFilter, setSeriesFilter] = useState<string | 'all'>('all');
+  const [attachmentsFilter, setAttachmentsFilter] = useState<'all' | 'with' | 'without'>('all');
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
 
   // Lesion series present in the (already access-filtered) photo set.
@@ -60,10 +61,16 @@ export function PhotoTimeline({
     return photos.filter((photo) => {
       if (bodyPartFilter !== 'all' && photo.bodyPart !== bodyPartFilter) return false;
       if (seriesFilter !== 'all' && photo.lesionGroup !== seriesFilter) return false;
+      if (
+        attachmentsFilter !== 'all' &&
+        (photo.attachmentCount > 0) !== (attachmentsFilter === 'with')
+      ) {
+        return false;
+      }
       if (selectedDate && !isSameDay(photo.capturedAt, selectedDate)) return false;
       return true;
     });
-  }, [photos, bodyPartFilter, seriesFilter, selectedDate]);
+  }, [photos, bodyPartFilter, seriesFilter, attachmentsFilter, selectedDate]);
 
   if (photos.length === 0) {
     return (
@@ -76,7 +83,7 @@ export function PhotoTimeline({
   }
 
   const hasActiveFilters =
-    bodyPartFilter !== 'all' || seriesFilter !== 'all' || selectedDate !== undefined;
+    bodyPartFilter !== 'all' || seriesFilter !== 'all' || attachmentsFilter !== 'all' || selectedDate !== undefined;
 
   if (filteredPhotos.length === 0 && hasActiveFilters) {
     return (
@@ -90,6 +97,8 @@ export function PhotoTimeline({
             series={seriesFilter}
             onSeriesChange={setSeriesFilter}
             seriesOptions={seriesOptions}
+            attachments={attachmentsFilter}
+            onAttachmentsChange={setAttachmentsFilter}
             count={0}
           />
         )}
@@ -104,6 +113,7 @@ export function PhotoTimeline({
               onClick={() => {
                 setBodyPartFilter('all');
                 setSeriesFilter('all');
+                setAttachmentsFilter('all');
                 setSelectedDate(undefined);
               }}
             >
@@ -126,6 +136,8 @@ export function PhotoTimeline({
           series={seriesFilter}
           onSeriesChange={setSeriesFilter}
           seriesOptions={seriesOptions}
+          attachments={attachmentsFilter}
+          onAttachmentsChange={setAttachmentsFilter}
           count={filteredPhotos.length}
         />
       )}
@@ -137,11 +149,13 @@ export function PhotoTimeline({
 function FilterBar({
   bodyPart,
   onBodyPartChange,
-  selectedDate,
   onDateChange,
+  selectedDate,
   series,
   onSeriesChange,
   seriesOptions,
+  attachments,
+  onAttachmentsChange,
   count,
 }: {
   bodyPart: BodyPart | 'all';
@@ -151,9 +165,12 @@ function FilterBar({
   series: string | 'all';
   onSeriesChange: (next: string | 'all') => void;
   seriesOptions: string[];
+  attachments: 'all' | 'with' | 'without';
+  onAttachmentsChange: (next: 'all' | 'with' | 'without') => void;
   count: number;
 }) {
-  const hasFilters = bodyPart !== 'all' || series !== 'all' || selectedDate !== undefined;
+  const hasFilters =
+    bodyPart !== 'all' || series !== 'all' || attachments !== 'all' || selectedDate !== undefined;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -215,6 +232,17 @@ function FilterBar({
           </SelectContent>
         </Select>
 
+        <Select value={attachments} onValueChange={(v) => onAttachmentsChange(v as 'all' | 'with' | 'without')}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Attachments" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All photos</SelectItem>
+            <SelectItem value="with">With attachments</SelectItem>
+            <SelectItem value="without">Without attachments</SelectItem>
+          </SelectContent>
+        </Select>
+
         {hasFilters && (
           <Button
             variant="ghost"
@@ -222,6 +250,7 @@ function FilterBar({
             onClick={() => {
               onBodyPartChange('all');
               onSeriesChange('all');
+              onAttachmentsChange('all');
               onDateChange(undefined);
             }}
           >

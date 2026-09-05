@@ -269,6 +269,24 @@ check(
   'photo cards show the scheduled-review cue',
   /photoReviewStatus/.test(read('components/photo/photo-card.tsx')),
 );
+check(
+  'photo cards show the attached-documents badge',
+  read('components/photo/photo-card.tsx').includes('photo.attachmentCount > 0'),
+);
+check(
+  'photo list reads stamp the attachment count',
+  read('lib/services/photo-service.ts').includes('withAttachmentCounts'),
+);
+check(
+  'attachment changes refresh the photo grids + phone library',
+  read('lib/services/result-file-service.ts').includes('notifyAttentionChanged()') &&
+    read('lib/services/result-file-service.ts').includes('companionService.publish()'),
+);
+check(
+  'photos page filters by attachments in SQL',
+  read('lib/services/photo-service.ts').includes('SELECT 1 FROM result_files') &&
+    read('app/(dashboard)/photos/page.tsx').includes('hasAttachments'),
+);
 
 // 12. Phone companion (sidecar viewing): the Rust shell serves the pushed
 //     manifest + whitelisted photo files and registers the commands; the
@@ -299,6 +317,20 @@ for (const cmd of [
 check(
   'companion service pushes manifest + filename whitelist',
   /invoke\('update_remote_library'/.test(read('lib/services/companion-service.ts')),
+);
+check(
+  'companion manifest carries the attachment count',
+  read('lib/services/companion-service.ts').includes('attachments: ph.attachmentCount ?? 0'),
+);
+check(
+  'phone page renders the attachment badge',
+  /function attachClip/.test(read('src-tauri/src/remote_camera_page.rs')) &&
+    read('src-tauri/src/remote_camera_page.rs').includes('cell-clip'),
+);
+check(
+  'phone page carries a cross-patient compare tab (desktop Compare-page parity)',
+  read('src-tauri/src/remote_camera_page.rs').includes('id="tab-cmp"') &&
+    read('src-tauri/src/remote_camera_page.rs').includes('id="cmp-patients"'),
 );
 check(
   'dashboard layout mounts CompanionProvider',

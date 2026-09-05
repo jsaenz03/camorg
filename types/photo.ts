@@ -38,6 +38,11 @@ export interface PhotoRecord {
   lesionGroup: string | null; // Free-text series name; photos sharing it on the
   // same patient form a before/after lesion series
 
+  // Attached result files (documents). Filled by the photo list reads
+  // (getAllPhotos / getPhotosByPatient); single-photo reads report 0 —
+  // the detail dialog lists the files themselves.
+  attachmentCount: number;
+
   // Timestamps
   capturedAt: Date; // When photo was taken (camera timestamp)
   createdAt: Date; // When record was created in system

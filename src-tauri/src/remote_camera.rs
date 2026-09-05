@@ -1420,6 +1420,22 @@ mod tests {
     assert!(PAGE_HTML.contains("No consent on record"));
   }
 
+  // Attachment indicator: photos carrying attached documents (result files)
+  // show a paperclip + count on both photo grids — and the count rides the
+  // aria-label — plus a note on the viewer's date line. The count comes from
+  // the manifest's per-photo attachments field; a stale manifest shows none.
+  #[test]
+  fn phone_page_carries_attachment_indicator() {
+    assert!(PAGE_HTML.contains("function attachClip"));
+    assert!(PAGE_HTML.contains("function attachAria"));
+    assert!(PAGE_HTML.contains("function attachNote"));
+    assert!(PAGE_HTML.contains("p.attachments || 0"));
+    assert!(PAGE_HTML.contains(".grid .cell-clip"));
+    assert!(PAGE_HTML.contains("var clip = attachClip(e.p)"));
+    assert!(PAGE_HTML.contains("+ attachAria(e.p)"));
+    assert!(PAGE_HTML.contains("attachNote(e.p)"));
+  }
+
   // Companion extras: theme toggle, body-map thumbnail overlays, desktop-style
   // compare (pickers + side/overlay), review and report actions, blur toggle.
   #[test]

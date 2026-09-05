@@ -33,6 +33,41 @@ assert.equal(isPlaintextJpeg(Buffer.from('CMGE1', 'latin1')), false);
 assert.equal(isPlaintextJpeg(new Uint8Array([0xff])), false);
 assert.equal(isPlaintextJpeg(new Uint8Array(0)), false);
 
+// isEncryptedBytes mirror (photo-crypto.ts): CMGE1 magic with room for at
+// least one ciphertext byte beyond magic + nonce (mirrors photo_crypto.rs
+// is_encrypted's `len > MAGIC + NONCE`).
+const CMGE1 = Buffer.from('CMGE1', 'latin1');
+function isEncryptedBytes(bytes) {
+  if (bytes.length <= 5 + 12) return false;
+  return bytes.subarray(0, 5).equals(CMGE1);
+}
+assert.equal(isEncryptedBytes(sealedHeader), true);
+assert.equal(isEncryptedBytes(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 1])), false, 'a JPEG is not CMGE1');
+assert.equal(isEncryptedBytes(CMGE1), false, 'magic alone is too short');
+assert.equal(isEncryptedBytes(Buffer.concat([CMGE1, Buffer.alloc(12)])), false, 'no ciphertext yet');
+assert.equal(
+  isEncryptedBytes(Buffer.concat([CMGE1, Buffer.alloc(12), Buffer.from([1])])),
+  true,
+);
+
+// The results migration (photo-crypto-migration.ts) rewrites exactly the
+// stored `{uuid}.{ext}` names that aren't already sealed; the sentinel,
+// .tmp debris and strangers are skipped.
+const RESULT_FILE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[0-9a-z]+$/i;
+const uuidPdf = '0f0e1d2c-3b4a-5968-7788-9900aabbccdd.pdf';
+assert.equal(RESULT_FILE_NAME.test(uuidPdf), true);
+assert.equal(RESULT_FILE_NAME.test(uuidPdf.toUpperCase()), true, 'uppercase uuids are ours too');
+assert.equal(RESULT_FILE_NAME.test('.camog-encrypted'), false, 'sentinel skipped');
+assert.equal(RESULT_FILE_NAME.test('x.pdf.tmp'), false, 'tmp debris skipped');
+assert.equal(RESULT_FILE_NAME.test('stranger.pdf'), false, 'strangers skipped');
+assert.equal(RESULT_FILE_NAME.test('../escape.pdf'), false, 'never a path');
+assert.equal(RESULT_FILE_NAME.test('0f0e1d2c3b4a59687788990 0aabbccdd.pdf'), false);
+// A legacy plaintext result file (uuid name, not sealed) is exactly the
+// rewrite target; an already-sealed one is left alone.
+assert.equal(!isEncryptedBytes(Buffer.from('%PDF-1.7')) && RESULT_FILE_NAME.test(uuidPdf), true);
+assert.equal(isEncryptedBytes(sealedHeader) && RESULT_FILE_NAME.test(uuidPdf), true);
+
+
 // bytesToBase64/base64ToBytes mirror (chunked at 0x8000 like the real helper).
 function bytesToBase64(bytes) {
   let binary = '';

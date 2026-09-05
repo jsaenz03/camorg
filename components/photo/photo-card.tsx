@@ -11,7 +11,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { AlarmClock, Link2, Loader2 } from 'lucide-react';
+import { AlarmClock, Link2, Loader2, Paperclip } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
 import { BodyPartLabels } from '@/types/body-part';
 import { Badge } from '@/components/ui/badge';
@@ -133,12 +133,25 @@ export function PhotoCard({
         )}
 
         {/* Top-left markers: soft-deleted (visible when the preference shows
-            deleted photos), lesion-series badge, and the scheduled-review cue. */}
-        {(photo.isDeleted || photo.lesionGroup || (reviewCue !== 'none' && !photo.isDeleted)) && (
+            deleted photos), lesion-series badge, the scheduled-review cue,
+            and the attached-documents indicator. */}
+        {(photo.isDeleted ||
+          photo.lesionGroup ||
+          photo.attachmentCount > 0 ||
+          (reviewCue !== 'none' && !photo.isDeleted)) && (
           <span className="pointer-events-none absolute left-2 top-2 flex max-w-[75%] flex-col items-start gap-1">
             {photo.isDeleted && (
               <span className="rounded-md bg-destructive px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                 Deleted
+              </span>
+            )}
+            {photo.attachmentCount > 0 && (
+              <span
+                className="inline-flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm"
+                title={`${photo.attachmentCount} attached ${photo.attachmentCount === 1 ? 'document' : 'documents'}`}
+              >
+                <Paperclip className="size-3 shrink-0" />
+                {photo.attachmentCount}
               </span>
             )}
             {photo.lesionGroup && (

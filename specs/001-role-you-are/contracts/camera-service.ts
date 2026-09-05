@@ -109,6 +109,7 @@ export interface CompanionPhoto {
   review: 'none' | 'scheduled' | 'due-soon' | 'overdue' | 'stale';
   reviewDueAt: number | null;      // Unix ms of the scheduled review
   lastReviewedAt: number | null;   // Unix ms of the last photo review
+  attachments: number;             // Active attached result files (documents)
 }
 
 /** The manifest served to the phone at `/library`. */

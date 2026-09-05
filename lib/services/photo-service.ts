@@ -87,6 +87,7 @@ function rowToPhoto(row: Record<string, unknown>): PhotoRecord {
     lastReviewedAt:
       row.last_reviewed_at != null ? new Date(row.last_reviewed_at as number) : null,
     lesionGroup: (row.lesion_group as string | null) ?? null,
+    attachmentCount: 0, // stamped onto list reads by withAttachmentCounts
     capturedAt: new Date(row.captured_at as number),
     createdAt: new Date(row.created_at as number),
     updatedAt: new Date(row.updated_at as number),
@@ -229,6 +230,7 @@ export class PhotoService implements IPhotoService {
         originalFileName: '',
         mimeType: validated.mimeType,
         fileSizeBytes: storedBlob.size,
+        attachmentCount: 0, // brand new — documents attach after the save
         bodyPart: validated.bodyPart,
         laterality: validated.laterality ?? null,
         subpart: validated.subpart || null,
@@ -282,6 +284,24 @@ export class PhotoService implements IPhotoService {
    * Retrieves all photos for a specific patient, newest first.
    * Returns an empty list if the clinician lacks access to the patient.
    */
+  /**
+   * Stamp each photo with its active attachment count (result_files). One
+   * grouped scan of the attachments table (it is small — one row per
+   * uploaded document) merged in JS, so grids can badge photos that carry
+   * pathology PDFs and letters without per-photo round trips, and without
+   * an IN-list that would eventually meet SQLite's bind limit.
+   */
+  private async withAttachmentCounts(photos: PhotoRecord[]): Promise<PhotoRecord[]> {
+    if (!photos.length) return photos;
+    const db = await getDB();
+    const rows = await db.select<{ photo_id: string; cnt: number }[]>(
+      `SELECT photo_id, COUNT(*) AS cnt FROM result_files
+        WHERE is_deleted = 0 GROUP BY photo_id`,
+    );
+    const counts = new Map(rows.map((r) => [r.photo_id, r.cnt]));
+    return photos.map((p) => ({ ...p, attachmentCount: counts.get(p.id) ?? 0 }));
+  }
+
   async getPhotosByPatient(
     patientId: string,
     options: { includeDeleted?: boolean; bodyPart?: BodyPart } = {}
@@ -307,7 +327,7 @@ export class PhotoService implements IPhotoService {
     sql += ' ORDER BY captured_at DESC';
 
     const rows = await db.select<Record<string, unknown>[]>(sql, binds);
-    return rows.map(rowToPhoto);
+    return this.withAttachmentCounts(rows.map(rowToPhoto));
   }
 
   /**
@@ -840,8 +860,9 @@ export class PhotoService implements IPhotoService {
     bodyPart?: BodyPart;
     patientId?: string;
     includeDeleted?: boolean;
+    hasAttachments?: boolean;
   }): Promise<{ where: string; binds: unknown[] }> {
-    const { from, to, bodyPart, patientId, includeDeleted = false } = options;
+    const { from, to, bodyPart, patientId, includeDeleted = false, hasAttachments } = options;
     const binds: unknown[] = [];
     const clauses: string[] = [];
     if (!includeDeleted) clauses.push('ph.is_deleted = 0');
@@ -852,6 +873,14 @@ export class PhotoService implements IPhotoService {
     if (bodyPart) {
       binds.push(bodyPart);
       clauses.push(`ph.body_part = $${binds.length}`);
+    }
+    if (hasAttachments !== undefined) {
+      clauses.push(
+        `${hasAttachments ? 'EXISTS' : 'NOT EXISTS'} (
+           SELECT 1 FROM result_files rf
+            WHERE rf.photo_id = ph.id AND rf.is_deleted = 0
+         )`,
+      );
     }
     if (from) {
       binds.push(from.getTime());
@@ -867,11 +896,11 @@ export class PhotoService implements IPhotoService {
   }
 
   async getAllPhotos(
-    options: { from?: Date; to?: Date; bodyPart?: BodyPart; patientId?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {}
+    options: { from?: Date; to?: Date; bodyPart?: BodyPart; patientId?: string; includeDeleted?: boolean; hasAttachments?: boolean; limit?: number; offset?: number } = {}
   ): Promise<PhotoRecord[]> {
-    const { from, to, bodyPart, patientId, includeDeleted = false, limit, offset } = options;
+    const { from, to, bodyPart, patientId, includeDeleted = false, hasAttachments, limit, offset } = options;
     const db = await getDB();
-    const { where, binds } = await this.buildPhotoQueryWhere({ from, to, bodyPart, patientId, includeDeleted });
+    const { where, binds } = await this.buildPhotoQueryWhere({ from, to, bodyPart, patientId, includeDeleted, hasAttachments });
 
     let sql = `SELECT ph.* FROM photos ph JOIN patients p ON p.id = ph.patient_id ${where} ORDER BY ph.captured_at DESC`;
     if (limit && limit > 0) {
@@ -885,7 +914,7 @@ export class PhotoService implements IPhotoService {
     }
 
     const rows = await db.select<Record<string, unknown>[]>(sql, binds);
-    return rows.map(rowToPhoto);
+    return this.withAttachmentCounts(rows.map(rowToPhoto));
   }
 
   /**
@@ -893,7 +922,7 @@ export class PhotoService implements IPhotoService {
    * the UI can page without ever silently truncating the library.
    */
   async getPhotosPage(
-    options: { from?: Date; to?: Date; bodyPart?: BodyPart; patientId?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {},
+    options: { from?: Date; to?: Date; bodyPart?: BodyPart; patientId?: string; includeDeleted?: boolean; hasAttachments?: boolean; limit?: number; offset?: number } = {},
   ): Promise<{ photos: PhotoRecord[]; total: number }> {
     const { limit = 200, offset = 0, ...filters } = options;
     const db = await getDB();
@@ -912,7 +941,7 @@ export class PhotoService implements IPhotoService {
         LIMIT $${pageBinds.length - 1} OFFSET $${pageBinds.length}`,
       pageBinds,
     );
-    return { photos: rows.map(rowToPhoto), total };
+    return { photos: await this.withAttachmentCounts(rows.map(rowToPhoto)), total };
   }
 
   /**

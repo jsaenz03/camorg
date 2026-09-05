@@ -23,6 +23,7 @@ export type AuditAction =
   | 'result_file.add'
   | 'result_file.delete'
   | 'backup.create'
+  | 'backup.restore_copy'
   | 'audit.export'
   | 'companion.start'
   | 'companion.stop'
@@ -69,6 +70,7 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'result_file.add': 'Attached a result file',
   'result_file.delete': 'Removed a result file',
   'backup.create': 'Created backup',
+  'backup.restore_copy': 'Prepared a backup restore copy',
   'audit.export': 'Downloaded the audit log',
   'companion.start': 'Opened phone link session',
   'companion.stop': 'Closed phone link session',

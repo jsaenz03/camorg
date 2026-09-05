@@ -641,6 +641,72 @@ await shot('6-compare-overlay');
 await pageC.click('#compare-back');
 await pageC.waitForTimeout(200);
 
+// Compare tab (desktop Compare-page parity): its own tab in the bar, opening
+// on two DIFFERENT patients — the first with photos, then the next different
+// one — with the photo pickers relabelled to the patient names, pane chips
+// naming the patient, a body-part filter narrowing both pools at once, and
+// the tab bar kept visible (it is a tab, not a dialog).
+await pageC.click('#tab-cmp');
+await pageC.waitForTimeout(400);
+await shot('5b-compare-tab');
+const cmpTab = await pageC.evaluate(() => {
+  const sel = (id) => document.getElementById(id);
+  return {
+    surfaceOpen: !sel('screen-compare').hidden,
+    tabSelected: sel('tab-cmp').getAttribute('aria-selected'),
+    barVisible: !sel('tabbar').hidden,
+    backHidden: sel('compare-back').hidden,
+    patientRowShown: !sel('cmp-patients').hidden,
+    leftPid: sel('cmp-patient-left').value,
+    rightPid: sel('cmp-patient-right').value,
+    leftLabel: sel('cmp-left-label').textContent,
+    rightLabel: sel('cmp-right-label').textContent,
+    partOptions: sel('cmp-part').options.length,
+    leftOpts: sel('cmp-left').options.length,
+    rightOpts: sel('cmp-right').options.length,
+    chips: Array.from(document.querySelectorAll('#cmp-frame .chip')).map((c) => c.textContent),
+  };
+});
+// Body-part filter: "Chest" exists once per patient (p1's ph18, p2's ph16),
+// so both pools must narrow to a single photo while the chips keep naming
+// the patients.
+await pageC.selectOption('#cmp-part', { label: 'Chest' });
+await pageC.waitForTimeout(300);
+await shot('5c-compare-tab-chest');
+const cmpChest = await pageC.evaluate(() => ({
+  leftOpts: document.getElementById('cmp-left').options.length,
+  rightOpts: document.getElementById('cmp-right').options.length,
+  chips: Array.from(document.querySelectorAll('#cmp-frame .chip')).map((c) => c.textContent),
+}));
+// The same patient on both sides is the before/after workflow (the desktop
+// page's single-patient degrade); picks re-seed newest-first, right stepped
+// aside from the left.
+await pageC.selectOption('#cmp-patient-right', 'p1');
+await pageC.waitForTimeout(300);
+const cmpSamePatient = await pageC.evaluate(() => ({
+  leftOpts: document.getElementById('cmp-left').options.length,
+  rightOpts: document.getElementById('cmp-right').options.length,
+  rightLabel: document.getElementById('cmp-right-label').textContent,
+  leftId: document.getElementById('cmp-left').value,
+  rightId: document.getElementById('cmp-right').value,
+  partValue: document.getElementById('cmp-part').value,
+}));
+// Tab semantics: another tab closes the surface, coming back restores it
+// with the patients the tab was left on.
+await pageC.click('#tab-all');
+await pageC.waitForTimeout(200);
+const compareHiddenOnOtherTab = await pageC.evaluate(() =>
+  document.getElementById('screen-compare').hidden);
+await pageC.click('#tab-cmp');
+await pageC.waitForTimeout(200);
+const compareTabRestored = await pageC.evaluate(() => ({
+  open: !document.getElementById('screen-compare').hidden,
+  leftPid: document.getElementById('cmp-patient-left').value,
+  rightPid: document.getElementById('cmp-patient-right').value,
+}));
+await pageC.click('#tab-lib');
+await pageC.waitForTimeout(200);
+
 // Viewer: no body-map sheet any more (it moved onto the thumbnails), blur works.
 await pageC.click('#grid button:first-child');
 await pageC.waitForTimeout(400);
@@ -890,6 +956,28 @@ const checks = [
   ['choosing another photo resets the viewport', resetPct === '100%' &&
     resetTransforms.length === 2 && resetTransforms.every((t) => t.includes('scale(1)'))],
   ['overlay mode shows the opacity control', overlayOn === true],
+  ['compare tab opens cross-patient with the tab bar kept visible',
+    cmpTab.surfaceOpen && cmpTab.tabSelected === 'true' && cmpTab.barVisible &&
+    cmpTab.backHidden && cmpTab.patientRowShown &&
+    cmpTab.leftPid === 'p1' && cmpTab.rightPid === 'p2' &&
+    cmpTab.leftLabel === 'Reference \u2014 Margot Whitfield' &&
+    cmpTab.rightLabel === 'Comparison \u2014 Tane Ngata' &&
+    cmpTab.partOptions === 7],
+  ['compare tab pools follow the chosen patients and chips name them',
+    cmpTab.leftOpts === 9 && cmpTab.rightOpts === 8 &&
+    cmpTab.chips.length === 2 &&
+    cmpTab.chips[0].startsWith('Margot Whitfield') && cmpTab.chips[1].startsWith('Tane Ngata')],
+  ['compare tab body-part filter narrows both sides at once',
+    cmpChest.leftOpts === 2 && cmpChest.rightOpts === 1 &&
+    cmpChest.chips[0].startsWith('Margot Whitfield') && cmpChest.chips[1].startsWith('Tane Ngata')],
+  ['same patient on both sides is the before/after workflow',
+    cmpSamePatient.leftOpts === 9 && cmpSamePatient.rightOpts === 9 &&
+    cmpSamePatient.rightLabel.includes('Margot Whitfield') &&
+    cmpSamePatient.partValue === 'all' &&
+    cmpSamePatient.leftId === '0' && cmpSamePatient.rightId === '2'],
+  ['compare tab state survives switching away and back',
+    compareHiddenOnOtherTab === true && compareTabRestored.open &&
+    compareTabRestored.leftPid === 'p1' && compareTabRestored.rightPid === 'p1'],
   ['viewer opens the tapped photo, not the manifest-position one', lastSrc === 'img/ph18.jpg' && lastCount === '9 of 9'],
   ['viewer metadata no longer carries the diagram', viewerFigs === 0],
   ['blur toggle engages', blurred === true],

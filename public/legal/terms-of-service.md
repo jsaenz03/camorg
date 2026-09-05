@@ -54,7 +54,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 (a) keeping account passcodes confidential and using the session-timeout and idle privacy-lock settings appropriate to your clinic environment;
 (b) the acts and omissions of your users;
 (c) physically and electronically securing the computers and networks on which the Software runs, including using full-disk encryption (for example, FileVault or BitLocker) on any device holding patient photographs;
-(d) taking and safely storing regular backups — the Software's backup feature creates a database snapshot in your configured storage folder, and **backups are not encrypted by the Software**; and
+(d) taking and safely storing regular backups — the Software's backup feature creates a database snapshot in your configured storage folder, encrypted with a **backup passphrase your practice chooses**; you must record that passphrase — an encrypted backup cannot be restored without it, and the Software cannot recover it; and
 (e) using the **phone-camera tether** feature only on a trusted, private network you control. The tether runs a small web server on your computer that receives photos from phones on the same local network over **unencrypted HTTP**, protected only by a random single-use token. Do not use it on public or shared Wi-Fi.
 
 5.3 The Software's idle privacy lock is a **privacy screen, not a security control or encryption**. It covers the screen but does not end the signed-in session.

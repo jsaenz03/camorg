@@ -48,3 +48,17 @@ export async function decryptPhotoBytes(bytes: Uint8Array): Promise<Uint8Array<A
 export function isPlaintextJpeg(bytes: Uint8Array): boolean {
   return bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8;
 }
+
+/**
+ * Does this byte stream carry the CMGE1 prefix? Mirrors photo_crypto::is_encrypted
+ * (needs at least one ciphertext byte beyond magic + nonce, so a stray file that
+ * merely starts with the letters can't read as ours).
+ */
+export function isEncryptedBytes(bytes: Uint8Array): boolean {
+  if (bytes.length <= 5 + 12) return false;
+  const magic = new TextEncoder().encode('CMGE1');
+  for (let i = 0; i < magic.length; i++) {
+    if (bytes[i] !== magic[i]) return false;
+  }
+  return true;
+}

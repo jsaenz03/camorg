@@ -317,6 +317,13 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }
   .grid .cell-review.overdue { background: #f87171; }
   .grid .cell-review.due-soon { background: #fbbf24; }
+  /* Attachment indicator: paperclip + count on photos carrying documents. */
+  .grid .cell-clip {
+    position: absolute; top: 3px; left: 3px; display: flex; align-items: center; gap: 3px;
+    padding: 3px 5px; border-radius: 5px; background: rgba(0, 0, 0, 0.55); color: #fafafa;
+    font-size: 10px; font-weight: 600; line-height: 1; pointer-events: none;
+  }
+  .grid .cell-clip svg { width: 10px; height: 10px; display: block; }
   .empty { padding: 48px 12px; text-align: center; color: var(--muted); font-size: 15px; }
 
   /* Due-review banner (patients + photos tabs): mirrors the desktop's
@@ -408,6 +415,8 @@ const PAGE_HTML: &str = r##"<!doctype html>
     width: 100%; min-height: 40px; padding: 6px 8px; border-radius: var(--radius);
     border: 1px solid var(--border); background: var(--card); color: var(--fg); font-size: 16px;
   }
+  /* The body-part filter spans both patient pickers (cross-patient mode). */
+  .cmp-pickers .wide { grid-column: 1 / -1; }
   .cmp-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .cmp-mode { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .cmp-mode button {
@@ -435,6 +444,13 @@ const PAGE_HTML: &str = r##"<!doctype html>
   #cmp-opacity { flex: 1; accent-color: var(--primary); }
   #compare-stage { flex: 1; min-height: 0; padding: 0 8px 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
   #cmp-frame { height: 100%; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  /* Cross-patient mode (the Compare tab): the surface drops under the fixed
+     tab bar so the bar stays for jumping away — it reads as a tab, not a
+     dialog — and the stage clears the bar like every other tab screen. */
+  #screen-compare.cross { z-index: 5; }
+  #screen-compare.cross #compare-stage {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
   .cmp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; height: 100%; }
   .cmp-pane {
     position: relative; display: flex; align-items: center; justify-content: center;
@@ -447,6 +463,11 @@ const PAGE_HTML: &str = r##"<!doctype html>
   .cmp-pane .chip, .cmp-overlay .chip {
     position: absolute; left: 6px; bottom: 6px; padding: 3px 7px; border-radius: 6px;
     background: rgba(0, 0, 0, 0.6); color: #fafafa; font-size: 11px; pointer-events: none;
+  }
+  /* Cross-patient mode names both patients in the overlay chip; keep it
+     on one clipped line instead of spilling over the photo. */
+  .cmp-overlay .chip {
+    max-width: calc(100% - 12px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .cmp-overlay {
     position: relative; height: 100%; display: flex; align-items: center; justify-content: center;
@@ -640,13 +661,32 @@ const PAGE_HTML: &str = r##"<!doctype html>
       <span id="compare-title">Compare</span>
     </div>
     <div id="compare-controls">
+      <!-- Cross-patient pickers (the Compare tab, desktop Compare-page
+           parity); hidden in the per-patient dialog, where the pool is
+           already fixed to the open patient. The manifest only carries
+           patients this clinician can see, so the choices never exceed
+           the user's access. -->
+      <div id="cmp-patients" class="cmp-pickers" hidden>
+        <div>
+          <label for="cmp-patient-left">Reference patient</label>
+          <select id="cmp-patient-left" aria-label="Reference patient"></select>
+        </div>
+        <div>
+          <label for="cmp-patient-right">Comparison patient</label>
+          <select id="cmp-patient-right" aria-label="Comparison patient"></select>
+        </div>
+        <div class="wide">
+          <label for="cmp-part">Body part</label>
+          <select id="cmp-part" aria-label="Body part"></select>
+        </div>
+      </div>
       <div class="cmp-pickers">
         <div>
-          <label for="cmp-left">Earlier / reference</label>
+          <label for="cmp-left" id="cmp-left-label">Earlier / reference</label>
           <select id="cmp-left" aria-label="Photo to compare, earlier"></select>
         </div>
         <div>
-          <label for="cmp-right">Later / current</label>
+          <label for="cmp-right" id="cmp-right-label">Later / current</label>
           <select id="cmp-right" aria-label="Photo to compare, later"></select>
         </div>
       </div>
@@ -705,6 +745,10 @@ const PAGE_HTML: &str = r##"<!doctype html>
     <button type="button" class="tab" id="tab-lib" role="tab" aria-selected="false" hidden>
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       Patients
+    </button>
+    <button type="button" class="tab" id="tab-cmp" role="tab" aria-selected="false" hidden>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/></svg>
+      Compare
     </button>
   </nav>
 
@@ -829,7 +873,9 @@ const PAGE_HTML: &str = r##"<!doctype html>
   // right place first time; a late viewport settle re-asserts it below.
   var chromeReady = false;
   function updateChrome() {
-    var surfaced = !viewerOpen() && !compareOpen();
+    // The compare surface counts as chrome-free only in its dialog mode;
+    // as the Compare tab it sits under the tab bar and the bar stays.
+    var surfaced = !viewerOpen() && (!compareOpen() || !!cmp.cross);
     $('tabbar').hidden = !chromeReady || !lib || !surfaced;
     show($('theme'), chromeReady && surfaced);
   }
@@ -839,6 +885,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
       lib = data.viewing ? data : null;
       show($('tab-lib'), !!lib);
       show($('tab-all'), !!lib);
+      show($('tab-cmp'), !!lib);
       show($('sent-lib'), !!lib);
       // Library went away (sharing turned off, desktop restarted): leave any
       // library screen instead of stranding the phone with no bar to leave by.
@@ -876,6 +923,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
             if (!$('screen-lib').hidden) renderLibrary();
             else if (!$('screen-patient').hidden) renderGrid();
             else if (!$('screen-all').hidden) renderAll();
+            else if (!$('screen-compare').hidden) prepareCompareTab(true);
           })
         : Promise.resolve();
       return job.catch(function () {}).then(function () {
@@ -895,16 +943,20 @@ const PAGE_HTML: &str = r##"<!doctype html>
     show($('screen-lib'), tab === 'lib' && !state.patientId);
     show($('screen-patient'), tab === 'lib' && !!state.patientId);
     show($('screen-all'), tab === 'all');
+    show($('screen-compare'), tab === 'cmp');
     $('tab-cam').setAttribute('aria-selected', tab === 'cam' ? 'true' : 'false');
     $('tab-lib').setAttribute('aria-selected', tab === 'lib' ? 'true' : 'false');
     $('tab-all').setAttribute('aria-selected', tab === 'all' ? 'true' : 'false');
+    $('tab-cmp').setAttribute('aria-selected', tab === 'cmp' ? 'true' : 'false');
     updateChrome();
     if (tab === 'lib') renderLibrary();
     if (tab === 'all') renderAll();
+    if (tab === 'cmp') prepareCompareTab(true);
   }
   $('tab-cam').addEventListener('click', function () { setTab('cam'); });
   $('tab-lib').addEventListener('click', function () { setTab('lib'); });
   $('tab-all').addEventListener('click', function () { setTab('all'); });
+  $('tab-cmp').addEventListener('click', function () { setTab('cmp'); });
 
   // ---- Connect + initial data --------------------------------------------
   // All fetches are relative, so this source carries no URL or cookie
@@ -1454,6 +1506,38 @@ const PAGE_HTML: &str = r##"<!doctype html>
     return '';
   }
 
+  // Attachment indicator: a paperclip + count on photos that carry documents
+  // (pathology PDFs, letters) — the sidecar mirror of the desktop card badge.
+  // p.attachments rides the manifest; an old cached manifest simply shows none.
+  var ICON_CLIP =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
+
+  function attachCount(p) {
+    return p.attachments || 0;
+  }
+
+  function attachClip(p) {
+    var n = attachCount(p);
+    if (!n) return null;
+    var clip = document.createElement('span');
+    clip.className = 'cell-clip';
+    clip.innerHTML = ICON_CLIP + '<span></span>';
+    clip.lastChild.textContent = n;
+    return clip;
+  }
+
+  function attachAria(p) {
+    var n = attachCount(p);
+    if (!n) return '';
+    return ', ' + n + (n === 1 ? ' attachment' : ' attachments');
+  }
+
+  function attachNote(p) {
+    var n = attachCount(p);
+    if (!n) return '';
+    return ' \u00b7 ' + n + (n === 1 ? ' attachment' : ' attachments');
+  }
+
   // ---- Due-review banner (desktop patients-page parity) --------------------
   // The numbers the desktop's review badge shows: photos due (overdue +
   // inside the warning window), how many are overdue, and the earliest
@@ -1574,7 +1658,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
     list.forEach(function (e) {
       var cell = document.createElement('button');
       cell.type = 'button';
-      cell.setAttribute('aria-label', e.p.bodyPartLabel + ', ' + fmtDate(e.p.capturedAt) + reviewAria(e.p));
+      cell.setAttribute('aria-label', e.p.bodyPartLabel + ', ' + fmtDate(e.p.capturedAt) + reviewAria(e.p) + attachAria(e.p));
       var img = document.createElement('img');
       img.src = 'img/' + e.p.id + '.thumb.jpg';
       img.alt = '';
@@ -1586,6 +1670,8 @@ const PAGE_HTML: &str = r##"<!doctype html>
       cell.appendChild(fig);
       var dot = reviewDot(e.p);
       if (dot) cell.appendChild(dot);
+      var clip = attachClip(e.p);
+      if (clip) cell.appendChild(clip);
       cell.addEventListener('click', function () { openViewer(list, e.i, false); });
       grid.appendChild(cell);
     });
@@ -1873,7 +1959,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
       cell.type = 'button';
       cell.setAttribute(
         'aria-label',
-        patientName(e.p.patientId) + ' \u2014 ' + e.p.bodyPartLabel + ', ' + fmtDate(e.p.capturedAt) + reviewAria(e.p),
+        patientName(e.p.patientId) + ' \u2014 ' + e.p.bodyPartLabel + ', ' + fmtDate(e.p.capturedAt) + reviewAria(e.p) + attachAria(e.p),
       );
       var img = document.createElement('img');
       img.src = 'img/' + e.p.id + '.thumb.jpg';
@@ -1890,6 +1976,8 @@ const PAGE_HTML: &str = r##"<!doctype html>
       cell.appendChild(fig);
       var dot = reviewDot(e.p);
       if (dot) cell.appendChild(dot);
+      var clip = attachClip(e.p);
+      if (clip) cell.appendChild(clip);
       cell.addEventListener('click', function () { openViewer(entries, e.i, true); });
       grid.appendChild(cell);
     });
@@ -1913,7 +2001,10 @@ const PAGE_HTML: &str = r##"<!doctype html>
   // Two pickers (Earlier / reference, Later / current), side-by-side or
   // overlay mode with an opacity slider, and an anchor toggle: linked (the
   // default) one pan/zoom moves both photos in lockstep; free, each pane
-  // moves on its own until the anchor is re-engaged.
+  // moves on its own until the anchor is re-engaged. Two entry points: the
+  // patient screen's Compare button (both panes pick from that patient's
+  // photos), and the Compare tab (any two patients in the manifest — the
+  // desktop Compare page).
   function viewerOpen() { return !$('screen-viewer').hidden; }
   function compareOpen() { return !$('screen-compare').hidden; }
 
@@ -1922,7 +2013,9 @@ const PAGE_HTML: &str = r##"<!doctype html>
   function cmpView() { return { zoom: 1, ox: 0, oy: 0 }; }
 
   var cmp = {
-    photos: [], leftId: null, rightId: null,
+    cross: false,
+    leftPool: [], rightPool: [], leftId: null, rightId: null,
+    leftPid: null, rightPid: null, part: 'all',
     mode: 'side', opacity: 50,
     anchored: true, active: 'left',
     left: cmpView(), right: cmpView(),
@@ -1943,7 +2036,8 @@ const PAGE_HTML: &str = r##"<!doctype html>
 
   function cmpEntry(id) {
     var found = null;
-    cmp.photos.forEach(function (e) { if (e.i === id) found = e; });
+    cmp.leftPool.forEach(function (e) { if (e.i === id) found = e; });
+    if (!found) cmp.rightPool.forEach(function (e) { if (e.i === id) found = e; });
     return found;
   }
 
@@ -1953,10 +2047,10 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }
 
   function buildPickers() {
-    [['cmp-left', 'left'], ['cmp-right', 'right']].forEach(function (pair) {
+    [['cmp-left', 'left', cmp.leftPool], ['cmp-right', 'right', cmp.rightPool]].forEach(function (pair) {
       var select = $(pair[0]);
       select.innerHTML = '';
-      cmp.photos.forEach(function (e) {
+      pair[2].forEach(function (e) {
         var opt = document.createElement('option');
         opt.value = String(e.i);
         opt.textContent = cmpLabel(e);
@@ -1974,10 +2068,13 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }
 
   function openCompare() {
-    cmp.photos = photosFor(state.patientId);
-    if (cmp.photos.length < 2) return;
+    var photos = photosFor(state.patientId);
+    if (photos.length < 2) return;
+    cmp.cross = false;
+    cmp.leftPool = photos;
+    cmp.rightPool = photos;
     // Desktop default: newest first; left = the newest, right = the next.
-    var sorted = cmp.photos.slice().sort(function (a, b) {
+    var sorted = photos.slice().sort(function (a, b) {
       return b.p.capturedAt - a.p.capturedAt;
     });
     cmp.leftId = sorted[0].i;
@@ -1988,12 +2085,164 @@ const PAGE_HTML: &str = r##"<!doctype html>
     cmp.active = 'left';
     cmp.left = cmpView();
     cmp.right = cmpView();
+    syncCompareChrome();
     buildPickers();
     syncAnchorButton();
     renderCompare();
     show($('screen-compare'), true);
     updateChrome();
     history.pushState({ view: 'compare' }, '');
+  }
+
+  // ---- Compare tab (desktop Compare-page parity) ---------------------------
+  // The same surface driven across patients: any two patients the manifest
+  // carries (it is access-filtered on the desktop, so only patients this
+  // clinician can see are ever offered), optionally narrowed to one body
+  // part. The same patient on both sides is the before/after workflow.
+  function poolHas(pool, id) {
+    var ok = false;
+    pool.forEach(function (e) { if (e.i === id) ok = true; });
+    return ok;
+  }
+
+  // Body-part filter choices: the distinct labels across both patients'
+  // full pools (labels already carry laterality, e.g. "Left Hand").
+  function cmpPartOptions() {
+    var seen = {};
+    var parts = [];
+    [cmp.leftPid, cmp.rightPid].forEach(function (pid) {
+      photosFor(pid).forEach(function (e) {
+        if (!seen[e.p.bodyPartLabel]) {
+          seen[e.p.bodyPartLabel] = true;
+          parts.push(e.p.bodyPartLabel);
+        }
+      });
+    });
+    return parts.sort();
+  }
+
+  function cmpPool(pid) {
+    var pool = photosFor(pid);
+    if (cmp.part !== 'all') {
+      pool = pool.filter(function (e) { return e.p.bodyPartLabel === cmp.part; });
+    }
+    return pool;
+  }
+
+  function buildPatientPickers() {
+    [['cmp-patient-left', 'leftPid'], ['cmp-patient-right', 'rightPid']]
+      .forEach(function (pair) {
+        var select = $(pair[0]);
+        select.innerHTML = '';
+        lib.patients.forEach(function (p) {
+          var opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.name;
+          select.appendChild(opt);
+        });
+        select.onchange = function () {
+          cmp[pair[1]] = select.value;
+          cmp.part = 'all';
+          prepareCompareTab(false);
+        };
+        select.value = cmp[pair[1]] || '';
+      });
+  }
+
+  function buildPartPicker() {
+    var select = $('cmp-part');
+    select.innerHTML = '';
+    var all = document.createElement('option');
+    all.value = 'all';
+    all.textContent = 'All body parts';
+    select.appendChild(all);
+    cmpPartOptions().forEach(function (label) {
+      var opt = document.createElement('option');
+      opt.value = label;
+      opt.textContent = label;
+      select.appendChild(opt);
+    });
+    select.onchange = function () {
+      cmp.part = select.value;
+      prepareCompareTab(false);
+    };
+    select.value = cmp.part;
+  }
+
+  function syncCompareChrome() {
+    show($('cmp-patients'), cmp.cross);
+    show($('compare-back'), !cmp.cross);
+    $('screen-compare').classList.toggle('cross', cmp.cross);
+    if (cmp.cross) {
+      $('cmp-left-label').textContent = 'Reference \u2014 ' + patientName(cmp.leftPid);
+      $('cmp-right-label').textContent = 'Comparison \u2014 ' + patientName(cmp.rightPid);
+    } else {
+      $('cmp-left-label').textContent = 'Earlier / reference';
+      $('cmp-right-label').textContent = 'Later / current';
+    }
+  }
+
+  // (Re)builds the cross-patient comparison from the current manifest.
+  // Patient, part and photo picks survive tab switches and manifest updates
+  // while they still resolve; changing a patient or the body part re-seeds
+  // both panes (keepPicks false), like the desktop page re-defaulting when
+  // its pools change. Defaults: the first patient with photos, then the
+  // next different one (a one-patient library degrades to before/after),
+  // panes seeded with the newest of each pool, the right side stepping
+  // aside from the left's photo so they never open identical. Mode, anchor
+  // and viewport reset on every prepare — arriving at the tab is a fresh
+  // comparison, the same deal as opening the dialog.
+  function prepareCompareTab(keepPicks) {
+    if (!lib) return;
+    cmp.cross = true;
+    if (!keepPicks) { cmp.leftId = null; cmp.rightId = null; }
+    var known = {};
+    lib.patients.forEach(function (p) { known[p.id] = true; });
+    var withPhotos = lib.patients.filter(function (p) { return p.photoCount > 0; });
+    if (!(cmp.leftPid && known[cmp.leftPid])) {
+      cmp.leftPid = withPhotos[0] ? withPhotos[0].id : null;
+      cmp.rightPid = null;
+      cmp.part = 'all';
+    }
+    if (!(cmp.rightPid && known[cmp.rightPid])) {
+      var others = withPhotos.filter(function (p) { return p.id !== cmp.leftPid; });
+      cmp.rightPid = others[0] ? others[0].id : cmp.leftPid;
+    }
+    var parts = cmpPartOptions();
+    if (cmp.part !== 'all' && parts.indexOf(cmp.part) === -1) cmp.part = 'all';
+    cmp.leftPool = cmpPool(cmp.leftPid);
+    cmp.rightPool = cmpPool(cmp.rightPid);
+    if (!poolHas(cmp.leftPool, cmp.leftId)) {
+      cmp.leftId = cmp.leftPool[0] ? cmp.leftPool[0].i : null;
+    }
+    if (!poolHas(cmp.rightPool, cmp.rightId)) {
+      cmp.rightId = null;
+      for (var k = 0; k < cmp.rightPool.length; k++) {
+        if (cmp.rightPool[k].i !== cmp.leftId) { cmp.rightId = cmp.rightPool[k].i; break; }
+      }
+      if (cmp.rightId === null && cmp.rightPool[0]) cmp.rightId = cmp.rightPool[0].i;
+    }
+    cmp.mode = 'side';
+    cmp.opacity = 50;
+    cmp.anchored = true;
+    cmp.active = 'left';
+    cmp.left = cmpView();
+    cmp.right = cmpView();
+    syncCompareChrome();
+    buildPatientPickers();
+    buildPartPicker();
+    buildPickers();
+    syncAnchorButton();
+    renderCompare();
+    // cross flipped after setTab's own chrome pass; re-assert so the tab
+    // bar (kept visible in this mode) is composited for the screen.
+    updateChrome();
+  }
+
+  // Cross-patient panes must say whose photo they show; the dialog's panes
+  // are all one patient, so there the chip stays date-only.
+  function cmpChipName(entry) {
+    return cmp.cross ? patientName(entry.p.patientId) + ' \u00b7 ' : '';
   }
 
   function cmpPane(entry, side) {
@@ -2008,7 +2257,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
     pane.appendChild(img);
     var chip = document.createElement('span');
     chip.className = 'chip';
-    chip.textContent = fmtDateTime(entry.p.capturedAt);
+    chip.textContent = cmpChipName(entry) + fmtDateTime(entry.p.capturedAt);
     pane.appendChild(chip);
     return pane;
   }
@@ -2025,6 +2274,15 @@ const PAGE_HTML: &str = r##"<!doctype html>
     frame.innerHTML = '';
     var left = cmpEntry(cmp.leftId);
     var right = cmpEntry(cmp.rightId);
+    if (!left || !right) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = cmp.cross
+        ? 'Nothing to compare \u2014 pick patients with photos.'
+        : 'No photos to compare yet.';
+      frame.appendChild(empty);
+      return;
+    }
     if (cmp.mode === 'side') {
       var grid = document.createElement('div');
       grid.className = 'cmp-grid';
@@ -2047,7 +2305,8 @@ const PAGE_HTML: &str = r##"<!doctype html>
       var chip = document.createElement('span');
       chip.className = 'chip';
       if (left && right) {
-        chip.textContent = fmtDate(left.p.capturedAt) + ' \u2192 ' + fmtDate(right.p.capturedAt) + ' (' + cmp.opacity + '%)';
+        chip.textContent = cmpChipName(left) + fmtDate(left.p.capturedAt) + ' \u2192 ' +
+          cmpChipName(right) + fmtDate(right.p.capturedAt) + ' (' + cmp.opacity + '%)';
       }
       overlay.appendChild(chip);
       frame.appendChild(overlay);
@@ -2221,7 +2480,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
     $('viewer-title').textContent =
       (viewer.names ? patientName(e.p.patientId) + ' \u00b7 ' : '') +
       e.p.bodyPartLabel + (e.p.subpart ? ' \u00b7 ' + e.p.subpart : '');
-    $('viewer-date').textContent = 'Taken ' + fmtDate(e.p.capturedAt);
+    $('viewer-date').textContent = 'Taken ' + fmtDate(e.p.capturedAt) + attachNote(e.p);
     var notes = $('viewer-notes');
     if (e.p.notes) {
       notes.textContent = e.p.notes;

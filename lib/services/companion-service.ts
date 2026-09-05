@@ -80,6 +80,9 @@ class CompanionService {
         review: photoReviewState(ph, { warningDays, staleDays }),
         reviewDueAt: ph.reviewDueAt?.getTime() ?? null,
         lastReviewedAt: ph.lastReviewedAt?.getTime() ?? null,
+        // Document count for the phone's paperclip badge (same number the
+        // desktop cards show).
+        attachments: ph.attachmentCount ?? 0,
       }));
 
     // Worst photo-level review state per patient: the patients list banners
