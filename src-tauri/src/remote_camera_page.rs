@@ -630,19 +630,22 @@ const PAGE_HTML: &str = r##"<!doctype html>
   $('tab-all').addEventListener('click', function () { setTab('all'); });
 
   // ---- Connect + initial data --------------------------------------------
-  // Relative URLs resolve under /t/<token>/, so the token never appears here.
-  // The saved home-screen app may open while the desktop is closed or still
-  // starting, so keep pinging until Camog answers (the pinned port and token
-  // survive desktop restarts). Once connected, a slow heartbeat keeps the
-  // desktop's idle watchdog from ending the session while the page is open,
-  // and doubles as the loss detector that re-arms the ping loop.
+  // All fetches are relative, so this source carries no URL or cookie
+  // secrets and works wherever the page is mounted. The saved home-screen
+  // app may open while the desktop is closed or still starting, so keep
+  // pinging until Camog answers (the pinned port and code survive desktop
+  // restarts). Once connected, a slow heartbeat keeps the desktop's idle
+  // watchdog from ending the session while the page is open, and doubles as
+  // the loss detector that re-arms the ping loop.
   var connTimer = null;
   var beatTimer = null;
   function probe() {
-    // res.ok matters: after the desktop rotates the pairing code the server
-    // still answers, but with 404s — that must read as disconnected so the
-    // page shows its reconnecting state instead of a false "Connected".
+    // Statuses matter: a network failure is "cannot reach" (keep retrying),
+    // but a 404 while the server still answers means this page's credential
+    // is dead — the code was rotated, or the link restarted and sessions
+    // died with it. Only a re-scan recovers, so say so instead of retrying.
     fetch('hello').then(function (res) {
+      if (res.status === 404) { pairingExpired(); return; }
       if (!res.ok) throw new Error('stale pairing code');
       if (connTimer) { clearInterval(connTimer); connTimer = null; }
       $('conn').textContent = 'Connected. Take the photo, review it, then send it.';
@@ -657,7 +660,8 @@ const PAGE_HTML: &str = r##"<!doctype html>
     // purpose, so only a visible page keeps the link warm.
     if (document.hidden) return;
     fetch('hello').then(function (res) {
-      if (!res.ok) disconnected();
+      if (res.status === 404) pairingExpired();
+      else if (!res.ok) disconnected();
     }).catch(disconnected);
   }
   function disconnected() {
@@ -666,6 +670,17 @@ const PAGE_HTML: &str = r##"<!doctype html>
     $('conn').style.color = '';
     fail('Cannot reach Camog.\nMake sure the Camog app is open and your phone is on the same Wi-Fi.');
     if (!connTimer) connTimer = setInterval(probe, 3000);
+  }
+  // A dead session cookie never comes back on this page — the exchange lives
+  // in the pairing URL — so stop both timers (a tight retry loop would only
+  // hammer the desktop's throttle) and say what to do. Foregrounding probes
+  // once more, which is enough: re-scanning opens a fresh page anyway.
+  function pairingExpired() {
+    if (beatTimer) { clearInterval(beatTimer); beatTimer = null; }
+    if (connTimer) { clearInterval(connTimer); connTimer = null; }
+    $('conn').textContent = 'Pairing expired.';
+    $('conn').style.color = '';
+    fail('Pairing expired \u2014 re-scan the code in Camog.');
   }
   probe();
   // Coming back to a page that outlived a desktop restart: probe right away

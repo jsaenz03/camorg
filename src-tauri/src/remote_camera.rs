@@ -32,7 +32,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tiny_http::{Header, Method, Response, Server};
 
 const PHOTO_EVENT: &str = "remote-camera-photo";
@@ -95,6 +95,12 @@ struct RemoteCamera {
   /// live routing table whenever anyone asks, so they survive network changes.
   port: u16,
   token: String,
+  /// Live phone sessions. In-memory by design: it lives and dies with the
+  /// link, so stopping the listener revokes every phone — "End session"
+  /// signs them all out without rotating the pairing code, and a desktop
+  /// restart makes every phone re-run the exchange from its saved
+  /// /t/<code>/ URL.
+  sessions: Arc<SessionStore>,
   /// Unix ms of the last authenticated request from the phone; the desktop
   /// polls it to auto-end an abandoned session.
   last_seen_ms: Arc<AtomicU64>,
@@ -125,14 +131,17 @@ fn is_safe_filename(name: &str) -> bool {
       .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
 }
 
-/// Per-source tracker for unauthenticated requests (wrong or missing pairing
-/// token). Every phone request carries the token, so a burst of failures from
-/// one address is a scanner — or a phone holding a code that was just
-/// rotated. After FAIL_LIMIT failures inside FAIL_WINDOW the address is
-/// refused for BLOCK_FOR, answered with the same 404 as any unknown route so
-/// the block itself stays invisible. A request presenting the valid token
-/// clears its address, so a phone that re-scans the QR reconnects immediately
-/// even while its old URL's retry loop is still racking up failures.
+/// Per-source tracker for unauthenticated requests (wrong pairing code, or
+/// a missing/dead session cookie). Every authenticated phone request carries
+/// a valid credential, so a burst of failures from one address is a scanner
+/// — or a phone holding a code that was just rotated, or a cookie that died
+/// with a link restart. After FAIL_LIMIT failures inside FAIL_WINDOW the
+/// address is refused for BLOCK_FOR, answered with the same 404 as any
+/// unknown route so the block itself stays invisible. A request presenting
+/// a valid credential — the live pairing code or a live session cookie —
+/// clears its address, so a phone that re-scans the QR reconnects
+/// immediately even while its old URL's retry loop is still racking up
+/// failures.
 /// ponytail: per-address map with a hard cap (see MAX_TRACKED); IPv6 privacy
 /// addresses rotate and evade per-address tracking — a persistent attacker
 /// needs network-level monitoring, not this.
@@ -166,10 +175,10 @@ impl AuthGuard {
       .is_some_and(|s| s.blocked_until.is_some_and(|until| now < until))
   }
 
-  /// Record a wrong-token request. Returns `Some(true)` when this failure
-  /// just crossed the limit (the caller logs the block once, not per
-  /// request), `Some(false)` when it is the first failure of a fresh window
-  /// (worth a line in diagnostics), `None` otherwise.
+  /// Record an unauthenticated request. Returns `Some(true)` when this
+  /// failure just crossed the limit (the caller logs the block once, not
+  /// per request), `Some(false)` when it is the first failure of a fresh
+  /// window (worth a line in diagnostics), `None` otherwise.
   fn note_failure(&self, ip: IpAddr, now: Instant) -> Option<bool> {
     let mut map = self.fails.lock().unwrap();
     if map.len() >= MAX_TRACKED && !map.contains_key(&ip) {
@@ -196,8 +205,9 @@ impl AuthGuard {
     }
   }
 
-  /// A valid-token request arrived: forget the address entirely, so a
-  /// re-scanned phone is never refused over its old URL's failures.
+  /// A request with a valid credential arrived: forget the address
+  /// entirely, so a re-scanned phone is never refused over its old URL's
+  /// failures.
   fn clear(&self, ip: IpAddr) {
     self.fails.lock().unwrap().remove(&ip);
   }
@@ -210,22 +220,19 @@ impl AuthGuard {
 // per-request URLs (intermediate logs, browser history expansion, each
 // cleartext LAN request), and sessions become revocable server-side —
 // stopping the link drops this store and kills every session without
-// rotating the code. Stage 2 wires the below into handle_request; until
-// then the allows stay and the unit tests are the consumers.
+// rotating the code. classify_auth below is the single decision point
+// handle_request consults; the unit tests drive it without an AppHandle.
 // ponytail: HashSet of raw ids, no expiry — link lifetime (plus the idle
 // auto-close) bounds it; per-session revoke arrives with a device-list UI.
 
 /// Cookie name carrying the session id.
-#[allow(dead_code)] // Stage 2
 const SESSION_COOKIE: &str = "camog_session";
 
-#[allow(dead_code)] // Stage 2
 #[derive(Default)]
 struct SessionStore {
   sessions: Mutex<HashSet<[u8; 16]>>,
 }
 
-#[allow(dead_code)] // Stage 2
 impl SessionStore {
   fn new() -> Self {
     Self::default()
@@ -245,9 +252,10 @@ impl SessionStore {
     self.sessions.lock().unwrap().contains(id)
   }
 
-  /// Groundwork for a future per-device kill switch; today revocation is
-  /// dropping the whole store when the link stops.
-  #[allow(dead_code)] // no runtime caller yet; tested for when the UI lands
+  /// Revoke every live session. stop_remote_camera calls this before the
+  /// listener winds down so even an in-flight exchange minted a moment
+  /// earlier is dead on arrival; a per-device variant arrives with a
+  /// device-list UI.
   fn remove_all(&self) {
     self.sessions.lock().unwrap().clear();
   }
@@ -256,7 +264,6 @@ impl SessionStore {
 /// Parse the session id out of a request's Cookie header value. Phones send
 /// exactly the one cookie we set, but splitting on ';' keeps the parse
 /// honest if an engine ever appends its own.
-#[allow(dead_code)] // Stage 2
 fn session_from_cookie(header: Option<&str>) -> Option<[u8; 16]> {
   let header = header?;
   header
@@ -264,7 +271,6 @@ fn session_from_cookie(header: Option<&str>) -> Option<[u8; 16]> {
     .find_map(|pair| parse_session_id(pair.trim().strip_prefix("camog_session=")?.trim()))
 }
 
-#[allow(dead_code)] // Stage 2
 fn parse_session_id(text: &str) -> Option<[u8; 16]> {
   if text.len() != 32 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
     return None;
@@ -276,7 +282,6 @@ fn parse_session_id(text: &str) -> Option<[u8; 16]> {
   Some(id)
 }
 
-#[allow(dead_code)] // Stage 2
 fn session_id_hex(id: &[u8; 16]) -> String {
   id.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -286,7 +291,6 @@ fn session_id_hex(id: &[u8; 16]) -> String {
 /// standalone PWA), HttpOnly, SameSite=Strict (every request is
 /// same-origin), and deliberately no Secure: the link is plain HTTP, where
 /// a Secure cookie would never come back.
-#[allow(dead_code)] // Stage 2
 fn session_cookie_header(id: &[u8; 16]) -> Header {
   let value = format!(
     "{SESSION_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict",
@@ -297,7 +301,6 @@ fn session_cookie_header(id: &[u8; 16]) -> Header {
 
 /// What handle_request should do with an incoming request, decided before
 /// any routing.
-#[allow(dead_code)] // Stage 2
 #[derive(Debug, PartialEq)]
 enum AuthAction {
   /// The URL presented the live pairing code: mint a session (Some — set
@@ -320,7 +323,6 @@ enum AuthAction {
 /// filled the failure history — then the session cookie, then the
 /// 404-plus-count fallback. Guard and store are updated here so the whole
 /// ordering is unit-testable without an AppHandle.
-#[allow(dead_code)] // Stage 2
 fn classify_auth(
   url: &str,
   cookie_header: Option<&str>,
@@ -572,6 +574,10 @@ fn cache_control(value: &str) -> Header {
   Header::from_bytes(&b"Cache-Control"[..], value.as_bytes()).expect("static header value")
 }
 
+fn location_header(value: &str) -> Header {
+  Header::from_bytes(&b"Location"[..], value.as_bytes()).expect("static header value")
+}
+
 fn respond_text(request: tiny_http::Request, status: u16, body: &str) {
   let _ = request.respond(
     Response::from_string(body)
@@ -649,7 +655,11 @@ fn handle_image(request: tiny_http::Request, filename: &str) {
 /// body, gate the patient against the shared manifest, and relay it to the
 /// webview as a Tauri event. The actual work happens webview-side through the
 /// normal services (access checks, DB writes, report generation).
-fn handle_patient_request(app: &AppHandle, mut request: tiny_http::Request, event: &str) {
+fn handle_patient_request<R: Runtime>(
+  app: &AppHandle<R>,
+  mut request: tiny_http::Request,
+  event: &str,
+) {
   let outcome = (|| -> Result<(), (u16, &'static str)> {
     if request.body_length().is_some_and(|len| len > MAX_CONTROL_BODY) {
       return Err((413, "Request too large"));
@@ -702,57 +712,86 @@ fn handle_report_download(request: tiny_http::Request) {
   }
 }
 
-fn handle_request(
-  app: &AppHandle,
+// Runtime-generic so the mock runtime can drive the same wiring the live
+// app uses, in the live-HTTP integration test below.
+fn handle_request<R: Runtime>(
+  app: &AppHandle<R>,
   token: &str,
+  sessions: &SessionStore,
   last_seen_ms: &AtomicU64,
   guard: &AuthGuard,
   mut request: tiny_http::Request,
 ) {
   let url = request.url().to_string();
   let source_ip = request.remote_addr().map(|addr| addr.ip());
-  let prefix = format!("/t/{token}/");
-  let path = match url.strip_prefix(&prefix) {
-    Some(path) => path,
-    None => {
-      // Wrong or missing token. Same 404 as any unknown route, but the
-      // source is tracked and throttled — a scanner gets refused quietly
-      // after a burst. Nothing from the URL is logged: it may contain a
-      // guessed or leaked token fragment.
-      let now = Instant::now();
+  let cookie_header = request
+    .headers()
+    .iter()
+    .find(|h| h.field.equiv("Cookie"))
+    .map(|h| h.value.as_str());
+
+  // Auth order (Tier 2): the live pairing code exchanges for a session
+  // cookie; a live cookie routes; everything else counts toward the
+  // throttle and gets the same 404 as any unknown route. classify_auth owns
+  // the ordering so its unit tests pin the re-scan-while-blocked property.
+  let action = classify_auth(
+    &url,
+    cookie_header,
+    token,
+    sessions,
+    guard,
+    source_ip,
+    Instant::now(),
+  );
+  // Any request presenting a valid credential (code or cookie) proves the
+  // phone is live; photo grabs included.
+  if !matches!(action, AuthAction::Rejected { .. }) {
+    last_seen_ms.store(now_ms(), Ordering::Relaxed);
+  }
+  let path = match action {
+    // The one-time exchange. 303 to the token-less root is what old saved
+    // icons and old QR photos follow to this day; the Set-Cookie rides
+    // along (or is skipped when the request already carried a live one).
+    AuthAction::Exchange { fresh } => {
+      let mut response = Response::empty(303).with_header(location_header("/"));
+      if let Some(id) = &fresh {
+        response = response.with_header(session_cookie_header(id));
+      }
+      let _ = request.respond(response);
+      return;
+    }
+    // Token-less authenticated path ("", "hello", "img/<file>"…). A URL
+    // without the leading slash matches no route and 404s like any unknown
+    // path.
+    AuthAction::Authenticated => url.strip_prefix('/').unwrap_or(&url),
+    AuthAction::Rejected { noted } => {
+      // Wrong code, or a missing/dead cookie. Same 404 as any unknown
+      // route, but the source is tracked and throttled — a scanner gets
+      // refused quietly after a burst. Nothing from the URL or cookie is
+      // logged: either may contain a guessed or leaked secret fragment.
       if let Some(ip) = source_ip {
-        if !guard.is_blocked(ip, now) {
-          match guard.note_failure(ip, now) {
-            Some(true) => crate::diagnostics::record(
-              crate::diagnostics::Level::Info,
-              "phone-camera",
-              &format!(
-                "Paused requests from {ip} for five minutes — repeated wrong pairing codes."
-              ),
-              None,
+        match noted {
+          Some(true) => crate::diagnostics::record(
+            crate::diagnostics::Level::Info,
+            "phone-camera",
+            &format!(
+              "Paused requests from {ip} for five minutes — repeated unauthorised requests."
             ),
-            Some(false) => crate::diagnostics::record(
-              crate::diagnostics::Level::Info,
-              "phone-camera",
-              &format!("Rejected a request from {ip} — wrong pairing code."),
-              None,
-            ),
-            None => {}
-          }
+            None,
+          ),
+          Some(false) => crate::diagnostics::record(
+            crate::diagnostics::Level::Info,
+            "phone-camera",
+            &format!("Rejected a request from {ip} — no valid pairing code or session."),
+            None,
+          ),
+          None => {}
         }
       }
       respond_text(request, 404, "Not found");
       return;
     }
   };
-  // A valid token clears the source's failure history, so re-scanning the
-  // QR reconnects instantly even mid-block (the old URL's retry loop is what
-  // filled the history).
-  if let Some(ip) = source_ip {
-    guard.clear(ip);
-  }
-  // Any authenticated request (photo grabs included) proves the phone is live.
-  last_seen_ms.store(now_ms(), Ordering::Relaxed);
 
   let method = request.method().clone();
   if method == Method::Get && (path.is_empty() || path == "index.html") {
@@ -764,7 +803,7 @@ fn handle_request(
       Response::from_data(LOGO_PNG.to_vec()).with_header(content_type("image/png")),
     );
   } else if method == Method::Get && path == "manifest.webmanifest" {
-    respond_json(request, 200, WEB_MANIFEST.to_string());
+    respond_json(request, 200, web_manifest(token));
   } else if method == Method::Get && path == "hello" {
     // Phone page pings on load so the desktop knows pairing succeeded.
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: true });
@@ -823,10 +862,11 @@ fn handle_request(
   }
 }
 
-fn spawn_handler(
-  app: AppHandle,
+fn spawn_handler<R: Runtime>(
+  app: AppHandle<R>,
   server: Arc<Server>,
   token: String,
+  sessions: Arc<SessionStore>,
   last_seen_ms: Arc<AtomicU64>,
   shutdown: Arc<AtomicBool>,
   guard: Arc<AuthGuard>,
@@ -834,7 +874,7 @@ fn spawn_handler(
   std::thread::spawn(move || {
     while !shutdown.load(Ordering::Relaxed) {
       match server.recv() {
-        Ok(request) => handle_request(&app, &token, &last_seen_ms, &guard, request),
+        Ok(request) => handle_request(&app, &token, &sessions, &last_seen_ms, &guard, request),
         // stop_remote_camera() unblocks the listener to wake us up.
         Err(_) => break,
       }
@@ -851,7 +891,7 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   // Bind every interface (0.0.0.0), not just today's default route: the
   // link keeps working when the machine switches networks (Wi-Fi ↔ hotspot)
   // and accepts connections arriving over Tailscale's tunnel. The pairing
-  // token in the URL path stays the only gate that matters.
+  // code's session exchange stays the only gate that matters.
   let bind_all = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
   // Bind the pinned port first so last session's URL keeps working; only if
   // something else grabbed it fall back to an ephemeral port (and re-pin, so
@@ -894,12 +934,15 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
 
   let shutdown = Arc::new(AtomicBool::new(false));
   // Fresh failure history per session: a restart (including a pairing-code
-  // rotation) unblocks everything and starts counting anew.
+  // rotation) unblocks everything and starts counting anew. The session
+  // store is likewise fresh — every stop revokes all phone sessions.
   let guard = Arc::new(AuthGuard::new());
+  let sessions = Arc::new(SessionStore::new());
   let thread = spawn_handler(
     app,
     Arc::clone(&server),
     token.clone(),
+    Arc::clone(&sessions),
     Arc::clone(&last_seen_ms),
     Arc::clone(&shutdown),
     Arc::clone(&guard),
@@ -911,6 +954,7 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
     thread: Some(thread),
     port,
     token,
+    sessions,
     last_seen_ms,
   });
   *STAGED_REPORT.lock().unwrap() = None;
@@ -929,6 +973,9 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
 #[tauri::command]
 pub async fn stop_remote_camera() {
   if let Some(mut remote_camera) = REMOTE_CAMERA.lock().unwrap().take() {
+    // Session revocation, made explicit: every paired phone signs out the
+    // moment the link ends, without touching the pairing code.
+    remote_camera.sessions.remove_all();
     remote_camera.shutdown.store(true, Ordering::Relaxed);
     remote_camera.server.unblock();
     if let Some(thread) = remote_camera.thread.take() {
@@ -1035,18 +1082,28 @@ const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
 
 // Home-screen app (PWA) manifest: lets the phone add Camog to its home
 // screen with the app logo and open it standalone, without browser chrome.
-// Relative start_url/scope resolve under /t/<token>/ so each phone's saved
-// icon points at its own pairing. Android uses this; iOS home-screen icons
-// come from the apple-touch-icon link in the page head.
+// Minted per link with the pairing code as the start URL so every saved
+// icon — old or new — opens through the one-time exchange: a live cookie is
+// reused, a dead one (desktop restart, idle auto-close, eviction) is
+// re-minted on the spot. The code therefore crosses the wire once per app
+// open, never per request. Scope "./" resolves to / where the manifest is
+// served. Android uses this; iOS home-screen icons come from the
+// apple-touch-icon link in the page head (and engines that save the current
+// page URL instead of start_url land on /, where a dead cookie shows the
+// re-scan message — the documented trade-off).
 // ponytail: single 256px "any" icon — a dedicated maskable PNG would avoid
 // launcher cropping but we ship only the one logo asset.
-const WEB_MANIFEST: &str = r##"{"name":"Camog · Clinical Photos","short_name":"Camog","start_url":"./","scope":"./","display":"standalone","background_color":"#f4f4f5","theme_color":"#f4f4f5","icons":[{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}]}"##;
+fn web_manifest(token: &str) -> String {
+  format!(
+    r##"{{"name":"Camog · Clinical Photos","short_name":"Camog","start_url":"/t/{token}/","scope":"./","display":"standalone","background_color":"#f4f4f5","theme_color":"#f4f4f5","icons":[{{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}}]}}"##
+  )
+}
 
 include!("remote_camera_page.rs");
 
 #[cfg(test)]
 mod tests {
-  use super::{is_safe_filename, PAGE_HTML, WEB_MANIFEST};
+  use super::{is_safe_filename, PAGE_HTML};
 
   // Guards the branded phone page: the logo route, wordmark, theme tokens,
   // and the [hidden] override that keeps screens toggleable.
@@ -1415,6 +1472,103 @@ mod tests {
     assert!(!value.to_ascii_lowercase().contains("expires"));
   }
 
+  // The whole Tier 2 exchange over real HTTP, through the same spawn_handler
+  // wiring the live app uses (mock runtime — no window, real sockets). This
+  // is the curl checklist from the plan, kept as a regression net: it sees
+  // the header plumbing (Cookie lookup, Set-Cookie on the 303, Location)
+  // that the classify_auth unit tests cannot.
+  #[test]
+  fn http_exchange_and_cookie_protocol() {
+    use super::{AuthGuard, SessionStore, spawn_handler};
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use tauri::test;
+    use tiny_http::Server;
+
+    let app = test::mock_app();
+    let token = "0123456789abcdef";
+    let listener = super::bind_listener("127.0.0.1".parse().unwrap(), 0).expect("test bind");
+    let port = listener.local_addr().unwrap().port();
+    let server = Arc::new(Server::from_listener(listener, None).expect("test server"));
+    let last_seen_ms = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sessions = Arc::new(SessionStore::new());
+    let thread = spawn_handler(
+      app.handle().clone(),
+      Arc::clone(&server),
+      token.to_string(),
+      Arc::clone(&sessions),
+      Arc::clone(&last_seen_ms),
+      Arc::clone(&shutdown),
+      Arc::new(AuthGuard::new()),
+    );
+
+    let get = |path: &str, cookie: Option<&str>| -> String {
+      let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+      let cookie_line = cookie
+        .map(|c| format!("Cookie: {c}\r\n"))
+        .unwrap_or_default();
+      write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{cookie_line}Connection: close\r\n\r\n"
+      )
+      .expect("write");
+      let mut response = String::new();
+      stream.read_to_string(&mut response).expect("read");
+      response
+    };
+
+    // Unauthenticated root: 404, like any unknown route.
+    let res = get("/", None);
+    assert!(res.starts_with("HTTP/1.1 404"), "no-cookie root must 404: {res}");
+
+    // The exchange: valid code → 303 to / plus the session cookie.
+    let res = get(&format!("/t/{token}/"), None);
+    assert!(res.starts_with("HTTP/1.1 303"), "exchange must 303: {res}");
+    assert!(res.contains("\r\nLocation: /\r\n"), "exchange must point at /: {res}");
+    let set_cookie = res
+      .lines()
+      .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
+      .expect("exchange sets a cookie");
+    // …"camog_session=<hex>; Path=/; HttpOnly; SameSite=Strict"
+    assert!(set_cookie.contains("; Path=/; HttpOnly; SameSite=Strict"));
+    let session = set_cookie
+      .strip_prefix("Set-Cookie: ")
+      .expect("server-sent header case")
+      .split(';')
+      .next()
+      .expect("name=value pair");
+
+    // The cookie authenticates token-less paths…
+    let res = get("/hello", Some(session));
+    assert!(res.starts_with("HTTP/1.1 200"), "cookie must authenticate: {res}");
+    // …and serves the page at /.
+    let res = get("/", Some(session));
+    assert!(res.starts_with("HTTP/1.1 200"), "cookie must serve the page: {res}");
+    assert!(res.contains("Camog"));
+
+    // A dead cookie is unauthenticated, and counts toward the throttle.
+    let dead = "camog_session=ffffffffffffffffffffffffffffffff";
+    let res = get("/hello", Some(dead));
+    assert!(res.starts_with("HTTP/1.1 404"), "dead cookie must 404: {res}");
+    // Wrong code, same story.
+    let res = get("/t/feedfacefeedface/", None);
+    assert!(res.starts_with("HTTP/1.1 404"), "wrong code must 404: {res}");
+
+    // An exchange from a holder of the live cookie reuses it: 303 with no
+    // fresh Set-Cookie (old pages sitting on /t/<code>/ URLs).
+    let res = get(&format!("/t/{token}/hello"), Some(session));
+    assert!(res.starts_with("HTTP/1.1 303"), "re-exchange must 303: {res}");
+    assert!(
+      !res.to_ascii_lowercase().contains("set-cookie:"),
+      "live cookie must be reused, not re-minted: {res}"
+    );
+
+    shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+    server.unblock();
+    let _ = thread.join();
+  }
+
   // The stale-code UX contract: probe and heartbeat must check res.ok, or a
   // rotated pairing code leaves the phone claiming "Connected" while every
   // real request 404s.
@@ -1422,6 +1576,23 @@ mod tests {
   fn phone_page_treats_404_as_disconnected() {
     assert!(PAGE_HTML.contains("if (!res.ok) throw new Error('stale pairing code');"));
     assert!(PAGE_HTML.contains("if (!res.ok) disconnected();"));
+  }
+
+  // Tier 2's dead-session UX: a 404 from a reachable server means this
+  // page's cookie died (code rotated, or the link restarted without
+  // rotation) — the page must say "re-scan" and stop its retry loop rather
+  // than hammering the throttle, because no retry can revive the cookie.
+  #[test]
+  fn phone_page_distinguishes_expired_pairing() {
+    assert!(PAGE_HTML.contains("res.status === 404"));
+    assert!(PAGE_HTML.contains("function pairingExpired()"));
+    assert!(PAGE_HTML.contains("re-scan the code in Camog."));
+    let start = PAGE_HTML
+      .find("function pairingExpired()")
+      .expect("expired handler present");
+    let body = &PAGE_HTML[start..start + 400];
+    assert!(body.contains("clearInterval(connTimer)"));
+    assert!(!body.contains("setInterval"));
   }
 
   // The saved port file is read from disk on every launch; corrupt or
@@ -1528,16 +1699,21 @@ mod tests {
   }
 
   // Home-screen app (PWA): the page links the manifest and the app logo, the
-  // manifest route serves that logo as the icon, and light is the default
-  // appearance on a fresh phone (dark stays opt-in, remembered per phone).
+  // manifest route serves that logo as the icon, the start URL is the
+  // one-time exchange so saved icons survive restarts, and light is the
+  // default appearance on a fresh phone (dark stays opt-in, remembered per
+  // phone).
   #[test]
   fn phone_page_pwa_and_light_default() {
+    use super::web_manifest;
     assert!(PAGE_HTML.contains(r##"<link rel="manifest" href="manifest.webmanifest">"##));
     assert!(PAGE_HTML.contains(r##"<link rel="apple-touch-icon" href="logo.png">"##));
     assert!(PAGE_HTML.contains(r##"<meta name="apple-mobile-web-app-capable" content="yes">"##));
     assert!(PAGE_HTML.contains(r##"<body class="light">"##));
     assert!(PAGE_HTML.contains(r##"localStorage.getItem(THEME_KEY) !== 'dark'"##));
-    assert!(WEB_MANIFEST.contains(r##""icons":[{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}]"##));
-    assert!(WEB_MANIFEST.contains(r##""display":"standalone""##));
+    let manifest = web_manifest("0123456789abcdef");
+    assert!(manifest.contains(r##""start_url":"/t/0123456789abcdef/""##));
+    assert!(manifest.contains(r##""icons":[{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}]"##));
+    assert!(manifest.contains(r##""display":"standalone""##));
   }
 }

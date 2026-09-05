@@ -40,3 +40,7 @@ skrifa = "0.42"
 
 [dev-dependencies]
 flate2 = "1"
+# The phone-link HTTP integration test drives handle_request through Tauri's
+# mock runtime (no window, real sockets); same crate as the main dependency,
+# test feature enabled for tests only.
+tauri = { version = "2.11.3", features = ["test"] }
