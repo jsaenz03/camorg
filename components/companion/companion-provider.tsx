@@ -57,6 +57,10 @@ interface CompanionContextValue {
   remember: boolean;
   start: () => Promise<void>;
   stop: () => Promise<void>;
+  /** Rotate the pairing code: the old QR (and any phone holding it) stops
+   * working immediately; the link stays up on the same address with a new
+   * code for re-scanning. For when the code was shared or photographed. */
+  regenerate: () => Promise<void>;
   /** Re-read the live pairing URLs — call when a surface opens, so a network
    * change (Wi-Fi ↔ hotspot) is reflected without restarting the link. */
   refresh: () => Promise<void>;
@@ -136,6 +140,27 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Failed to start phone link:', error);
       toast.error('Could not start the phone link.', {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
+
+  const regenerate = useCallback(async () => {
+    try {
+      // The Rust side stops the server, deletes the persisted token and
+      // starts again on the same pinned port; the shared library survives
+      // the restart, so a re-paired phone needs nothing else.
+      const info = await invoke<RemoteCameraInfo>('reset_pairing_token');
+      setActive(true);
+      setUrls(info.urls);
+      setPhoneConnected(false);
+      void auditService.record('companion.new_code');
+      toast.info('New pairing code ready', {
+        description: 'The previous code no longer works — scan the new one when you next pair.',
+      });
+    } catch (error) {
+      console.error('Failed to rotate the pairing code:', error);
+      toast.error('Could not generate a new code.', {
         description: error instanceof Error ? error.message : String(error),
       });
     }
@@ -324,6 +349,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
         remember,
         start,
         stop,
+        regenerate,
         refresh,
         setShareLibrary,
         setRemember,

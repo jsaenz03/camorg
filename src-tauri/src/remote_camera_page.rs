@@ -639,7 +639,11 @@ const PAGE_HTML: &str = r##"<!doctype html>
   var connTimer = null;
   var beatTimer = null;
   function probe() {
-    fetch('hello').then(function () {
+    // res.ok matters: after the desktop rotates the pairing code the server
+    // still answers, but with 404s — that must read as disconnected so the
+    // page shows its reconnecting state instead of a false "Connected".
+    fetch('hello').then(function (res) {
+      if (!res.ok) throw new Error('stale pairing code');
       if (connTimer) { clearInterval(connTimer); connTimer = null; }
       $('conn').textContent = 'Connected. Take the photo, review it, then send it.';
       $('conn').style.color = 'var(--success)';
@@ -652,7 +656,9 @@ const PAGE_HTML: &str = r##"<!doctype html>
     // Hidden pages are throttled anyway and the desktop counts them idle on
     // purpose, so only a visible page keeps the link warm.
     if (document.hidden) return;
-    fetch('hello').catch(disconnected);
+    fetch('hello').then(function (res) {
+      if (!res.ok) disconnected();
+    }).catch(disconnected);
   }
   function disconnected() {
     if (beatTimer) { clearInterval(beatTimer); beatTimer = null; }

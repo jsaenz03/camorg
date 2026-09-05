@@ -21,14 +21,14 @@
 // phone's own library through the same POST path (multi-select, reviewed one
 // at a time on the phone).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use serde::Deserialize;
@@ -123,6 +123,84 @@ fn is_safe_filename(name: &str) -> bool {
     && name
       .chars()
       .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+}
+
+/// Per-source tracker for unauthenticated requests (wrong or missing pairing
+/// token). Every phone request carries the token, so a burst of failures from
+/// one address is a scanner — or a phone holding a code that was just
+/// rotated. After FAIL_LIMIT failures inside FAIL_WINDOW the address is
+/// refused for BLOCK_FOR, answered with the same 404 as any unknown route so
+/// the block itself stays invisible. A request presenting the valid token
+/// clears its address, so a phone that re-scans the QR reconnects immediately
+/// even while its old URL's retry loop is still racking up failures.
+/// ponytail: per-address map with a hard cap (see MAX_TRACKED); IPv6 privacy
+/// addresses rotate and evade per-address tracking — a persistent attacker
+/// needs network-level monitoring, not this.
+const FAIL_LIMIT: u32 = 10;
+const FAIL_WINDOW: Duration = Duration::from_secs(60);
+const BLOCK_FOR: Duration = Duration::from_secs(5 * 60);
+const MAX_TRACKED: usize = 1024;
+
+#[derive(Default)]
+struct AuthGuard {
+  fails: Mutex<HashMap<IpAddr, FailState>>,
+}
+
+#[derive(Default)]
+struct FailState {
+  fails: u32,
+  window_started: Option<Instant>,
+  blocked_until: Option<Instant>,
+}
+
+impl AuthGuard {
+  fn new() -> Self {
+    Self::default()
+  }
+
+  fn is_blocked(&self, ip: IpAddr, now: Instant) -> bool {
+    self.fails
+      .lock()
+      .unwrap()
+      .get(&ip)
+      .is_some_and(|s| s.blocked_until.is_some_and(|until| now < until))
+  }
+
+  /// Record a wrong-token request. Returns `Some(true)` when this failure
+  /// just crossed the limit (the caller logs the block once, not per
+  /// request), `Some(false)` when it is the first failure of a fresh window
+  /// (worth a line in diagnostics), `None` otherwise.
+  fn note_failure(&self, ip: IpAddr, now: Instant) -> Option<bool> {
+    let mut map = self.fails.lock().unwrap();
+    if map.len() >= MAX_TRACKED && !map.contains_key(&ip) {
+      map.clear(); // wholesale eviction: bounded memory over precise LRU
+    }
+    let state = map.entry(ip).or_default();
+    let window_fresh = state
+      .window_started
+      .is_some_and(|started| now.duration_since(started) < FAIL_WINDOW);
+    if !window_fresh {
+      state.fails = 0;
+      state.window_started = Some(now);
+    }
+    state.fails += 1;
+    if state.fails >= FAIL_LIMIT {
+      let just_blocked = state.blocked_until.is_none();
+      state.blocked_until = Some(now + BLOCK_FOR);
+      return if just_blocked { Some(true) } else { None };
+    }
+    if state.fails == 1 {
+      Some(false)
+    } else {
+      None
+    }
+  }
+
+  /// A valid-token request arrived: forget the address entirely, so a
+  /// re-scanned phone is never refused over its old URL's failures.
+  fn clear(&self, ip: IpAddr) {
+    self.fails.lock().unwrap().remove(&ip);
+  }
 }
 
 /// The pairing token is the bearer secret for the LAN link, and it persists
@@ -474,16 +552,55 @@ fn handle_report_download(request: tiny_http::Request) {
   }
 }
 
-fn handle_request(app: &AppHandle, token: &str, last_seen_ms: &AtomicU64, mut request: tiny_http::Request) {
+fn handle_request(
+  app: &AppHandle,
+  token: &str,
+  last_seen_ms: &AtomicU64,
+  guard: &AuthGuard,
+  mut request: tiny_http::Request,
+) {
   let url = request.url().to_string();
+  let source_ip = request.remote_addr().map(|addr| addr.ip());
   let prefix = format!("/t/{token}/");
   let path = match url.strip_prefix(&prefix) {
     Some(path) => path,
     None => {
+      // Wrong or missing token. Same 404 as any unknown route, but the
+      // source is tracked and throttled — a scanner gets refused quietly
+      // after a burst. Nothing from the URL is logged: it may contain a
+      // guessed or leaked token fragment.
+      let now = Instant::now();
+      if let Some(ip) = source_ip {
+        if !guard.is_blocked(ip, now) {
+          match guard.note_failure(ip, now) {
+            Some(true) => crate::diagnostics::record(
+              crate::diagnostics::Level::Info,
+              "phone-camera",
+              &format!(
+                "Paused requests from {ip} for five minutes — repeated wrong pairing codes."
+              ),
+              None,
+            ),
+            Some(false) => crate::diagnostics::record(
+              crate::diagnostics::Level::Info,
+              "phone-camera",
+              &format!("Rejected a request from {ip} — wrong pairing code."),
+              None,
+            ),
+            None => {}
+          }
+        }
+      }
       respond_text(request, 404, "Not found");
       return;
     }
   };
+  // A valid token clears the source's failure history, so re-scanning the
+  // QR reconnects instantly even mid-block (the old URL's retry loop is what
+  // filled the history).
+  if let Some(ip) = source_ip {
+    guard.clear(ip);
+  }
   // Any authenticated request (photo grabs included) proves the phone is live.
   last_seen_ms.store(now_ms(), Ordering::Relaxed);
 
@@ -562,11 +679,12 @@ fn spawn_handler(
   token: String,
   last_seen_ms: Arc<AtomicU64>,
   shutdown: Arc<AtomicBool>,
+  guard: Arc<AuthGuard>,
 ) -> JoinHandle<()> {
   std::thread::spawn(move || {
     while !shutdown.load(Ordering::Relaxed) {
       match server.recv() {
-        Ok(request) => handle_request(&app, &token, &last_seen_ms, request),
+        Ok(request) => handle_request(&app, &token, &last_seen_ms, &guard, request),
         // stop_remote_camera() unblocks the listener to wake us up.
         Err(_) => break,
       }
@@ -625,12 +743,16 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   let last_seen_ms = Arc::new(AtomicU64::new(now_ms()));
 
   let shutdown = Arc::new(AtomicBool::new(false));
+  // Fresh failure history per session: a restart (including a pairing-code
+  // rotation) unblocks everything and starts counting anew.
+  let guard = Arc::new(AuthGuard::new());
   let thread = spawn_handler(
     app,
     Arc::clone(&server),
     token.clone(),
     Arc::clone(&last_seen_ms),
     Arc::clone(&shutdown),
+    Arc::clone(&guard),
   );
 
   *REMOTE_CAMERA.lock().unwrap() = Some(RemoteCamera {
@@ -664,6 +786,35 @@ pub async fn stop_remote_camera() {
     }
   }
   *STAGED_REPORT.lock().unwrap() = None;
+}
+
+/// Rotate the pairing code ("New code" in the phone link dialog): stop the
+/// link, forget the persisted token, start again on the same pinned port.
+/// The previous code stops working the moment the server restarts — a phone
+/// still holding it sees 404s and drops to its reconnecting screen until the
+/// new QR is scanned once. The shared library is untouched by the restart,
+/// so a re-paired phone picks it straight back up.
+#[tauri::command]
+pub async fn reset_pairing_token(app: AppHandle) -> Result<RemoteCameraInfo, String> {
+  stop_remote_camera().await;
+  let dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("could not resolve the app data dir: {e}"))?;
+  // A failure here must surface, not fall through to start: a token file we
+  // failed to delete would silently keep the old code alive.
+  match std::fs::remove_file(dir.join("phone-link-token")) {
+    Ok(()) => {}
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+    Err(e) => return Err(format!("could not remove the old pairing code: {e}")),
+  }
+  crate::diagnostics::record(
+    crate::diagnostics::Level::Info,
+    "phone-camera",
+    "Pairing code rotated — previously paired phones must re-scan.",
+    None,
+  );
+  start_remote_camera(app).await
 }
 
 /// The pairing URLs of the running link, if any. Lets a second surface (the
@@ -816,6 +967,76 @@ mod tests {
     assert!(!is_safe_filename("a\\b.jpg"));
     assert!(!is_safe_filename("photo name.jpg"));
     assert!(!is_safe_filename("café.jpg"));
+  }
+
+  // The unauthenticated-request throttle: failures accumulate per source
+  // until the limit, the block outlives the failure window, and time (or a
+  // valid-token request — clear) is the only way out. The re-scan case is
+  // the load-bearing one: a blocked address presenting the valid token
+  // must be served, because the old URL's retry loop is what filled the
+  // history in the first place.
+  #[test]
+  fn auth_guard_blocks_after_burst_and_recovers() {
+    use super::{AuthGuard, BLOCK_FOR, FAIL_LIMIT, FAIL_WINDOW};
+    use std::net::IpAddr;
+    use std::time::{Duration, Instant};
+    let guard = AuthGuard::new();
+    let ip: IpAddr = "192.168.1.9".parse().unwrap();
+    let t0 = Instant::now();
+
+    // Below the limit: never blocked, first failure of the window flagged.
+    assert_eq!(guard.note_failure(ip, t0), Some(false));
+    for i in 2..FAIL_LIMIT {
+      assert_eq!(guard.note_failure(ip, t0), None);
+      assert!(!guard.is_blocked(ip, t0));
+    }
+    // The failure that crosses the limit reports "just blocked", and the
+    // steady state afterwards reports nothing (no per-request log spam).
+    assert_eq!(guard.note_failure(ip, t0), Some(true));
+    assert!(guard.is_blocked(ip, t0));
+    assert_eq!(guard.note_failure(ip, t0 + FAIL_WINDOW / 2), None);
+
+    // Block expiry: the next failure after BLOCK_FOR counts from a fresh
+    // window instead of re-blocking instantly.
+    let later = t0 + FAIL_WINDOW + BLOCK_FOR;
+    assert!(!guard.is_blocked(ip, later));
+    assert_eq!(guard.note_failure(ip, later), Some(false));
+
+    // A window that has aged out also resets the count: nine failures,
+    // then a failure after the window reads as the first of a new one.
+    let stale = later + FAIL_WINDOW + Duration::from_secs(1);
+    for _ in 1..FAIL_LIMIT {
+      guard.note_failure(ip, stale);
+    }
+    assert!(!guard.is_blocked(ip, stale + FAIL_WINDOW + Duration::from_secs(1)));
+    assert_eq!(guard.note_failure(ip, stale + FAIL_WINDOW + Duration::from_secs(1)), Some(false));
+  }
+
+  #[test]
+  fn auth_guard_clear_beats_block() {
+    use super::{AuthGuard, FAIL_LIMIT};
+    use std::net::IpAddr;
+    use std::time::Instant;
+    let guard = AuthGuard::new();
+    let phone: IpAddr = "192.168.1.20".parse().unwrap();
+    let t0 = Instant::now();
+    for _ in 0..FAIL_LIMIT {
+      guard.note_failure(phone, t0);
+    }
+    assert!(guard.is_blocked(phone, t0));
+    // The re-scanned phone arrives with the valid token: history gone.
+    guard.clear(phone);
+    assert!(!guard.is_blocked(phone, t0));
+    assert_eq!(guard.note_failure(phone, t0), Some(false));
+  }
+
+  // The stale-code UX contract: probe and heartbeat must check res.ok, or a
+  // rotated pairing code leaves the phone claiming "Connected" while every
+  // real request 404s.
+  #[test]
+  fn phone_page_treats_404_as_disconnected() {
+    assert!(PAGE_HTML.contains("if (!res.ok) throw new Error('stale pairing code');"));
+    assert!(PAGE_HTML.contains("if (!res.ok) disconnected();"));
   }
 
   // The saved port file is read from disk on every launch; corrupt or

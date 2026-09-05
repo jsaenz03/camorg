@@ -24,7 +24,8 @@ export type AuditAction =
   | 'result_file.delete'
   | 'backup.create'
   | 'companion.start'
-  | 'companion.stop';
+  | 'companion.stop'
+  | 'companion.new_code';
 
 export interface AuditEntry {
   id: string;
@@ -61,4 +62,5 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'backup.create': 'Created backup',
   'companion.start': 'Opened phone link session',
   'companion.stop': 'Closed phone link session',
+  'companion.new_code': 'Generated a new phone link code',
 };

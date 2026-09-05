@@ -2,6 +2,7 @@
 
 - `terms-of-service.md` — Terms of Service (software licence) for organisations installing Camog.
 - `privacy-policy.md` — Privacy Policy (APP-aligned; Part A covers the supplier, Part B covers how the app handles patient information and the practice's obligations).
+- `security-notes.md` — plain-language security notes on the phone link for practice IT reviewers (pairing code, rotation, throttling, encryption at rest/in transit, firewall scoping, off-site use).
 
 ## Before publishing — have a qualified Australian lawyer review both documents
 

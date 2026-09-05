@@ -222,6 +222,7 @@ pub fn run() {
       report::reveal_saved_report,
       remote_camera::start_remote_camera,
       remote_camera::stop_remote_camera,
+      remote_camera::reset_pairing_token,
       remote_camera::remote_camera_active,
       remote_camera::remote_camera_idle_ms,
       remote_camera::get_phone_link_remember,
