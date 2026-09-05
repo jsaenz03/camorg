@@ -16,28 +16,44 @@ the link works; otherwise it does not.
 
 ## Access control
 
-- **Pairing code.** A 64-bit random hex code in the URL path is the only
-  credential. Requests without it get the same 404 as any unknown route —
-  the code's existence is not observable. The code persists across restarts
-  so a phone's saved home-screen icon keeps working.
+- **Pairing code (exchange credential).** A 64-bit random hex code in the
+  QR's URL path. Opening it once exchanges the code for a per-device
+  session cookie; every later request authenticates by that cookie, so the
+  long-lived code no longer rides in the URL of each request. Requests
+  without a valid code or cookie get the same 404 as any unknown route —
+  neither the code nor the sessions are observable. The code persists across
+  restarts, and a phone's saved home-screen icon re-runs the exchange on its
+  own.
+- **Session cookie.** A 128-bit random value, HttpOnly (invisible to page
+  scripts), SameSite=Strict, session-scoped (no expiry — it dies with the
+  browser session). Sessions live in the app's memory only: ending the link
+  — *End session*, an app restart, or the 30-minute idle close — signs out
+  every paired phone at once, without rotating the code. Phones recover by
+  re-running the exchange from their saved URL; a page left open on a phone
+  whose cookie has died says to re-scan the code. A leaked pairing code
+  still pairs until rotated — that has not changed; what has changed is that
+  the code crosses the network once per pairing instead of per request, and
+  sessions can be revoked server-side.
 - **Code rotation.** *New code* in the phone link dialog revokes the current
-  code immediately (the old URL stops working the moment it is pressed) and
-  mints a fresh one on the same address. Use it whenever a code may have
-  been shared, photographed or left in a browser history. The action is
-  recorded in the audit log.
-- **Throttling.** Wrong-code requests are counted per source address: ten
-  failures inside a minute pauses that address for five minutes (answered
-  with the same 404). A request presenting the valid code always gets
+  code immediately (the old URL stops working the moment it is pressed),
+  signs out every paired phone, and mints a fresh one on the same address.
+  Use it whenever a code may have been shared, photographed or left in a
+  browser history. The action is recorded in the audit log.
+- **Throttling.** Requests without a valid code or session are counted per
+  source address: ten failures inside a minute pauses that address for five
+  minutes (answered with the same 404). A request presenting a valid
+  credential — the live code or a live session cookie — always gets
   through, so a re-scanned phone reconnects instantly.
 - **Logging.** Every rejected request is noted in Settings → Diagnostics
-  with the source address only — never the requested URL, which could
-  contain a guessed or leaked code fragment.
+  with the source address only — never the requested URL or cookie value,
+  either of which could contain a guessed or leaked secret fragment.
 - **Least data.** The phone only ever sees the access-filtered patient and
   photo list the signed-in clinician can already see, and photo bytes are
   served from an explicit filename whitelist — the listener itself has no
   database access. Requests made without the clinician's knowledge cannot
   exceed that surface.
-- **Idle close.** A link with no phone traffic for 30 minutes ends itself.
+- **Idle close.** A link with no phone traffic for 30 minutes ends itself
+  (which also ends every phone's pairing for that link).
 
 ## Encryption
 
@@ -51,8 +67,10 @@ the link works; otherwise it does not.
   certificates cannot be issued for LAN addresses without installing a
   private CA on every phone. On the same Wi-Fi this exposes photo traffic to
   other devices on that network; the mitigations below bound who can reach
-  the link at all. Over Tailscale (see below) the tunnel encrypts
-  everything. End the session when it is not needed.
+  the link at all. An attacker who can sniff that traffic can capture the
+  one-off code exchange or the session cookie — Tailscale remains the
+  answer there. Over Tailscale (see below) the tunnel encrypts everything.
+  End the session when it is not needed.
 
 ## Network reach (the part IT controls)
 

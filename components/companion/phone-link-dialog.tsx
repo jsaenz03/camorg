@@ -209,7 +209,8 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
                   Tailscale network — can take photos and open the shared library
                   until you end the session. The link itself is not encrypted (a
                   Tailscale address is, by the tunnel), so end it when
-                  you&rsquo;re done. It closes itself after 30 minutes of
+                  you&rsquo;re done — ending it also signs paired phones out, and
+                  they re-scan to reconnect. It closes itself after 30 minutes of
                   inactivity, and with Start automatically on it reopens (same
                   address) next time Camog starts. If the code was shared or
                   photographed, generate a new one — the old code stops working
