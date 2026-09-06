@@ -98,8 +98,8 @@ check(
   /'([0-9a-f]{64})'/.test(read('lib/licence/public-key.ts')),
 );
 check(
-  'patient-service guards all 5 mutations',
-  (read('lib/services/patient-service.ts').match(/await ensureWritable/g) || []).length === 5,
+  'patient-service guards all 7 mutations',
+  (read('lib/services/patient-service.ts').match(/await ensureWritable/g) || []).length === 7,
 );
 check(
   'photo-service guards all 6 mutations',

@@ -47,7 +47,10 @@ export default function RootLayout({
                   <TooltipProvider delayDuration={300}>
                     {children}
                     <LicenceActivationDialog />
-                    <Toaster richColors />
+                    {/* expand: sonner's default collapses older toasts
+                        behind the newest one — in succession they covered
+                        each other. Fully stacked, three at a time. */}
+                    <Toaster richColors expand visibleToasts={3} />
                   </TooltipProvider>
                 </AuthProvider>
               </LicenceProvider>

@@ -14,7 +14,9 @@ import { format } from 'date-fns';
 import { ImagePlus, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Patient } from '@/types/patient';
+import { consentStatus } from '@/types/patient';
 import { photoService } from '@/lib/services/photo-service';
+import { RecordConsentDialog } from '@/components/patient/record-consent-dialog';
 import { PhotoMetadataForm, type PhotoMetadataFormValues } from '@/components/photo/photo-metadata-form';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,6 +45,9 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
   const [index, setIndex] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
+  // Opened when a batch finishes saving for a patient whose photo consent is
+  // missing or expired — same prompt the capture flow shows after a save.
+  const [isConsentOpen, setIsConsentOpen] = useState(false);
 
   const currentFile = queue[index] ?? null;
   const dialogOpen = currentFile !== null;
@@ -139,6 +144,9 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
           count === 1 ? 'Photo added to patient file' : `${count} photos added to patient file`
         );
         onSaved();
+        if (consentStatus(patient) !== 'valid') {
+          setIsConsentOpen(true);
+        }
       }
     } catch (error) {
       console.error('Failed to save uploaded photo:', error);
@@ -230,6 +238,13 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
           />
         </DialogContent>
       </Dialog>
+
+      <RecordConsentDialog
+        patient={patient}
+        open={isConsentOpen}
+        onOpenChange={setIsConsentOpen}
+        onSaved={onSaved}
+      />
     </>
   );
 }

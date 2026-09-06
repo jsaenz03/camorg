@@ -8,6 +8,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { invoke } from '@tauri-apps/api/core';
 import type { Clinician, ClinicianRow, ClinicianRole } from '@/types/clinician';
 import type { Invitation, AppSettings, InvitationKind } from '@/types/invitation';
 import type {
@@ -399,6 +400,26 @@ export class AuthService implements IAuthService {
         next.updatedAt.getTime(),
       ],
     );
+    // Security-relevant deltas get a trail entry (attribution: the admin
+    // above); branding/review-window tweaks stay unlogged to avoid noise.
+    const securityChanges: string[] = [];
+    if (next.allowPublicSignup !== current.allowPublicSignup) {
+      securityChanges.push(`public signup ${next.allowPublicSignup ? 'opened' : 'closed'}`);
+    }
+    if (next.sessionTimeoutMs !== current.sessionTimeoutMs) {
+      securityChanges.push(`session timeout ${Math.round(next.sessionTimeoutMs / 60000)} min`);
+    }
+    if (next.idleLockTimeoutMs !== current.idleLockTimeoutMs) {
+      securityChanges.push(
+        `idle lock ${next.idleLockTimeoutMs === 0 ? 'off' : `${Math.round(next.idleLockTimeoutMs / 60000)} min`}`,
+      );
+    }
+    if (securityChanges.length > 0) {
+      const { auditService } = await import('@/lib/services/audit-service');
+      void auditService.record('admin.settings_change', {
+        detail: securityChanges.join(' · '),
+      });
+    }
     // The warning/stale windows redefine when alerts are due — refresh now.
     notifyAttentionChanged();
     return next;
@@ -497,6 +518,17 @@ export class AuthService implements IAuthService {
     if (isActive) {
       await this.startSession(id, settings.sessionTimeoutMs);
     }
+
+    // Pre-auth event: no session existed when registration began, so the
+    // entry is attributed to the new account itself, not a signed-in actor.
+    const { auditService } = await import('@/lib/services/audit-service');
+    void auditService.record('auth.signup', {
+      entityType: 'clinician',
+      entityId: id,
+      clinicianId: id,
+      clinicianName: validated.displayName,
+      detail: `${validated.username} (${invitation ? 'via invite' : 'self-signup'})`,
+    });
 
     const created = await this.getClinicianById(id);
     return created!;
@@ -597,7 +629,9 @@ export class AuthService implements IAuthService {
     if (session) {
       try {
         const { auditService } = await import('@/lib/services/audit-service');
-        void auditService.record('auth.logout', {
+        // Awaited so the entry is on disk before logout completes — a
+        // fire-and-forget write here could be lost to an app quit.
+        await auditService.record('auth.logout', {
           entityType: 'clinician',
           entityId: session.clinicianId,
         });
@@ -703,6 +737,18 @@ export class AuthService implements IAuthService {
     if (confirmationPhrase !== 'DELETE ALL DATA') {
       throw new ConfirmationError('Type "DELETE ALL DATA" to confirm');
     }
+    // The reset wipes the in-DB audit trail along with everything else (by
+    // design — it is the factory reset), so the event's surviving trace is
+    // this diagnostics entry, mirrored to the rotating camog.log outside the
+    // database. Recorded first, so even a half-finished wipe leaves the mark.
+    await invoke('record_web_diagnostic', {
+      level: 'info',
+      source: 'factory-reset',
+      message:
+        'App data reset from the login screen: database, accounts, patients, photos and the audit trail were wiped',
+    }).catch((err: unknown) => {
+      console.warn('[resetApp] durable reset trace could not be written:', err);
+    });
     writeSession(null);
     clearRememberedLogin();
     // Photos and backups are patient data too — deleting only the DB rows
@@ -805,6 +851,12 @@ export class AuthService implements IAuthService {
       'UPDATE clinicians SET is_active = $1, is_pending = 0, session_expires_at = NULL WHERE id = $2',
       [active ? 1 : 0, id],
     );
+    const { auditService } = await import('@/lib/services/audit-service');
+    void auditService.record('admin.user_activation', {
+      entityType: 'clinician',
+      entityId: id,
+      detail: `${rows[0].username as string} ${active ? 'approved' : 'deactivated'}`,
+    });
     notifyAttentionChanged();
     return rowToClinician((await this.getClinicianRow(id))!);
   }
@@ -821,6 +873,12 @@ export class AuthService implements IAuthService {
     );
     if (!rows.length) throw new NotFoundError(`User not found: ${id}`);
     await db.execute('UPDATE clinicians SET role = $1 WHERE id = $2', [role, id]);
+    const { auditService } = await import('@/lib/services/audit-service');
+    void auditService.record('admin.role_change', {
+      entityType: 'clinician',
+      entityId: id,
+      detail: `${rows[0].username as string}: ${rows[0].role as string} → ${role}`,
+    });
     return rowToClinician((await this.getClinicianRow(id))!);
   }
 
@@ -921,6 +979,13 @@ export class AuthService implements IAuthService {
       ],
     );
 
+    const { auditService } = await import('@/lib/services/audit-service');
+    void auditService.record('admin.invitation_created', {
+      entityType: 'invitation',
+      entityId: id,
+      detail: `${validated.username} (${validated.role}, ${validated.kind})`,
+    });
+
     // `precreated`: the account exists from this moment — the invitee signs in
     // with the temp passcode and the dashboard's must-change gate forces a new
     // one. The invitation is accepted on the spot so its code can't also be
@@ -937,6 +1002,12 @@ export class AuthService implements IAuthService {
       });
       await this.markInvitationAccepted(token, acceptedBy);
       acceptedAt = new Date(nowMs);
+      const { auditService } = await import('@/lib/services/audit-service');
+      void auditService.record('admin.user_created', {
+        entityType: 'clinician',
+        entityId: acceptedBy,
+        detail: `${validated.username} (${validated.role}, pre-created invite)`,
+      });
     }
 
     return {
@@ -1019,13 +1090,33 @@ export class AuthService implements IAuthService {
     await this.markInvitationAccepted(validated.token, id);
     await this.startSession(id, settings.sessionTimeoutMs);
 
+    // Pre-auth event, attributed to the accepting account itself.
+    const { auditService } = await import('@/lib/services/audit-service');
+    void auditService.record('auth.signup', {
+      entityType: 'clinician',
+      entityId: id,
+      clinicianId: id,
+      clinicianName: validated.displayName,
+      detail: `${validated.username} (invite accepted)`,
+    });
+
     return (await this.getClinicianById(id))!;
   }
 
   async revokeInvitation(id: string): Promise<void> {
     await this.requireAdmin();
     const db = await getDB();
+    const rows = await db.select<{ username: string }[]>(
+      'SELECT username FROM invitations WHERE id = $1',
+      [id],
+    );
     await db.execute('DELETE FROM invitations WHERE id = $1', [id]);
+    const { auditService } = await import('@/lib/services/audit-service');
+    void auditService.record('admin.invitation_revoked', {
+      entityType: 'invitation',
+      entityId: id,
+      detail: rows[0]?.username ?? id,
+    });
   }
 
   async listInvitations(): Promise<Invitation[]> {

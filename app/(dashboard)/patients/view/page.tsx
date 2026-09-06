@@ -15,7 +15,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
-import { ArrowLeft, AlertCircle, Camera, CalendarCheck, FileText, Globe, Loader2, Lock, Pencil, ShieldCheck, ShieldAlert, Columns2 } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Camera, CalendarCheck, FileText, Globe, Loader2, Lock, Pencil, ShieldCheck, ShieldAlert, Columns2, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import type { Patient, ConsentScope } from '@/types/patient';
 import { ConsentScopeLabels, consentStatus, reviewStatus } from '@/types/patient';
@@ -26,6 +26,7 @@ import { PhotoCompareDialog } from '@/components/photo/photo-compare-dialog';
 import { PhotoUpload } from '@/components/photo/photo-upload';
 import { useCapture, reviewFollowUpCapture } from '@/components/capture/capture-provider';
 import { ReviewBadge } from '@/components/patient/review-badge';
+import { RecordConsentDialog } from '@/components/patient/record-consent-dialog';
 import { PhotoReviewDueBadge } from '@/components/patient/photo-review-due-badge';
 import { EmptyState } from '@/components/empty-state';
 import { PageHeader } from '@/components/page-header';
@@ -56,6 +57,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -78,6 +80,7 @@ function PatientTimelineView() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [isLoadingPatient, setIsLoadingPatient] = useState(true);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isConsentOpen, setIsConsentOpen] = useState(false);
   const [activePhoto, setActivePhoto] = useState<PhotoRecord | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
@@ -258,7 +261,7 @@ function PatientTimelineView() {
               <Badge
                 variant="outline"
                 className="gap-1 border-destructive/40 text-destructive"
-                title={consent === 'expired' ? 'Photo consent has expired — record new consent in Edit details' : 'No photo consent on record — add one in Edit details'}
+                title={consent === 'expired' ? 'Photo consent has expired — record new consent below' : 'No photo consent on record — record it below'}
               >
                 <ShieldAlert className="size-3" />
                 {consent === 'expired' ? 'Consent expired' : 'No consent'}
@@ -321,10 +324,21 @@ function PatientTimelineView() {
       />
 
       {consent !== 'valid' && (
-        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
-          {consent === 'expired'
-            ? 'This patient’s photo consent has expired. Record new consent before capturing further photos.'
-            : 'No photo consent on record for this patient. Consider recording consent via Edit details.'}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+          <span>
+            {consent === 'expired'
+              ? 'This patient’s photo consent has expired. Record new consent before capturing further photos.'
+              : 'No photo consent on record for this patient. Record it once they agree to clinical photography.'}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-destructive/40 text-destructive hover:bg-destructive/10"
+            onClick={() => setIsConsentOpen(true)}
+          >
+            <ShieldCheck className="size-4" />
+            {consent === 'expired' ? 'Record new consent' : 'Record consent'}
+          </Button>
         </div>
       )}
 
@@ -343,12 +357,20 @@ function PatientTimelineView() {
 
       <PhotoTimeline photos={photos} onPhotoClick={handlePhotoClick} showFilter />
 
+      <RecordConsentDialog
+        patient={patient}
+        open={isConsentOpen}
+        onOpenChange={setIsConsentOpen}
+        onSaved={setPatient}
+      />
+
       <EditPatientDialog
         key={`${patient.id}:${patient.updatedAt.getTime()}`}
         patient={patient}
         open={isEditOpen}
         onOpenChange={setIsEditOpen}
         onSaved={setPatient}
+        onDeleted={() => router.push('/patients')}
       />
 
       <PhotoDetailDialog
@@ -423,19 +445,24 @@ type EditPatientValues = z.infer<typeof editPatientSchema>;
  * consent. Emptying the date of birth field saves null (date not recorded).
  * Selecting a scope records consent as of now (or keeps the original date if
  * the scope is unchanged); clearing the scope removes consent.
+ * Footer also carries the destructive path: Delete patient, behind a
+ * type-the-name confirmation.
  */
 function EditPatientDialog({
   patient,
   open,
   onOpenChange,
   onSaved,
+  onDeleted,
 }: {
   patient: Patient;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: (patient: Patient) => void;
+  onDeleted: () => void;
 }) {
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const form = useForm<EditPatientValues>({
     resolver: zodResolver(editPatientSchema),
     defaultValues: {
@@ -608,28 +635,155 @@ function EditPatientDialog({
               )}
             />
 
-            <DialogFooter>
+            <DialogFooter className="sm:justify-between">
               <Button
                 type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
+                variant="ghost"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => setIsDeleteOpen(true)}
                 disabled={isSaving}
               >
-                Cancel
+                <Trash2 className="size-4" />
+                Delete patient
               </Button>
-              <Button type="submit" disabled={isSaving}>
-                {isSaving ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Saving…
-                  </>
-                ) : (
-                  'Save changes'
-                )}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onOpenChange(false)}
+                  disabled={isSaving}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSaving}>
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Saving…
+                    </>
+                  ) : (
+                    'Save changes'
+                  )}
+                </Button>
+              </div>
             </DialogFooter>
           </form>
         </Form>
+      </DialogContent>
+
+      <DeletePatientDialog
+        patient={patient}
+        open={isDeleteOpen}
+        onOpenChange={setIsDeleteOpen}
+        onDeleted={onDeleted}
+      />
+    </Dialog>
+  );
+}
+
+/**
+ * Hard confirmation for permanently deleting a patient: the Delete button
+ * stays disabled until the patient's exact name is typed. Lists everything
+ * the delete removes — photos (including deleted ones), attached result
+ * files, and sharing grants — and notes the deletion itself is audited.
+ */
+function DeletePatientDialog({
+  patient,
+  open,
+  onOpenChange,
+  onDeleted,
+}: {
+  patient: Patient;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDeleted: () => void;
+}) {
+  const [confirmName, setConfirmName] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Fresh input each time the dialog opens — a previous attempt's typing
+  // must never carry over into a later visit.
+  useEffect(() => {
+    if (open) setConfirmName('');
+  }, [open]);
+
+  const canDelete = confirmName.trim() === patient.name;
+
+  const handleDelete = async () => {
+    if (!canDelete || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await patientService.deletePatient(patient.id);
+      toast.success(`${patient.name} permanently deleted`);
+      onOpenChange(false);
+      onDeleted();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? `Failed to delete patient: ${error.message}`
+          : 'Failed to delete patient. Please try again.',
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const totalPhotos = patient.photoCount + patient.deletedPhotoCount;
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !isDeleting && onOpenChange(next)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete “{patient.name}”?</DialogTitle>
+          <DialogDescription>
+            This permanently removes the patient and cannot be undone:
+          </DialogDescription>
+        </DialogHeader>
+
+        <ul className="list-disc space-y-1 pl-5 text-sm">
+          <li>
+            {totalPhotos === 1 ? '1 photo' : `${totalPhotos} photos`} — including any soft-deleted
+            ones — and their files on disk
+          </li>
+          <li>Attached result files and sharing grants</li>
+        </ul>
+        <p className="text-sm text-muted-foreground">
+          The audit log keeps a record of the deletion and of this patient&apos;s history under
+          their name at the time.
+        </p>
+
+        <div className="space-y-2">
+          <Label htmlFor="delete-confirm-name">
+            Type <span className="font-semibold">{patient.name}</span> to confirm
+          </Label>
+          <Input
+            id="delete-confirm-name"
+            value={confirmName}
+            onChange={(e) => setConfirmName(e.target.value)}
+            disabled={isDeleting}
+            autoComplete="off"
+            autoFocus
+          />
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isDeleting}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={handleDelete} disabled={!canDelete || isDeleting}>
+            {isDeleting ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Deleting…
+              </>
+            ) : (
+              <>
+                <Trash2 className="size-4" />
+                Delete permanently
+              </>
+            )}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

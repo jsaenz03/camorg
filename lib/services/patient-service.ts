@@ -11,15 +11,18 @@ import type { Patient } from '@/types/patient';
 import type { PatientCreate, PatientUpdate } from '@/lib/validators/schemas';
 import type { IPatientService } from '@/specs/001-role-you-are/contracts/patient-service';
 import { patientCreateSchema, patientUpdateSchema } from '@/lib/validators/schemas';
-import { getDB } from '@/lib/db/database';
+import { getDB, getPhotosDir } from '@/lib/db/database';
 import { accessService } from '@/lib/services/access-service';
 import { auditService } from '@/lib/services/audit-service';
 import { NotFoundError } from '@/lib/validators/errors';
 import { dateFromMs, dateToMs, dobFromMs, dobToMs, parseDobInput } from '@/lib/utils/date-formatting';
+import { renameAuditDetail } from '@/lib/utils/audit';
 import { ensureWritable } from '@/lib/licence/guard';
 // Every mutating method below ends with notifyAttentionChanged() so the
 // sidebar/dashboard alert counters refetch the moment a change lands.
 import { notifyAttentionChanged } from '@/lib/services/attention-events';
+import { join } from '@tauri-apps/api/path';
+import { remove } from '@tauri-apps/plugin-fs';
 
 // Column list used everywhere we SELECT patients, so the row mapper always
 // gets every field it expects. Aliased as `p` so the access filter's correlated
@@ -70,7 +73,7 @@ export class PatientService implements IPatientService {
 
     const isDuplicate = await this.isDuplicateName(validated.name);
     if (isDuplicate) {
-      console.warn(`Duplicate patient name: ${validated.name}`);
+      console.warn('Duplicate patient name — another patient already uses it.');
     }
 
     const id = uuidv4();
@@ -92,6 +95,8 @@ export class PatientService implements IPatientService {
     void auditService.record('patient.create', {
       entityType: 'patient',
       entityId: id,
+      patientId: id,
+      patientName: validated.name,
       detail: validated.name,
     });
 
@@ -222,7 +227,7 @@ export class PatientService implements IPatientService {
 
     const isDuplicate = await this.isDuplicateName(validated.name, id);
     if (isDuplicate) {
-      console.warn(`Duplicate patient name: ${validated.name}`);
+      console.warn('Duplicate patient name — another patient already uses it.');
     }
 
     const normalizedName = validated.name.trim().toLowerCase();
@@ -254,11 +259,39 @@ export class PatientService implements IPatientService {
     );
 
     const prior = rowToPatient(rows[0]);
+    // The Patient column now carries the name (and a rename gets its own
+    // entry below), so the update entry's detail describes the one identity
+    // change not otherwise visible: a date-of-birth change. Consent and
+    // review changes get their own entries further down.
+    const priorDobMs = (rows[0].dob as number | null) ?? null;
+    const dobDetail =
+      dobMs !== priorDobMs
+        ? validated.dateOfBirth
+          ? priorDobMs != null
+            ? 'date of birth changed'
+            : 'date of birth recorded'
+          : 'date of birth removed'
+        : null;
     void auditService.record('patient.update', {
       entityType: 'patient',
       entityId: id,
-      detail: validated.name,
+      patientId: id,
+      patientName: validated.name,
+      detail: dobDetail ?? undefined,
     });
+
+    // A rename gets its own entry so the old name survives in the trail:
+    // the row's stored patient_name is the new name, so the 'from' name
+    // lives only in this detail line.
+    if (prior.name !== validated.name) {
+      void auditService.record('patient.rename', {
+        entityType: 'patient',
+        entityId: id,
+        patientId: id,
+        patientName: validated.name,
+        detail: renameAuditDetail(prior.name, validated.name),
+      });
+    }
 
     const consentChanged =
       consentGivenMs !== (prior.consentGivenAt?.getTime() ?? null) ||
@@ -268,6 +301,7 @@ export class PatientService implements IPatientService {
       void auditService.record('patient.consent', {
         entityType: 'patient',
         entityId: id,
+        patientId: id,
         detail: consent.givenAt
           ? `consent recorded (${consent.scope}${
               consent.expiresAt ? `, expires ${consent.expiresAt.toISOString().slice(0, 10)}` : ''
@@ -280,6 +314,7 @@ export class PatientService implements IPatientService {
       void auditService.record('patient.review', {
         entityType: 'patient',
         entityId: id,
+        patientId: id,
         detail: review.dueAt
           ? `review scheduled for ${review.dueAt.toISOString().slice(0, 10)}`
           : 'review date cleared',
@@ -325,6 +360,7 @@ export class PatientService implements IPatientService {
     void auditService.record('patient.review', {
       entityType: 'patient',
       entityId: id,
+      patientId: id,
       detail: nextDueAt
         ? `reviewed; next due ${nextDueAt.toISOString().slice(0, 10)}`
         : 'marked reviewed',
@@ -336,6 +372,56 @@ export class PatientService implements IPatientService {
       ...rowToPatient(rows[0]),
       lastReviewedAt: new Date(nowMs),
       reviewDueAt: nextDueAt,
+      updatedAt: new Date(nowMs),
+    };
+  }
+
+  /**
+   * Record (or clear) photo consent in one focused step — givenAt is always
+   * now. Distinct from updatePatient so the capture-flow prompt and the
+   * timeline banner don't round-trip (or risk clobbering) name, DOB, or the
+   * review schedule. Same audit wording as the updatePatient path.
+   */
+  async recordConsent(
+    id: string,
+    consent: { scope: Patient['consentScope']; expiresAt: Date | null },
+  ): Promise<Patient> {
+    await ensureWritable();
+    await accessService.assertCanManagePatient(id);
+    const db = await getDB();
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT ${PATIENT_COLUMNS} FROM patients p ${OWNER_JOIN} WHERE p.id = $1`,
+      [id],
+    );
+    if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
+
+    const nowMs = Date.now();
+    const expiresMs = consent.expiresAt?.getTime() ?? null;
+    await db.execute(
+      `UPDATE patients
+         SET consent_given_at = $1, consent_scope = $2, consent_expires_at = $3, updated_at = $4
+       WHERE id = $5`,
+      [consent.scope ? nowMs : null, consent.scope, expiresMs, nowMs, id],
+    );
+
+    void auditService.record('patient.consent', {
+      entityType: 'patient',
+      entityId: id,
+      patientId: id,
+      detail: consent.scope
+        ? `consent recorded (${consent.scope}${
+            consent.expiresAt ? `, expires ${consent.expiresAt.toISOString().slice(0, 10)}` : ''
+          })`
+        : 'consent cleared',
+    });
+
+    notifyAttentionChanged();
+
+    return {
+      ...rowToPatient(rows[0]),
+      consentGivenAt: consent.scope ? new Date(nowMs) : null,
+      consentScope: consent.scope,
+      consentExpiresAt: consent.expiresAt,
       updatedAt: new Date(nowMs),
     };
   }
@@ -355,7 +441,7 @@ export class PatientService implements IPatientService {
       `UPDATE patients SET is_archived = 1, archived_at = $1, updated_at = $2 WHERE id = $3`,
       [nowMs, nowMs, id],
     );
-    void auditService.record('patient.archive', { entityType: 'patient', entityId: id });
+    void auditService.record('patient.archive', { entityType: 'patient', entityId: id, patientId: id });
     notifyAttentionChanged();
   }
 
@@ -379,18 +465,85 @@ export class PatientService implements IPatientService {
       `UPDATE patients SET is_archived = 0, archived_at = NULL, updated_at = $1 WHERE id = $2`,
       [nowMs, id],
     );
-    void auditService.record('patient.unarchive', { entityType: 'patient', entityId: id });
+    void auditService.record('patient.unarchive', { entityType: 'patient', entityId: id, patientId: id });
 
     notifyAttentionChanged();
 
     return { ...patient, isArchived: false, archivedAt: null, updatedAt: new Date(nowMs) };
   }
 
+  /**
+   * Hard-deletes a patient and everything attached to them: photo rows,
+   * result-file rows, per-doctor grants, and the photo/result bytes on
+   * disk. Irreversible by design — the UI gates it behind a type-the-name
+   * confirmation, and the audit trail keeps the name (and every historical
+   * entry's stored patient_name) so history stays readable afterwards.
+   */
+  async deletePatient(id: string): Promise<void> {
+    await ensureWritable();
+    await accessService.assertCanManagePatient(id);
+    const db = await getDB();
+    const rows = await db.select<{ name: string }[]>(
+      'SELECT name FROM patients WHERE id = $1',
+      [id],
+    );
+    if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
+    const name = rows[0].name;
+
+    // File paths collected before their rows go: image/thumbnail paths are
+    // photos-dir-relative (same convention as photo-service), result bytes
+    // live under {photosDir}/results/.
+    const photoFiles = await db.select<{ image_path: string; thumbnail_path: string }[]>(
+      'SELECT image_path, thumbnail_path FROM photos WHERE patient_id = $1',
+      [id],
+    );
+    const resultFiles = await db.select<{ stored_name: string }[]>(
+      'SELECT stored_name FROM result_files WHERE patient_id = $1',
+      [id],
+    );
+
+    await db.execute('DELETE FROM patient_shares WHERE patient_id = $1', [id]);
+    await db.execute('DELETE FROM result_files WHERE patient_id = $1', [id]);
+    await db.execute('DELETE FROM photos WHERE patient_id = $1', [id]);
+    await db.execute('DELETE FROM patients WHERE id = $1', [id]);
+
+    // Awaited so the entry is on disk before the caller reports success —
+    // this is the one patient event that must not be lost to a quit.
+    await auditService.record('patient.delete', {
+      entityType: 'patient',
+      entityId: id,
+      patientId: id,
+      patientName: name,
+      detail: 'patient and all photos permanently deleted',
+    });
+    notifyAttentionChanged();
+
+    // ponytail: bytes are removed best-effort after the rows, so a failed
+    // unlink strands an invisible orphan file rather than rows pointing at
+    // deleted files. Upgrade path: sweep orphans against the photos dir.
+    try {
+      const dir = await getPhotosDir();
+      const resultsDir = await join(dir, 'results');
+      for (const f of photoFiles) {
+        await remove(await join(dir, f.image_path)).catch(() => {});
+        await remove(await join(dir, f.thumbnail_path)).catch(() => {});
+      }
+      for (const f of resultFiles) {
+        await remove(await join(resultsDir, f.stored_name)).catch(() => {});
+      }
+    } catch (err) {
+      console.warn(`[patient] leftover files after deleting patient ${id}:`, err);
+    }
+  }
+
   async getPatientWithAccurateCount(id: string): Promise<Patient> {
+    // Defense-in-depth: even direct-by-id reads respect the access filter.
+    // The id is bound at $1, so the filter must start at $2.
+    const filter = await accessService.getAccessiblePatientFilter(2);
     const db = await getDB();
     const rows = await db.select<Record<string, unknown>[]>(
-      `SELECT ${PATIENT_COLUMNS} FROM patients p ${OWNER_JOIN} WHERE p.id = $1`,
-      [id],
+      `SELECT ${PATIENT_COLUMNS} FROM patients p ${OWNER_JOIN} WHERE p.id = $1 ${filter.sql}`,
+      [id, ...filter.binds],
     );
     if (!rows.length) throw new NotFoundError(`Patient not found: ${id}`);
     const patient = rowToPatient(rows[0]);
@@ -482,6 +635,15 @@ export class PatientService implements IPatientService {
     );
 
     const prior = rowToPatient(rows[0]);
+    // Who opened this patient to the whole organisation (or closed it) is
+    // exactly what the trail exists for.
+    void auditService.record('patient.sharing', {
+      entityType: 'patient',
+      entityId: id,
+      patientId: id,
+      patientName: prior.name,
+      detail: `org-wide visibility ${enabled ? 'enabled' : 'disabled'}`,
+    });
     return { ...prior, isOrgShared: enabled, updatedAt: new Date(nowMs) };
   }
 
@@ -508,6 +670,15 @@ export class PatientService implements IPatientService {
         [uuidv4(), id, cid, admin.id, nowMs],
       );
     }
+
+    void auditService.record('patient.sharing', {
+      entityType: 'patient',
+      entityId: id,
+      patientId: id,
+      detail: `access grants replaced (${clinicianIds.length} ${
+        clinicianIds.length === 1 ? 'doctor' : 'doctors'
+      })`,
+    });
   }
 
   /** Returns the list of clinician IDs granted access to this patient. */

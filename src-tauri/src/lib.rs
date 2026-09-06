@@ -119,6 +119,18 @@ pub fn run() {
       sql: include_str!("../migrations/017_photo_pin_view.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 18,
+      description: "audit: patient name stored per row (survives renames/deletes)",
+      sql: include_str!("../migrations/018_audit_patient_name.sql"),
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 19,
+      description: "audit: legacy patient rows attributed, photo labels snapshot",
+      sql: include_str!("../migrations/019_audit_identity_backfill.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory

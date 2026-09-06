@@ -472,12 +472,24 @@ fn pairing_token(app: &AppHandle) -> Result<String, String> {
   if let Ok(token) = std::fs::read_to_string(&path) {
     let token = token.trim();
     if token.len() == 16 && token.chars().all(|c| c.is_ascii_hexdigit()) {
+      // Tokens written before the owner-only permission existed are fixed up here.
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+      }
       return Ok(token.to_string());
     }
   }
   let token = format!("{:016x}", rand::random::<u64>());
   std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
   std::fs::write(&path, &token).map_err(|e| e.to_string())?;
+  // Owner-only, like the photo key: the token is a bearer credential.
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+  }
   Ok(token)
 }
 

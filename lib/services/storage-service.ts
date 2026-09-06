@@ -24,6 +24,7 @@ import {
   resetPhotosDirCache,
 } from '@/lib/db/database';
 import { accessService } from '@/lib/services/access-service';
+import { auditService } from '@/lib/services/audit-service';
 import { photosDirSchema } from '@/lib/validators/schemas';
 import {
   PermissionDeniedError,
@@ -128,6 +129,14 @@ export class StorageService {
         [target, Date.now()]
       );
       resetPhotosDirCache();
+
+      // Where PHI lives moved — audited like an export. Admin-gated above,
+      // so the entry always carries the acting admin.
+      void auditService.record('storage.photos_dir', {
+        detail: `${oldDirOverride ? 'custom folder' : 'default folder'} → ${
+          target ? targetDir : 'default folder'
+        } (${moved} ${moved === 1 ? 'file' : 'files'} copied)`,
+      });
 
       return { moved, activeDir: targetDir };
     } finally {

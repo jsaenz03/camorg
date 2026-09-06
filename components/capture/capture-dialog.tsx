@@ -56,7 +56,8 @@ import {
   clearCaptureDraft,
   draftToCapturedPhoto,
 } from '@/lib/utils/capture-draft';
-import { consentStatus } from '@/types/patient';
+import { consentStatus, type Patient } from '@/types/patient';
+import { RecordConsentDialog } from '@/components/patient/record-consent-dialog';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -161,6 +162,14 @@ function CaptureFlow({
   // The patient a phone snap was addressed to; resolved before the photo
   // enters the form so its prefill lands on the first render.
   const [patientHint, setPatientHint] = useState<PatientHint | null>(null);
+  // Set when a photo saves for a patient whose consent is missing or
+  // expired: the consent prompt opens over the (already saved) capture, so
+  // the warning comes with its fix one click away instead of a pointer to
+  // Edit details on another page. The patient object lingers after close
+  // (dialog renders nothing while consentOpen is false) so the Radix root
+  // is never unmounted while open.
+  const [consentPatient, setConsentPatient] = useState<Patient | null>(null);
+  const [consentOpen, setConsentOpen] = useState(false);
 
   /** Resolve a follow-up's link + patient/location prefill from its original photo. */
   const resolveFollowUp = async (photoId: string): Promise<FollowUpLink | null> => {
@@ -419,18 +428,14 @@ function CaptureFlow({
       );
 
       let patientId: string;
+      // Whose consent to ask for once the photo is in: an existing patient
+      // without valid consent, or a newly created one (created without any).
+      let needsConsent: Patient | null = null;
 
       if (exactMatch) {
         patientId = exactMatch.id;
-        // Surface missing/expired photo consent without blocking the capture —
-        // record consent via Edit details on the patient's timeline page.
         if (consentStatus(exactMatch) !== 'valid') {
-          toast.warning(
-            consentStatus(exactMatch) === 'expired'
-              ? 'This patient’s photo consent has expired.'
-              : 'No photo consent on record for this patient.',
-            { description: 'Record consent from the patient’s timeline page (Edit details).' },
-          );
+          needsConsent = exactMatch;
         }
       } else {
         // Name-variant guard: without this, "Jon Smith" vs "John Smith" or a
@@ -451,6 +456,7 @@ function CaptureFlow({
           dateOfBirth: parseDobInput(formData.patientDob),
         });
         patientId = newPatient.id;
+        needsConsent = newPatient;
         toast.info(`Created new patient: ${formData.patientName}`);
       }
 
@@ -517,7 +523,17 @@ function CaptureFlow({
       // open) so the phone can review the new photo immediately.
       void companionService.publish().catch(() => {});
 
-      // 5. Stay in place when capturing for a known patient; otherwise show
+      // 5. The photo is in — if its patient's consent is missing or expired,
+      // ask for it now, while the clinician is still with the patient. The
+      // hand-off to the patient's page waits until the prompt resolves, so
+      // the timeline is fetched after the consent decision and never shows a
+      // stale "no consent" banner over a consent that was just recorded.
+      if (needsConsent) {
+        setConsentPatient(needsConsent);
+        setConsentOpen(true);
+        return;
+      }
+      // 6. Stay in place when capturing for a known patient; otherwise show
       // the new photo on the patient's timeline.
       if (onSaved) {
         onSaved(patientId);
@@ -775,6 +791,29 @@ function CaptureFlow({
           </Card>
         </div>
       </div>
+
+      {/* Post-save consent prompt (see consentPatient). It closes after a
+          successful save or on "Not now" — either way the photo is already
+          in, so this is where the deferred hand-off happens: refresh in
+          place (capture-for-patient) or navigate to the patient's timeline,
+          whose fresh fetch then reflects the recorded consent. */}
+      {consentPatient && (
+        <RecordConsentDialog
+          patient={consentPatient}
+          open={consentOpen}
+          onOpenChange={(open) => {
+            setConsentOpen(open);
+            if (!open) {
+              if (onSaved) {
+                onSaved(consentPatient.id);
+              } else {
+                router.push(`/patients/view?id=${consentPatient.id}`);
+              }
+              onClose();
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

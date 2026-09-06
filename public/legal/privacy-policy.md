@@ -1,10 +1,10 @@
 # Camog Privacy Policy
 
-**Effective date:** 26/08/2026 · **Version:** 1.1
+**Effective date:** 06/09/2026 · **Version:** 1.2
 
 > **DRAFT FOR REVIEW — NOT LEGAL ADVICE.**
 > Supplier details are completed (entity, ABN, address, privacy contact, distribution). This document must still be reviewed by a qualified Australian lawyer before publication or use.
-> Descriptions of how the Software works reflect Camog v0.1.x. If the Software ever changes (for example, if telemetry, cloud services or automatic updates are added), this policy must be updated — claims like "we receive nothing" are only true while the code makes them true.
+> Descriptions of how the Software works reflect Camog v0.4.x (v1.2 of this policy updates the phone-link, audit-log and encryption descriptions to that version). If the Software ever changes (for example, if telemetry, cloud services or automatic updates are added), this policy must be updated — claims like "we receive nothing" are only true while the code makes them true.
 
 ---
 
@@ -20,7 +20,7 @@
 - The Software **sends no information to us**. It has no telemetry, no analytics, no advertising tools, no crash reporting and no cloud backend, and it makes no outbound internet connections.
 - We never see, receive, host, back up or access your patients' information through the Software.
 - If your administrator points the storage folder at a **cloud-synced folder** (OneDrive, Dropbox, iCloud or similar), your information may leave your computer through *that provider's* service — that is your organisation's choice and is not controlled by us or the Software (see clause 10).
-- The **phone-camera tether** feature transmits each photo across your own local Wi-Fi network, unencrypted, to your computer. It works only while the capture screen is open and is protected by a random single-use token (see clause 8.3).
+- The **phone link** feature runs a small web server on your own computer so a paired phone on your network can send photos to it and — while the signed-in clinician has library sharing switched on — view the same patients and photographs that clinician can already see on the computer. Traffic between the phone and the computer is **unencrypted** (plain HTTP). Access is controlled by a random pairing code that is exchanged once for a per-device session cookie; unauthenticated requests are rate-limited and the link ends itself after 30 minutes of inactivity (see clause 8.3).
 - The Software is **not connected to My Health Record** or any national e-health system.
 
 ## 3. About this policy and who it protects
@@ -59,7 +59,7 @@ All of the following is stored **locally by the Software on your organisation's 
 | Photo documentation metadata | Body region (14 anatomical regions via the body-map picker), free-text body subpart, capture date/time, capturing clinician, free-text clinical notes (up to 2,000 characters) | Health information |
 | Consent records | Consent scope (clinical care; education and training; research), date given, optional expiry date, and which clinician recorded it | Health information |
 | User accounts | Username, display name, role (administrator or clinician), salted hash of the account passcode, user preferences, creation and last-login timestamps | Personal information |
-| Audit log | Append-only record of actions — sign-ins and sign-outs, patient and photo changes, consent changes, annotations, exports and backups — with the acting clinician, patient reference, timestamp and free-text detail | Personal and health information |
+| Audit log | Append-only record of actions — sign-ins and sign-outs, patient and photo changes, consent changes, annotations, exports and backups — with the acting clinician, the patient's name as it was recorded at the time, timestamp and free-text detail. Entries that would identify a patient are redacted for non-administrator viewers | Personal and health information |
 | Backups | Complete snapshots of the database, written into your configured storage folder when an administrator creates one | All of the above |
 
 The Software does **not** collect: address, phone number, email address, Medicare number, Individual Healthcare Identifier, health fund details, biometric templates, payment details, or precise device location.
@@ -70,7 +70,7 @@ The Software does **not** collect: address, phone number, email address, Medicar
 
 **7.2 Holding.** Records are held in a local SQLite database file and as image files on the computer's storage — by default in the application data folder, or in any folder your administrator designates (which may be a network drive or a cloud-synced folder; see clause 10). Database backups are written to the same folder.
 
-**7.3 Security measures built into the Software.** Account passcodes are hashed with PBKDF2-SHA256 using a per-user random salt (passcodes are never stored in readable form); access is role-based (administrators see all patients; clinicians see only patients they own, that are organisation-shared, or explicitly granted to them); each account session expires after a configurable timeout; an idle privacy screen covers patient information after a configurable period of inactivity; all significant actions are written to an append-only audit log that administrators can review; and the phone-tether server accepts only a random single-use token and shuts down when the capture screen closes.
+**7.3 Security measures built into the Software.** Account passcodes are hashed with PBKDF2-SHA256 using a per-user random salt (passcodes are never stored in readable form); access is role-based (administrators see all patients; clinicians see only patients they own, that are organisation-shared, or explicitly granted to them); each account session expires after a configurable timeout; an idle privacy screen covers patient information after a configurable period of inactivity; all significant actions are written to an append-only audit log that administrators can review; and the phone-link server authenticates each request with a per-device session cookie issued when the phone first presents its random pairing code. The pairing code and sessions live only in the app's memory and the pairing code in the app data folder — sessions end when the link ends (manually, on app restart, or after 30 minutes of phone inactivity); unauthenticated requests are rate-limited per source address and answered identically to unknown routes; and the photo files the phone may fetch are restricted to an explicit whitelist of filenames.
 
 **7.4 Honest limitations you should plan around.** Photographs and thumbnails are **encrypted by the Software at rest** (AES-256-GCM); the decryption key is generated by the Software and held in a key file inside the application data directory (owner-only file permissions), and photographs cannot be opened without it. The **database is not encrypted** by the Software, and neither are exported report PDFs. Attached result files are **encrypted at rest** with the same key as photographs. Database backups are **encrypted with a passphrase** your practice chooses each time it creates a backup — the Software cannot recover a lost passphrase, and a backup without its passphrase cannot be restored. Backups are not scheduled automatically. Deleted photos are soft-deleted (recoverable) and no feature permanently deletes a patient record. We recommend full-disk encryption on every device running Camog, physically secured storage folders, and secure handling of backup files.
 
@@ -83,7 +83,7 @@ The Software does **not** collect: address, phone number, email address, Medicar
 **8.3 Disclosures your organisation controls.** Your organisation is responsible for ensuring each of the following has a lawful basis (generally, the primary purpose of providing health care, or consent):
 
 - **Cloud-synced storage/backups** — if the storage folder is inside a cloud-sync service, that provider receives your patients' photographs and records (clause 10).
-- **Phone-camera tether** — each captured photo is transmitted over your local Wi-Fi network, unencrypted, from the phone to your computer. Use it only on a trusted private network you control. Anyone able to intercept traffic on that network could in theory view the photo.
+- **Phone link (phone-camera tether and companion viewer)** — photographs captured on a paired phone are transmitted over your local network to your computer **unencrypted** (plain HTTP — see clause 7.3 for the access controls). While the link is open and library sharing is switched on, the paired phone can also view the same access-filtered patient list, photographs and reports the signed-in clinician can see, and request review and report actions that run through the same permission-checked services. The pairing code crosses the network each time a phone pairs, and the session cookie travels with every phone request — anyone able to intercept traffic on that network could in theory view both. Use the link only on a trusted private network you control (or over an encrypted tunnel such as Tailscale), rotate the pairing code if it may have been seen, and end the session when you are done. The security notes distributed with the Software describe the controls and their limits in full for IT reviewers.
 - **Case reports** — printing a patient case report (which includes photographs, notes and consent status) creates a paper record; handle and store it as securely as the digital one. Printing is recorded in the audit log.
 - **Internal sharing** — the Software's organisation-share and per-clinician sharing settings control which of your staff can see a patient. Configure them to match your patients' expectations and your legal obligations.
 
@@ -111,7 +111,7 @@ If your organisation suspects a data breach involving information held in Camog 
 
 ## 13. Access and correction (APPs 12–13)
 
-Patients should direct requests for access to, or correction of, their information to **your organisation**, which holds it. The Software supports you in responding: patient details and photo metadata can be edited, annotated copies never overwrite originals, and a printable case report (photographs, dates, body locations, notes and consent status) can be generated and saved as a PDF. To protect the integrity of the medical record, audit log entries cannot be edited or deleted.
+Patients should direct requests for access to, or correction of, their information to **your organisation**, which holds it. The Software supports you in responding: patient details and photo metadata can be edited, annotated copies never overwrite originals, and a printable case report (photographs, dates, body locations, notes and consent status) can be generated and saved as a PDF. To protect the integrity of the medical record, audit log entries cannot be edited or deleted in normal use. The one exception is the administrator **factory reset** (Settings), which requires typing a confirmation phrase and erases all local records — including the audit log, because it destroys the record entirely (clause 14).
 
 ## 14. Retention and destruction (APP 11.2)
 

@@ -65,8 +65,10 @@ export function LicenceActivationDialog() {
             spellCheck={false}
             // field-sizing-content (the Textarea default) makes the textarea's
             // intrinsic width the full unbroken licence key, which overflows
-            // the dialog grid. Fixed sizing keeps it w-full; the key wraps.
-            className="font-mono text-xs [field-sizing:fixed]"
+            // the dialog grid. The named utility (not [field-sizing:fixed] —
+            // it loses the cascade to field-sizing-content) lets tailwind-merge
+            // drop the default; fixed sizing keeps it w-full and the key wraps.
+            className="font-mono text-xs field-sizing-fixed"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && key.trim()) {
                 e.preventDefault();

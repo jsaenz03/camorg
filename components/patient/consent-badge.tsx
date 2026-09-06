@@ -23,8 +23,8 @@ export function ConsentBadge({ patient }: { patient: Patient }) {
       className="gap-1 border-destructive/40 text-destructive"
       title={
         consent === 'expired'
-          ? 'Photo consent has expired — record new consent in Edit details'
-          : 'No photo consent on record — add one in Edit details'
+          ? 'Photo consent has expired — record new consent on the patient’s page'
+          : 'No photo consent on record — record it on the patient’s page'
       }
     >
       <ShieldAlert className="size-3" />

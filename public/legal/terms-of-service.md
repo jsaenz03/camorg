@@ -1,10 +1,10 @@
 # Camog — Terms of Service
 
-**Effective date:** 26/08/2026 · **Version:** 1.1
+**Effective date:** 06/09/2026 · **Version:** 1.2
 
 > **DRAFT FOR REVIEW — NOT LEGAL ADVICE.**
 > Supplier details and commercial terms are completed (entity, trading name, ABN, address, contacts, distribution, licence model, governing law). This document must still be reviewed by a qualified Australian lawyer before publication or use — in particular the liability cap in clause 12.3.
-> Statements about how the Software works reflect Camog v0.1.x. If the Software changes (for example, if telemetry, cloud services or fees are ever added), these Terms and the Privacy Policy must be updated to match.
+> Statements about how the Software works reflect Camog v0.4.x (v1.2 of these Terms updates the phone-link, audit-log and release-stage descriptions to that version). If the Software changes (for example, if telemetry, cloud services or fees are ever added), these Terms and the Privacy Policy must be updated to match.
 
 ---
 
@@ -43,7 +43,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 (b) remove or obscure our branding, copyright or other notices;
 (c) reverse engineer, decompile or disassemble the Software;
 (d) circumvent or attempt to circumvent the Software's access controls, passcode protections or session controls; or
-(e) alter, suppress or interfere with the Software's **append-only audit log** or its audit records (including the audit entries written when a case report is printed).
+(e) alter, suppress or interfere with the Software's **append-only audit log** or its audit records (including the audit entries written when a case report is printed) — the only exception being the Software's own administrator factory reset, which requires typing a confirmation phrase and erases all local data, including the audit log, as part of destroying the record entirely; or
 
 ## 5. Accounts, security and your responsibilities
 
@@ -55,7 +55,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 (b) the acts and omissions of your users;
 (c) physically and electronically securing the computers and networks on which the Software runs, including using full-disk encryption (for example, FileVault or BitLocker) on any device holding patient photographs;
 (d) taking and safely storing regular backups — the Software's backup feature creates a database snapshot in your configured storage folder, encrypted with a **backup passphrase your practice chooses**; you must record that passphrase — an encrypted backup cannot be restored without it, and the Software cannot recover it; and
-(e) using the **phone-camera tether** feature only on a trusted, private network you control. The tether runs a small web server on your computer that receives photos from phones on the same local network over **unencrypted HTTP**, protected only by a random single-use token. Do not use it on public or shared Wi-Fi.
+(e) using the **phone link** feature only on a trusted, private network you control. The phone link runs a small web server on your computer that a paired phone reaches over **unencrypted HTTP**. Access is controlled by a random pairing code that is exchanged once for a per-device session cookie, and — while library sharing is switched on — the phone can view the same access-filtered patient records the signed-in clinician can see. Do not use it on public or shared Wi-Fi; rotate the pairing code if it may have been seen, and end the session when you are done. The security notes distributed with the Software describe the controls and their limits in full.
 
 5.3 The Software's idle privacy lock is a **privacy screen, not a security control or encryption**. It covers the screen but does not end the signed-in session.
 
@@ -98,7 +98,7 @@ You must not use the Software:
 
 ## 10. Pre-release software
 
-Version 0.1.x is an early ("beta") release. It may contain defects, and features may change. The installers are **not code-signed**, so your operating system may show security warnings (for example macOS Gatekeeper or Windows SmartScreen) that you must assess before proceeding. Verify that you downloaded the installer from our official distribution point before installing.
+Version 0.4.x is an early ("beta") release. It may contain defects, and features may change. The installers are **not code-signed**, so your operating system may show security warnings (for example macOS Gatekeeper or Windows SmartScreen) that you must assess before proceeding. Verify that you downloaded the installer from our official distribution point before installing.
 
 ## 11. Warranties and the Australian Consumer Law
 

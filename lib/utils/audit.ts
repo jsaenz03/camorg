@@ -28,9 +28,19 @@ export interface AuditRow {
   detail: string | null;
   created_at: number;
   patient_name?: string | null;
+  photo_label?: string | null;
   photo_body_part?: string | null;
   photo_laterality?: string | null;
   photo_captured_at?: number | null;
+}
+
+/**
+ * Detail line for a patient.rename entry. The row's stored patient_name is
+ * the new name (the patient's identity going forward); the old name survives
+ * only here, so the wording is pinned by scripts/self-check-audit-rename.mjs.
+ */
+export function renameAuditDetail(oldName: string, newName: string): string {
+  return `renamed from “${oldName}” to “${newName}”`;
 }
 
 /**

@@ -105,6 +105,25 @@ export interface IPatientService {
   unarchivePatient(id: string): Promise<Patient>;
 
   /**
+   * Permanently deletes a patient and everything attached to them
+   *
+   * @param id - Patient UUID
+   * @returns Promise resolving to void
+   * @throws NotFoundError if patient does not exist
+   * @throws PermissionDeniedError if the clinician cannot manage the patient
+   * @throws Error if the database delete fails
+   *
+   * Side effects:
+   * - Deletes the patients row, its photos rows, result_files rows, and
+   *   patient_shares rows; removes the photo/result bytes on disk
+   * - Writes a 'patient.delete' audit entry carrying the patient's name
+   *
+   * Note: Irreversible. Callers must confirm with the user (the desktop UI
+   * requires typing the patient's name) before invoking.
+   */
+  deletePatient(id: string): Promise<void>;
+
+  /**
    * Gets patient with photo count (real-time count, not denormalized)
    *
    * @param id - Patient UUID

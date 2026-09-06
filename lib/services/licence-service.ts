@@ -11,6 +11,7 @@ import { format } from 'date-fns';
 import { getDB } from '@/lib/db/database';
 import { verifyLicenceKey } from '@/lib/licence/verify';
 import { LicenceExpiredError } from '@/lib/validators/errors';
+import { auditService } from '@/lib/services/audit-service';
 import type {
   ILicenceService,
   LicenceInfo,
@@ -89,9 +90,15 @@ export class LicenceService implements ILicenceService {
       );
     }
     const db = await getDB();
+    const trimmedKey = key.replace(/\s+/g, '');
     await db.execute("UPDATE settings SET licence_key = $1 WHERE id = 'app'", [
-      key.replace(/\s+/g, ''),
+      trimmedKey,
     ]);
+    // Only the key's tail is logged — the audit trail must not become a
+    // place where the full licence secret is readable.
+    void auditService.record('licence.activation', {
+      detail: `licence key ending ${trimmedKey.slice(-4)}`,
+    });
     return this.getStatus();
   }
 

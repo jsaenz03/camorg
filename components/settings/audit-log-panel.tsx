@@ -115,10 +115,11 @@ export function AuditLogPanel() {
           <ScrollText className="size-4" /> Audit log
         </CardTitle>
         <CardDescription>
-          Who did what, to which patient and photo, when — logins, patient and
-          photo changes, consent records, exports and backups. Newest first;
-          latest {PAGE_SIZE} entries of the selected range. Download CSV saves
-          the whole range, not just the visible page.
+          Who did what, to which patient and photo, when — logins and signups,
+          user administration, patient and photo changes, consent records,
+          exports, backups, storage and licence changes. Newest first; latest{' '}
+          {PAGE_SIZE} entries of the selected range. Download CSV saves the
+          whole range, not just the visible page.
         </CardDescription>
       </CardHeader>
       <CardContent>
