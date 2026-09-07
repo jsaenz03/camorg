@@ -228,6 +228,29 @@ function ProfileCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
+          <label className="text-sm font-medium">Navigation layout</label>
+          <Select
+            value={clinician.preferences.navLayout ?? 'left'}
+            onValueChange={(v) =>
+              updatePrefs({ navLayout: v as Clinician['preferences']['navLayout'] })
+            }
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Sidebar on the left" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="left">Sidebar on the left</SelectItem>
+              <SelectItem value="right">Sidebar on the right</SelectItem>
+              <SelectItem value="top">Tabs at the top</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Where the main navigation lives. &ldquo;Tabs at the top&rdquo;
+            replaces the sidebar with tabs along the header.
+          </p>
+        </div>
+
+        <div className="space-y-2">
           <label className="text-sm font-medium">Default body part</label>
           <Select
             value={clinician.preferences.defaultBodyPart ?? '__none__'}

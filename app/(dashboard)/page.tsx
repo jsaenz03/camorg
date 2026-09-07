@@ -3,21 +3,30 @@
 /**
  * Home dashboard.
  *
- * Stats overview → charts (photos over time, by body part, patient growth) →
- * capture activity calendar → recent patients bento → latest photos bento.
+ * The page loads the data (patients, photo summaries, recent photos) and
+ * renders its sections as widgets through DashboardCanvas, so each user can
+ * reorder (drag), remove and re-add them, or restore the default layout —
+ * the order persists in clinician preferences (dashboardWidgets).
  * Sits inside the dashboard layout, so the sidebar and session gate come for
  * free; useAuth only supplies the clinician name for the greeting.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Camera, Images, Users, ArrowRight, Smartphone } from 'lucide-react';
+import { toast } from 'sonner';
+import { Camera, Check, Images, Pencil, Users, ArrowRight, Smartphone } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import type { BodyPart } from '@/types/body-part';
 import { BodyPartLabels } from '@/types/body-part';
 import { patientService } from '@/lib/services/patient-service';
 import { photoService, type PhotoSummary } from '@/lib/services/photo-service';
+import { authService } from '@/lib/services/auth-service';
+import {
+  DEFAULT_DASHBOARD_WIDGETS,
+  resolveDashboardWidgets,
+  type DashboardWidgetId,
+} from '@/lib/dashboard-widgets';
 import { BodyMapBadge } from '@/components/patient/body-map-badge';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useCapture, reviewFollowUpCapture } from '@/components/capture/capture-provider';
@@ -35,6 +44,7 @@ import { StatsOverview } from '@/components/dashboard/stats-overview';
 import { ActivityCalendar } from '@/components/dashboard/activity-calendar';
 import { NeedsAttention } from '@/components/dashboard/needs-attention';
 import { RecentActions } from '@/components/dashboard/recent-actions';
+import { DashboardCanvas } from '@/components/dashboard/dashboard-canvas';
 import { PhotosOverTimeChart } from '@/components/charts/photos-over-time-chart';
 import { PhotosByBodyPartChart } from '@/components/charts/photos-by-body-part-chart';
 import { PatientsGrowthChart } from '@/components/charts/patients-growth-chart';
@@ -43,7 +53,7 @@ import type { PhotoWithPatient } from '@/lib/hooks/use-all-photos';
 
 export default function HomePage() {
   const router = useRouter();
-  const { clinician } = useAuth();
+  const { clinician, refresh } = useAuth();
   const { openCapture } = useCapture();
   const companion = useCompanion();
   const {
@@ -152,6 +162,40 @@ export default function HomePage() {
   }, [clinician]);
 
   const isEmpty = !isLoading && !loadError && patients.length === 0;
+
+  // ----- customisable widget layout -----
+  // Order state is local for live dragging; lastSavedRef fences the sync
+  // effect so a refresh() round-trip can't clobber an in-flight reorder.
+  const storedWidgets = clinician?.preferences.dashboardWidgets ?? null;
+  const [order, setOrder] = useState<DashboardWidgetId[]>(() =>
+    resolveDashboardWidgets(storedWidgets),
+  );
+  const lastSavedRef = useRef(JSON.stringify(resolveDashboardWidgets(storedWidgets)));
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    const resolved = resolveDashboardWidgets(storedWidgets);
+    const key = JSON.stringify(resolved);
+    if (key !== lastSavedRef.current) {
+      lastSavedRef.current = key;
+      setOrder(resolved);
+    }
+  }, [storedWidgets]);
+
+  /** Persist a layout change (null = follow the default layout again). */
+  async function saveWidgets(next: DashboardWidgetId[] | null) {
+    const resolved = next === null ? [...DEFAULT_DASHBOARD_WIDGETS] : next;
+    setOrder(resolved);
+    lastSavedRef.current = JSON.stringify(resolved);
+    try {
+      await authService.updatePreferences({ dashboardWidgets: next });
+      await refresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Could not save the dashboard layout',
+      );
+    }
+  }
 
   // When a calendar day is selected, the "latest photos" bento filters to it.
   const visiblePhotos = useMemo(() => {
@@ -267,6 +311,22 @@ export default function HomePage() {
         description="Review activity or capture a new photo."
         actions={
           <div className="flex items-center gap-2">
+            <Button
+              variant={editing ? 'default' : 'outline'}
+              onClick={() => setEditing((v) => !v)}
+            >
+              {editing ? (
+                <>
+                  <Check className="size-4" />
+                  Done
+                </>
+              ) : (
+                <>
+                  <Pencil className="size-4" />
+                  Customise
+                </>
+              )}
+            </Button>
             {/* Phone link + capture are session controls, not routes — they
                 live here on the dashboard instead of the sidebar. The dot is
                 a live-session indicator (privacy state, not decoration). */}
@@ -292,93 +352,14 @@ export default function HomePage() {
         }
       />
 
-      {/* KPIs */}
-      <StatsOverview patients={patients} photos={summaries} />
-
-      {/* Alerts (reviews due/overdue/stale, consent, approvals) + activity feed */}
-      <div className="mt-8 grid gap-4 lg:grid-cols-3">
-        <section className="lg:col-span-2">
-          <NeedsAttention items={attentionItems} isLoading={isLoadingAttention} />
-        </section>
-        <RecentActions />
-      </div>
-
-      {/* Charts */}
-      <div className="mt-8 grid gap-4 lg:grid-cols-3">
-        <PhotosOverTimeChart photos={summaries} />
-        <PhotosByBodyPartChart photos={summaries} />
-        <PatientsGrowthChart patients={patients} />
-      </div>
-
-      {/* Activity calendar + recent patients side by side */}
-      <div className="mt-8 grid gap-4 lg:grid-cols-3">
-        <ActivityCalendar
-          photos={summaries}
-          selectedDate={selectedDate}
-          onSelectDate={setSelectedDate}
-        />
-
-        <section className="lg:col-span-2">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              <Users className="size-4" />
-              Recent patients
-            </h2>
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/patients">
-                All patients
-                <ArrowRight className="size-4" />
-              </Link>
-            </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-            {topPatients.map((p) => (
-              <PatientBentoTile
-                key={p.id}
-                patient={p}
-                onClick={() => router.push(`/patients/view?id=${p.id}`)}
-              />
-            ))}
-          </div>
-        </section>
-      </div>
-
-      {/* Latest / selected-day photos */}
-      <section className="mt-10">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            <Images className="size-4" />
-            {selectedDate ? `Photos on ${selectedDate.toLocaleDateString()}` : 'Latest photos'}
-          </h2>
-          {selectedDate && (
-            <Button variant="ghost" size="sm" onClick={() => setSelectedDate(null)}>
-              Clear date
-            </Button>
-          )}
-        </div>
-
-        {visiblePhotos.length === 0 ? (
-          <EmptyState
-            icon={Images}
-            title={selectedDate ? 'No photos on that day' : 'No photos yet'}
-            description={
-              selectedDate
-                ? 'Pick another day on the calendar, or clear the filter.'
-                : 'Once you capture photos, the most recent ones will appear here.'
-            }
-          />
-        ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {visiblePhotos.map((photo) => (
-              <RecentPhotoTile
-                key={photo.id}
-                photo={photo}
-                onClick={() => handlePhotoClick(photo)}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      <DashboardCanvas
+        value={order}
+        editing={editing}
+        onChange={setOrder}
+        onCommit={(next) => void saveWidgets(next)}
+        onRestoreDefault={() => void saveWidgets(null)}
+        renderWidget={renderWidget}
+      />
 
       <PhotoDetailDialog
         photo={activePhoto}
@@ -389,6 +370,97 @@ export default function HomePage() {
       />
     </div>
   );
+
+  function renderWidget(id: DashboardWidgetId): ReactNode {
+    switch (id) {
+      case 'stats':
+        return <StatsOverview patients={patients} photos={summaries} />;
+      case 'attention':
+        return (
+          <NeedsAttention items={attentionItems} isLoading={isLoadingAttention} />
+        );
+      case 'recent-actions':
+        return <RecentActions />;
+      case 'chart-photos-over-time':
+        return <PhotosOverTimeChart photos={summaries} />;
+      case 'chart-body-part':
+        return <PhotosByBodyPartChart photos={summaries} />;
+      case 'chart-patient-growth':
+        return <PatientsGrowthChart patients={patients} />;
+      case 'calendar':
+        return (
+          <ActivityCalendar
+            photos={summaries}
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+          />
+        );
+      case 'recent-patients':
+        return (
+          <div>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                <Users className="size-4" />
+                Recent patients
+              </h2>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/patients">
+                  All patients
+                  <ArrowRight className="size-4" />
+                </Link>
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+              {topPatients.map((p) => (
+                <PatientBentoTile
+                  key={p.id}
+                  patient={p}
+                  onClick={() => router.push(`/patients/view?id=${p.id}`)}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      case 'latest-photos':
+        return (
+          <div>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                <Images className="size-4" />
+                {selectedDate ? `Photos on ${selectedDate.toLocaleDateString()}` : 'Latest photos'}
+              </h2>
+              {selectedDate && (
+                <Button variant="ghost" size="sm" onClick={() => setSelectedDate(null)}>
+                  Clear date
+                </Button>
+              )}
+            </div>
+
+            {visiblePhotos.length === 0 ? (
+              <EmptyState
+                icon={Images}
+                title={selectedDate ? 'No photos on that day' : 'No photos yet'}
+                description={
+                  selectedDate
+                    ? 'Pick another day on the calendar, or clear the filter.'
+                    : 'Once you capture photos, the most recent ones will appear here.'
+                }
+              />
+            ) : (
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                {visiblePhotos.map((photo) => (
+                  <RecentPhotoTile
+                    key={photo.id}
+                    photo={photo}
+                    onClick={() => handlePhotoClick(photo)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+    }
+  }
 }
 
 function PatientBentoTile({

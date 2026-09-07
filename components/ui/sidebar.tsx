@@ -207,7 +207,14 @@ function Sidebar({
 
   return (
     <div
-      className="group peer hidden text-sidebar-foreground md:block"
+      className={cn(
+        "group peer hidden text-sidebar-foreground md:block",
+        // Right side: the wrapper (whose gap reserves the sidebar's space)
+        // must come after the inset in the flex row, else the fixed panel
+        // paints over the main content. DOM order stays intact so the
+        // inset's peer-data-* selectors keep working.
+        "data-[side=right]:order-2"
+      )}
       data-state={state}
       data-collapsible={state === "collapsed" ? collapsible : ""}
       data-variant={variant}
@@ -256,8 +263,12 @@ function Sidebar({
 function SidebarTrigger({
   className,
   onClick,
+  icon: Icon = PanelLeftIcon,
   ...props
-}: React.ComponentProps<typeof Button>) {
+}: React.ComponentProps<typeof Button> & {
+  /** Panel glyph; pass PanelRight when the sidebar is docked right. */
+  icon?: React.ElementType
+}) {
   const { toggleSidebar } = useSidebar()
 
   return (
@@ -273,7 +284,7 @@ function SidebarTrigger({
       }}
       {...props}
     >
-      <PanelLeftIcon />
+      <Icon />
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   )

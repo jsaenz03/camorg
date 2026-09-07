@@ -6,6 +6,9 @@ import { BodyPart } from './body-part';
  */
 export type ClinicianRole = 'admin' | 'clinician';
 
+/** Where the primary navigation lives. */
+export type NavLayout = 'left' | 'right' | 'top';
+
 /**
  * Represents authenticated user who captures and manages photos.
  *
@@ -32,6 +35,11 @@ export interface Clinician {
     showDeletedPhotos: boolean;
     /** Personal auto-logout: null = organisation default, 0 = never. */
     autoLogoutTimeoutMs: number | null;
+    /** Navigation chrome: sidebar pinned left/right, or tabs along the top. */
+    navLayout: NavLayout;
+    /** Ordered dashboard widget ids; null = the default layout. Unknown ids
+     *  (from a newer app version) are kept but ignored at render time. */
+    dashboardWidgets: string[] | null;
   };
 
   // Timestamps

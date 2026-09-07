@@ -90,6 +90,13 @@ function parsePreferences(json: string): Clinician['preferences'] {
       autoCompressPhotos: parsed.autoCompressPhotos ?? false,
       showDeletedPhotos: parsed.showDeletedPhotos ?? false,
       autoLogoutTimeoutMs: sanitiseAutoLogoutTimeout(parsed.autoLogoutTimeoutMs),
+      navLayout:
+        parsed.navLayout === 'right' || parsed.navLayout === 'top'
+          ? parsed.navLayout
+          : 'left',
+      dashboardWidgets: Array.isArray(parsed.dashboardWidgets)
+        ? parsed.dashboardWidgets.filter((w): w is string => typeof w === 'string')
+        : null,
     };
   } catch {
     return {
@@ -98,6 +105,8 @@ function parsePreferences(json: string): Clinician['preferences'] {
       autoCompressPhotos: false,
       showDeletedPhotos: false,
       autoLogoutTimeoutMs: null,
+      navLayout: 'left',
+      dashboardWidgets: null,
     };
   }
 }

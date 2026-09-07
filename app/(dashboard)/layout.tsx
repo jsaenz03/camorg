@@ -15,10 +15,12 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { PanelRight } from 'lucide-react';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { AppSidebar } from '@/components/app-sidebar';
+import { TopNavHeader } from '@/components/layout/top-nav-header';
 import { CompanionProvider } from '@/components/companion/companion-provider';
 import { CaptureProvider, CaptureHost } from '@/components/capture/capture-provider';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -122,24 +124,45 @@ export default function DashboardLayout({
     );
   }
 
+  // Navigation layout is a per-user preference (Settings → Profile): sidebar
+  // pinned left/right, or horizontal tabs along the top instead of a sidebar.
+  const navLayout = clinician?.preferences.navLayout ?? 'left';
+
   return (
-    <SidebarProvider>
+    <SidebarProvider className={navLayout === 'top' ? 'flex-col' : undefined}>
       {/* Capture above Companion: the companion toast opens capture; the
           dialog itself renders via CaptureHost inside CompanionProvider
           (its phone panel reads that context). */}
       <CaptureProvider>
         <CompanionProvider>
-          <AppSidebar />
+          {navLayout === 'top' ? null : <AppSidebar side={navLayout} />}
           <SidebarInset>
             <LicenceBanner />
-            <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/75">
-              <SidebarTrigger />
-              <Separator orientation="vertical" className="mr-1 h-5" />
-              <div className="ml-auto flex items-center gap-1">
-                <ThemeToggle />
-                <UserMenu />
-              </div>
-            </header>
+            {navLayout === 'top' ? (
+              <TopNavHeader />
+            ) : (
+              /* The collapse/expand trigger sits on the edge the sidebar is
+                 docked to — spatially next to the panel it controls — with a
+                 glyph pointing at that panel. */
+              <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+                {navLayout === 'left' && (
+                  <>
+                    <SidebarTrigger />
+                    <Separator orientation="vertical" className="mr-1 h-5" />
+                  </>
+                )}
+                <div className="ml-auto flex items-center gap-1">
+                  <ThemeToggle />
+                  <UserMenu />
+                </div>
+                {navLayout === 'right' && (
+                  <>
+                    <Separator orientation="vertical" className="ml-1 h-5" />
+                    <SidebarTrigger icon={PanelRight} />
+                  </>
+                )}
+              </header>
+            )}
             <main className="flex-1">{children}</main>
           </SidebarInset>
           <CaptureHost />
