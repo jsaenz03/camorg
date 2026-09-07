@@ -403,20 +403,40 @@ const PAGE_HTML: &str = r##"<!doctype html>
   .bodyfig [data-part] { fill: rgba(161, 161, 170, 0.30); stroke: rgba(161, 161, 170, 0.5); stroke-width: 1.5; }
   .bodyfig [data-part].hl { fill: var(--primary); stroke: var(--primary); }
 
-  /* Compare (mirrors the desktop dialog): two pickers, side-by-side or
-     overlay modes, an anchor toggle (linked = one shared zoom + pan across
-     both photos, free = each pane on its own). The chrome follows the
-     theme; the photo panes stay black in both. */
-  #compare-title { flex: 1; text-align: center; font-size: 16px; font-weight: 600; }
+  /* Compare (mirrors the desktop dialog): pickers, side-by-side or overlay
+     modes, an anchor toggle (linked = one shared zoom + pan across both
+     photos, free = each pane on its own). The chrome follows the theme; the
+     photo panes stay black in both. */
+  #compare-title, #pick-title { flex: 1; text-align: center; font-size: 16px; font-weight: 600; }
   #compare-controls { padding: 0 10px 8px; display: flex; flex-direction: column; gap: 8px; }
   .cmp-pickers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .cmp-pickers label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 3px; }
+  /* Cells must be shrinkable: a nowrap picker label's min-content would
+     otherwise floor each 1fr track at the full text width and push the
+     right-hand control off the phone. */
+  .cmp-pickers > div { min-width: 0; }
   .cmp-pickers select {
     width: 100%; min-height: 40px; padding: 6px 8px; border-radius: var(--radius);
     border: 1px solid var(--border); background: var(--card); color: var(--fg); font-size: 16px;
   }
-  /* The body-part filter spans both patient pickers (cross-patient mode). */
-  .cmp-pickers .wide { grid-column: 1 / -1; }
+  /* Photo pickers are thumbnail buttons, not dropdowns: a small thumb of the
+     current pick plus its label; tapping opens the full-screen thumbnail
+     sheet. The link icon marks a photo in a lesion series. */
+  .cmp-pick {
+    display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px;
+    padding: 5px 8px; border-radius: var(--radius); border: 1px solid var(--border);
+    background: var(--card); color: var(--fg); font-size: 15px; text-align: left;
+  }
+  .cmp-pick:active { opacity: 0.8; }
+  .cmp-pick .cmp-pick-thumb {
+    width: 32px; height: 32px; flex: none; border-radius: 6px;
+    background: #000; object-fit: cover;
+  }
+  .cmp-pick .cmp-pick-label {
+    flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .cmp-pick .cmp-pick-link { width: 14px; height: 14px; flex: none; color: var(--primary); }
+  .cmp-pick > svg.grid-ico { width: 16px; height: 16px; flex: none; color: var(--muted); }
   .cmp-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .cmp-mode { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .cmp-mode button {
@@ -476,6 +496,33 @@ const PAGE_HTML: &str = r##"<!doctype html>
   .cmp-overlay img {
     position: absolute; transition: transform 0.08s linear, opacity 0.1s linear;
   }
+
+  /* Photo picker sheet: full-screen grid of thumbnails for one pane's
+     (filtered) pool. The selected photo carries a ring; a link chip names the
+     lesion series a photo belongs to — the linkage the old dropdowns kept
+     invisible. */
+  #screen-cmppick {
+    position: fixed; inset: 0; z-index: 30;
+    display: flex; flex-direction: column; background: var(--bg);
+  }
+  #screen-cmppick .screen { flex: 1; min-height: 0; padding: 8px 10px calc(20px + env(safe-area-inset-bottom)); }
+  #screen-cmppick .grid { margin-top: 0; }
+  .pick-cell.sel { outline: 2px solid var(--primary); outline-offset: -2px; }
+  .pick-cell .cell-cap {
+    position: absolute; left: 3px; right: 3px; bottom: 3px;
+    padding: 2px 5px; border-radius: 5px; background: rgba(0, 0, 0, 0.55); color: #fafafa;
+    font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; pointer-events: none;
+  }
+  .pick-cell .cell-series {
+    position: absolute; top: 3px; left: 3px; display: flex; align-items: center; gap: 3px;
+    max-width: calc(100% - 6px); padding: 3px 5px; border-radius: 5px;
+    background: rgba(0, 174, 181, 0.85); color: #001011;
+    font-size: 10px; font-weight: 600; line-height: 1; pointer-events: none;
+  }
+  body.light .pick-cell .cell-series { background: rgba(0, 123, 130, 0.92); color: #ffffff; }
+  .pick-cell .cell-series svg { width: 10px; height: 10px; flex: none; }
+  .pick-cell .cell-series span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
     #boot img { animation: none; }
@@ -675,19 +722,40 @@ const PAGE_HTML: &str = r##"<!doctype html>
           <label for="cmp-patient-right">Comparison patient</label>
           <select id="cmp-patient-right" aria-label="Comparison patient"></select>
         </div>
-        <div class="wide">
+      </div>
+      <!-- Linked-series narrowing: body part and lesion series (the
+           "linkage" between a photo and its before/after chain), each
+           dropdown pruned to what the other still allows. Shown in both
+           the dialog and the Compare tab; old manifests without
+           lesionGroup simply offer no series. -->
+      <div id="cmp-filters" class="cmp-pickers">
+        <div>
           <label for="cmp-part">Body part</label>
-          <select id="cmp-part" aria-label="Body part"></select>
+          <select id="cmp-part" aria-label="Filter by body part"></select>
+        </div>
+        <div>
+          <label for="cmp-series">Link series</label>
+          <select id="cmp-series" aria-label="Filter by lesion series"></select>
         </div>
       </div>
       <div class="cmp-pickers">
         <div>
-          <label for="cmp-left" id="cmp-left-label">Earlier / reference</label>
-          <select id="cmp-left" aria-label="Photo to compare, earlier"></select>
+          <label id="cmp-left-label">Earlier / reference</label>
+          <button type="button" id="cmp-left" class="cmp-pick" aria-haspopup="dialog">
+            <img id="cmp-left-thumb" class="cmp-pick-thumb" alt="" src="">
+            <svg id="cmp-left-link" class="cmp-pick-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg>
+            <span id="cmp-left-text" class="cmp-pick-label"></span>
+            <svg class="grid-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/></svg>
+          </button>
         </div>
         <div>
-          <label for="cmp-right" id="cmp-right-label">Later / current</label>
-          <select id="cmp-right" aria-label="Photo to compare, later"></select>
+          <label id="cmp-right-label">Later / current</label>
+          <button type="button" id="cmp-right" class="cmp-pick" aria-haspopup="dialog">
+            <img id="cmp-right-thumb" class="cmp-pick-thumb" alt="" src="">
+            <svg id="cmp-right-link" class="cmp-pick-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg>
+            <span id="cmp-right-text" class="cmp-pick-label"></span>
+            <svg class="grid-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/></svg>
+          </button>
         </div>
       </div>
       <div class="cmp-row">
@@ -725,6 +793,22 @@ const PAGE_HTML: &str = r##"<!doctype html>
     </div>
     <div id="compare-stage">
       <div id="cmp-frame"></div>
+    </div>
+  </div>
+
+  <!-- Photo picker sheet: one pane's filtered pool as thumbnails. A ring
+       marks the current pick; the chip names a photo's lesion series. -->
+  <div id="screen-cmppick" role="dialog" aria-label="Choose a photo to compare" hidden>
+    <div class="surface-top">
+      <button type="button" class="iconbtn" id="pick-back" aria-label="Close photo picker">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+      <span id="pick-title">Choose photo</span>
+      <span class="iconbtn" aria-hidden="true"></span>
+    </div>
+    <div class="screen">
+      <div id="pick-grid" class="grid"></div>
+      <div id="pick-empty" class="empty" hidden>No photos match the filters.</div>
     </div>
   </div>
 
@@ -874,8 +958,10 @@ const PAGE_HTML: &str = r##"<!doctype html>
   var chromeReady = false;
   function updateChrome() {
     // The compare surface counts as chrome-free only in its dialog mode;
-    // as the Compare tab it sits under the tab bar and the bar stays.
-    var surfaced = !viewerOpen() && (!compareOpen() || !!cmp.cross);
+    // as the Compare tab it sits under the tab bar and the bar stays. The
+    // photo picker sheet covers everything — chrome-free like the viewer.
+    var surfaced =
+      !viewerOpen() && !pickSheetOpen() && (!compareOpen() || !!cmp.cross);
     $('tabbar').hidden = !chromeReady || !lib || !surfaced;
     show($('theme'), chromeReady && surfaced);
   }
@@ -923,7 +1009,9 @@ const PAGE_HTML: &str = r##"<!doctype html>
             if (!$('screen-lib').hidden) renderLibrary();
             else if (!$('screen-patient').hidden) renderGrid();
             else if (!$('screen-all').hidden) renderAll();
-            else if (!$('screen-compare').hidden) prepareCompareTab(true);
+            // Either compare mode redraws in place (the dialog keeps its
+            // patient — refreshCompare preserves cmp.cross).
+            else if (!$('screen-compare').hidden) refreshCompare(true);
           })
         : Promise.resolve();
       return job.catch(function () {}).then(function () {
@@ -943,6 +1031,10 @@ const PAGE_HTML: &str = r##"<!doctype html>
     show($('screen-lib'), tab === 'lib' && !state.patientId);
     show($('screen-patient'), tab === 'lib' && !!state.patientId);
     show($('screen-all'), tab === 'all');
+    // A tab switch never keeps the photo picker sheet stacked, and hands the
+    // dialog's stashed tab filters back.
+    if (pickSheetOpen()) hidePickSheet();
+    if (tab !== 'cmp') restoreTabFilters();
     show($('screen-compare'), tab === 'cmp');
     $('tab-cam').setAttribute('aria-selected', tab === 'cam' ? 'true' : 'false');
     $('tab-lib').setAttribute('aria-selected', tab === 'lib' ? 'true' : 'false');
@@ -1998,15 +2090,18 @@ const PAGE_HTML: &str = r##"<!doctype html>
   });
 
   // ---- Compare (mirrors the desktop dialog) --------------------------------
-  // Two pickers (Earlier / reference, Later / current), side-by-side or
-  // overlay mode with an opacity slider, and an anchor toggle: linked (the
-  // default) one pan/zoom moves both photos in lockstep; free, each pane
-  // moves on its own until the anchor is re-engaged. Two entry points: the
-  // patient screen's Compare button (both panes pick from that patient's
-  // photos), and the Compare tab (any two patients in the manifest — the
-  // desktop Compare page).
+  // Thumbnail pickers (Earlier / reference, Later / current) that open a
+  // full-screen photo sheet, side-by-side or overlay mode with an opacity
+  // slider, an anchor toggle: linked (the default) one pan/zoom moves both
+  // photos in lockstep; free, each pane moves on its own until the anchor is
+  // re-engaged. A body-part and a lesion-series ("linkage") filter prune each
+  // other's choices and both pools, so linked before/after chains are easy to
+  // isolate. Two entry points: the patient screen's Compare button (both
+  // panes pick from that patient's photos), and the Compare tab (any two
+  // patients in the manifest — the desktop Compare page).
   function viewerOpen() { return !$('screen-viewer').hidden; }
   function compareOpen() { return !$('screen-compare').hidden; }
+  function pickSheetOpen() { return !$('screen-cmppick').hidden; }
 
   // Per-pane viewport: zoom + pan for the left and right photo. The anchor
   // toggle links them (the default) or lets each move freely.
@@ -2015,12 +2110,13 @@ const PAGE_HTML: &str = r##"<!doctype html>
   var cmp = {
     cross: false,
     leftPool: [], rightPool: [], leftId: null, rightId: null,
-    leftPid: null, rightPid: null, part: 'all',
+    leftPid: null, rightPid: null, part: 'all', series: 'all',
     mode: 'side', opacity: 50,
     anchored: true, active: 'left',
     left: cmpView(), right: cmpView(),
     drag: null, pinch: null,
     poll: null,
+    pick: null,
   };
 
   function fmtDateTime(ms) {
@@ -2031,8 +2127,12 @@ const PAGE_HTML: &str = r##"<!doctype html>
 
   function cmpLabel(entry) {
     return fmtDate(entry.p.capturedAt) + ' \u00b7 ' + entry.p.bodyPartLabel +
-      (entry.p.subpart ? ' \u00b7 ' + entry.p.subpart : '');
+      (entry.p.subpart ? ' \u00b7 ' + entry.p.subpart : '') +
+      (entry.p.lesionGroup ? ' \u00b7 ' + entry.p.lesionGroup : '');
   }
+
+  // A photo's series link, or null (manifests predating lesionGroup agree).
+  function cmpGroup(p) { return p.lesionGroup || null; }
 
   function cmpEntry(id) {
     var found = null;
@@ -2046,87 +2146,119 @@ const PAGE_HTML: &str = r##"<!doctype html>
     $('compare-label').textContent = 'Compare';
   }
 
+  // The pickers are thumbnail buttons; each opens the full-screen sheet for
+  // its side's pool. syncPickerButtons mirrors the current picks (thumb,
+  // label, link icon) into the button chrome.
   function buildPickers() {
-    [['cmp-left', 'left', cmp.leftPool], ['cmp-right', 'right', cmp.rightPool]].forEach(function (pair) {
-      var select = $(pair[0]);
-      select.innerHTML = '';
-      pair[2].forEach(function (e) {
-        var opt = document.createElement('option');
-        opt.value = String(e.i);
-        opt.textContent = cmpLabel(e);
-        select.appendChild(opt);
+    $('cmp-left').onclick = function () { openPickSheet('left'); };
+    $('cmp-right').onclick = function () { openPickSheet('right'); };
+    syncPickerButtons();
+  }
+
+  function syncPickerButtons() {
+    [['left', cmp.leftPool, cmp.leftId], ['right', cmp.rightPool, cmp.rightId]]
+      .forEach(function (t) {
+        var entry = null;
+        t[1].forEach(function (e) { if (e.i === t[2]) entry = e; });
+        var thumb = $('cmp-' + t[0] + '-thumb');
+        var text = $('cmp-' + t[0] + '-text');
+        var link = $('cmp-' + t[0] + '-link');
+        if (entry) {
+          thumb.src = 'img/' + entry.p.id + '.thumb.jpg';
+          text.textContent = cmpLabel(entry);
+          show(link, !!cmpGroup(entry.p));
+        } else {
+          thumb.removeAttribute('src');
+          text.textContent = 'No photo';
+          show(link, false);
+        }
       });
-      select.onchange = function () {
-        cmp[pair[1] + 'Id'] = Number(select.value);
-        // A new photo resets the viewport to default, like the desktop.
-        cmp.left = cmpView();
-        cmp.right = cmpView();
-        cmp.active = 'left';
-        renderCompare();
-      };
-    });
+  }
+
+  // The Compare tab's part/series filters, stashed while the per-patient
+  // dialog runs (the dialog resets both for its own patient).
+  var cmpTabFilters = null;
+  function restoreTabFilters() {
+    if (cmpTabFilters) {
+      cmp.part = cmpTabFilters.part;
+      cmp.series = cmpTabFilters.series;
+      cmpTabFilters = null;
+    }
   }
 
   function openCompare() {
     var photos = photosFor(state.patientId);
     if (photos.length < 2) return;
     cmp.cross = false;
-    cmp.leftPool = photos;
-    cmp.rightPool = photos;
-    // Desktop default: newest first; left = the newest, right = the next.
-    var sorted = photos.slice().sort(function (a, b) {
-      return b.p.capturedAt - a.p.capturedAt;
-    });
-    cmp.leftId = sorted[0].i;
-    cmp.rightId = sorted[1].i;
-    cmp.mode = 'side';
-    cmp.opacity = 50;
-    cmp.anchored = true;
-    cmp.active = 'left';
-    cmp.left = cmpView();
-    cmp.right = cmpView();
-    syncCompareChrome();
-    buildPickers();
-    syncAnchorButton();
-    renderCompare();
+    // The dialog's filters are its own: stash the tab's picks and start the
+    // patient's comparison unfiltered (restored when the dialog closes).
+    cmpTabFilters = { part: cmp.part, series: cmp.series };
+    cmp.part = 'all';
+    cmp.series = 'all';
+    refreshCompare(false);
     show($('screen-compare'), true);
     updateChrome();
     history.pushState({ view: 'compare' }, '');
   }
 
-  // ---- Compare tab (desktop Compare-page parity) ---------------------------
-  // The same surface driven across patients: any two patients the manifest
-  // carries (it is access-filtered on the desktop, so only patients this
-  // clinician can see are ever offered), optionally narrowed to one body
-  // part. The same patient on both sides is the before/after workflow.
+  // ---- Filters + pools (shared by the dialog and the Compare tab) ---------
+  // The same surface driven across patients or within one: body part and
+  // lesion series prune each other's choices and both pools. The manifest is
+  // access-filtered on the desktop, so only patients this clinician can see
+  // are ever offered; the same patient on both sides is the before/after
+  // workflow.
   function poolHas(pool, id) {
     var ok = false;
     pool.forEach(function (e) { if (e.i === id) ok = true; });
     return ok;
   }
 
-  // Body-part filter choices: the distinct labels across both patients'
-  // full pools (labels already carry laterality, e.g. "Left Hand").
+  // Which patients feed the filter choices: both picks in cross mode, the
+  // open patient in the dialog.
+  function cmpSourcePhotos() {
+    var pids = cmp.cross ? [cmp.leftPid, cmp.rightPid] : [state.patientId];
+    var out = [];
+    pids.forEach(function (pid) { out = out.concat(photosFor(pid)); });
+    return out;
+  }
+
+  // Body-part filter choices: the distinct labels (labels already carry
+  // laterality, e.g. "Left Hand") across the photos the series filter still
+  // allows.
   function cmpPartOptions() {
     var seen = {};
     var parts = [];
-    [cmp.leftPid, cmp.rightPid].forEach(function (pid) {
-      photosFor(pid).forEach(function (e) {
-        if (!seen[e.p.bodyPartLabel]) {
-          seen[e.p.bodyPartLabel] = true;
-          parts.push(e.p.bodyPartLabel);
-        }
-      });
+    cmpSourcePhotos().forEach(function (e) {
+      if (cmp.series !== 'all' && cmpGroup(e.p) !== cmp.series) return;
+      if (!seen[e.p.bodyPartLabel]) {
+        seen[e.p.bodyPartLabel] = true;
+        parts.push(e.p.bodyPartLabel);
+      }
     });
     return parts.sort();
   }
 
+  // Lesion-series choices: the distinct groups under the current part filter.
+  function cmpSeriesOptions() {
+    var seen = {};
+    var groups = [];
+    cmpSourcePhotos().forEach(function (e) {
+      if (cmp.part !== 'all' && e.p.bodyPartLabel !== cmp.part) return;
+      var g = cmpGroup(e.p);
+      if (g && !seen[g]) {
+        seen[g] = true;
+        groups.push(g);
+      }
+    });
+    return groups.sort();
+  }
+
   function cmpPool(pid) {
-    var pool = photosFor(pid);
-    if (cmp.part !== 'all') {
-      pool = pool.filter(function (e) { return e.p.bodyPartLabel === cmp.part; });
-    }
-    return pool;
+    return photosFor(pid).filter(function (e) {
+      if (cmp.part !== 'all' && e.p.bodyPartLabel !== cmp.part) return false;
+      if (cmp.series !== 'all' && cmpGroup(e.p) !== cmp.series) return false;
+      return true;
+    });
   }
 
   function buildPatientPickers() {
@@ -2143,7 +2275,8 @@ const PAGE_HTML: &str = r##"<!doctype html>
         select.onchange = function () {
           cmp[pair[1]] = select.value;
           cmp.part = 'all';
-          prepareCompareTab(false);
+          cmp.series = 'all';
+          refreshCompare(false);
         };
         select.value = cmp[pair[1]] || '';
       });
@@ -2164,9 +2297,37 @@ const PAGE_HTML: &str = r##"<!doctype html>
     });
     select.onchange = function () {
       cmp.part = select.value;
-      prepareCompareTab(false);
+      // The series choices prune to the new part; keep the pick only while
+      // it still resolves.
+      if (cmp.series !== 'all' && cmpSeriesOptions().indexOf(cmp.series) === -1) {
+        cmp.series = 'all';
+      }
+      refreshCompare(false);
     };
     select.value = cmp.part;
+  }
+
+  function buildSeriesPicker() {
+    var select = $('cmp-series');
+    select.innerHTML = '';
+    var all = document.createElement('option');
+    all.value = 'all';
+    all.textContent = 'All series';
+    select.appendChild(all);
+    cmpSeriesOptions().forEach(function (label) {
+      var opt = document.createElement('option');
+      opt.value = label;
+      opt.textContent = label;
+      select.appendChild(opt);
+    });
+    select.onchange = function () {
+      cmp.series = select.value;
+      if (cmp.part !== 'all' && cmpPartOptions().indexOf(cmp.part) === -1) {
+        cmp.part = 'all';
+      }
+      refreshCompare(false);
+    };
+    select.value = cmp.series;
   }
 
   function syncCompareChrome() {
@@ -2182,36 +2343,41 @@ const PAGE_HTML: &str = r##"<!doctype html>
     }
   }
 
-  // (Re)builds the cross-patient comparison from the current manifest.
-  // Patient, part and photo picks survive tab switches and manifest updates
-  // while they still resolve; changing a patient or the body part re-seeds
-  // both panes (keepPicks false), like the desktop page re-defaulting when
-  // its pools change. Defaults: the first patient with photos, then the
-  // next different one (a one-patient library degrades to before/after),
-  // panes seeded with the newest of each pool, the right side stepping
-  // aside from the left's photo so they never open identical. Mode, anchor
-  // and viewport reset on every prepare — arriving at the tab is a fresh
-  // comparison, the same deal as opening the dialog.
-  function prepareCompareTab(keepPicks) {
+  // (Re)builds the comparison from the current manifest. Patient, part,
+  // series and photo picks survive tab switches and manifest updates while
+  // they still resolve; changing a patient or a filter re-seeds both panes
+  // (keepPicks false), like the desktop re-defaulting when its pools change.
+  // Defaults: the first patient with photos, then the next different one (a
+  // one-patient library degrades to before/after), panes seeded with the
+  // newest of each pool, the right side stepping aside from the left's photo
+  // so they never open identical. Mode, anchor and viewport reset on every
+  // refresh — arriving at the tab is a fresh comparison, the same deal as
+  // opening the dialog.
+  function refreshCompare(keepPicks) {
     if (!lib) return;
-    cmp.cross = true;
     if (!keepPicks) { cmp.leftId = null; cmp.rightId = null; }
-    var known = {};
-    lib.patients.forEach(function (p) { known[p.id] = true; });
-    var withPhotos = lib.patients.filter(function (p) { return p.photoCount > 0; });
-    if (!(cmp.leftPid && known[cmp.leftPid])) {
-      cmp.leftPid = withPhotos[0] ? withPhotos[0].id : null;
-      cmp.rightPid = null;
-      cmp.part = 'all';
+    if (cmp.cross) {
+      var known = {};
+      lib.patients.forEach(function (p) { known[p.id] = true; });
+      var withPhotos = lib.patients.filter(function (p) { return p.photoCount > 0; });
+      if (!(cmp.leftPid && known[cmp.leftPid])) {
+        cmp.leftPid = withPhotos[0] ? withPhotos[0].id : null;
+        cmp.rightPid = null;
+        cmp.part = 'all';
+        cmp.series = 'all';
+      }
+      if (!(cmp.rightPid && known[cmp.rightPid])) {
+        var others = withPhotos.filter(function (p) { return p.id !== cmp.leftPid; });
+        cmp.rightPid = others[0] ? others[0].id : cmp.leftPid;
+      }
     }
-    if (!(cmp.rightPid && known[cmp.rightPid])) {
-      var others = withPhotos.filter(function (p) { return p.id !== cmp.leftPid; });
-      cmp.rightPid = others[0] ? others[0].id : cmp.leftPid;
-    }
-    var parts = cmpPartOptions();
-    if (cmp.part !== 'all' && parts.indexOf(cmp.part) === -1) cmp.part = 'all';
-    cmp.leftPool = cmpPool(cmp.leftPid);
-    cmp.rightPool = cmpPool(cmp.rightPid);
+    if (cmp.part !== 'all' && cmpPartOptions().indexOf(cmp.part) === -1) cmp.part = 'all';
+    if (cmp.series !== 'all' && cmpSeriesOptions().indexOf(cmp.series) === -1) cmp.series = 'all';
+    // Pools: the tab's two patients, or the open patient in the dialog (the
+    // dialog never touches the tab's patient picks, so a dialog session
+    // can't leak its patient into the next tab visit).
+    cmp.leftPool = cmpPool(cmp.cross ? cmp.leftPid : state.patientId);
+    cmp.rightPool = cmpPool(cmp.cross ? cmp.rightPid : state.patientId);
     if (!poolHas(cmp.leftPool, cmp.leftId)) {
       cmp.leftId = cmp.leftPool[0] ? cmp.leftPool[0].i : null;
     }
@@ -2229,14 +2395,19 @@ const PAGE_HTML: &str = r##"<!doctype html>
     cmp.left = cmpView();
     cmp.right = cmpView();
     syncCompareChrome();
-    buildPatientPickers();
+    if (cmp.cross) buildPatientPickers();
     buildPartPicker();
+    buildSeriesPicker();
     buildPickers();
     syncAnchorButton();
     renderCompare();
-    // cross flipped after setTab's own chrome pass; re-assert so the tab
-    // bar (kept visible in this mode) is composited for the screen.
+    if (pickSheetOpen()) renderPickSheet();
     updateChrome();
+  }
+
+  function prepareCompareTab(keepPicks) {
+    cmp.cross = true;
+    refreshCompare(keepPicks);
   }
 
   // Cross-patient panes must say whose photo they show; the dialog's panes
@@ -2263,8 +2434,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }
 
   function renderCompare() {
-    $('cmp-left').value = String(cmp.leftId);
-    $('cmp-right').value = String(cmp.rightId);
+    syncPickerButtons();
     $('mode-side').setAttribute('aria-pressed', cmp.mode === 'side' ? 'true' : 'false');
     $('mode-overlay').setAttribute('aria-pressed', cmp.mode === 'overlay' ? 'true' : 'false');
     show($('cmp-opacity-row'), cmp.mode === 'overlay');
@@ -2382,6 +2552,86 @@ const PAGE_HTML: &str = r##"<!doctype html>
   $('compare-btn').addEventListener('click', function () { openCompare(); });
   $('compare-back').addEventListener('click', function () { history.back(); });
 
+  // ---- Photo picker sheet --------------------------------------------------
+  // One pane's (filtered) pool as a thumbnail grid; the link chip names the
+  // lesion series each photo belongs to, the ring marks the current pick.
+  // Riding history like the viewer: back closes the sheet, not the compare.
+  var LINK_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/>' +
+    '<line x1="8" x2="16" y1="12" y2="12"/></svg>';
+
+  function renderPickSheet() {
+    var side = cmp.pick === 'right' ? 'right' : 'left';
+    var pool = side === 'right' ? cmp.rightPool : cmp.leftPool;
+    var selId = side === 'right' ? cmp.rightId : cmp.leftId;
+    var grid = $('pick-grid');
+    grid.innerHTML = '';
+    show($('pick-empty'), pool.length === 0);
+    pool.forEach(function (e) {
+      var cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'pick-cell' + (e.i === selId ? ' sel' : '');
+      cell.setAttribute('aria-pressed', e.i === selId ? 'true' : 'false');
+      cell.setAttribute('aria-label', cmpLabel(e));
+      var img = document.createElement('img');
+      img.src = 'img/' + e.p.id + '.thumb.jpg';
+      img.alt = '';
+      cell.appendChild(img);
+      if (cmpGroup(e.p)) {
+        var chip = document.createElement('span');
+        chip.className = 'cell-series';
+        chip.innerHTML = LINK_SVG;
+        var name = document.createElement('span');
+        name.textContent = cmpGroup(e.p);
+        chip.appendChild(name);
+        cell.appendChild(chip);
+      }
+      var cap = document.createElement('span');
+      cap.className = 'cell-cap';
+      cap.textContent = fmtDate(e.p.capturedAt) + ' \u00b7 ' + e.p.bodyPartLabel;
+      cell.appendChild(cap);
+      cell.addEventListener('click', (function (entry, which) {
+        return function () {
+          cmp[which + 'Id'] = entry.i;
+          // A new photo resets the viewport to default, like the desktop.
+          cmp.left = cmpView();
+          cmp.right = cmpView();
+          cmp.active = 'left';
+          dismissPickSheet();
+          renderCompare();
+        };
+      })(e, side));
+      grid.appendChild(cell);
+    });
+  }
+
+  function openPickSheet(side) {
+    cmp.pick = side;
+    $('pick-title').textContent =
+      (side === 'left' ? $('cmp-left-label').textContent : $('cmp-right-label').textContent);
+    renderPickSheet();
+    show($('screen-cmppick'), true);
+    updateChrome();
+    history.pushState({ view: 'cmppick' }, '');
+  }
+
+  // Hide the sheet outright (popstate already moved back), or via history if
+  // it is still stacked (the close button).
+  function hidePickSheet() {
+    show($('screen-cmppick'), false);
+    cmp.pick = null;
+    updateChrome();
+  }
+
+  function dismissPickSheet() {
+    if (pickSheetOpen()) history.back();
+    else hidePickSheet();
+  }
+
+  $('pick-back').addEventListener('click', function () { history.back(); });
+
   // Pan (one finger) and pinch zoom (two fingers) on the compare frame.
   // Anchored (the default) every image moves together, like the desktop's
   // shared viewport; with the anchor off only the touched pane moves.
@@ -2437,6 +2687,8 @@ const PAGE_HTML: &str = r##"<!doctype html>
   })();
 
   function closeCompare() {
+    restoreTabFilters();
+    hidePickSheet();
     show($('screen-compare'), false);
     updateChrome();
   }
@@ -2547,9 +2799,11 @@ const PAGE_HTML: &str = r##"<!doctype html>
     if (ev.key === 'Escape') history.back();
   });
 
-  // Hardware/gesture back walks viewer -> compare -> patient -> library.
+  // Hardware/gesture back walks pick sheet -> viewer -> compare -> patient -> library.
   addEventListener('popstate', function () {
-    if (viewerOpen()) {
+    if (pickSheetOpen()) {
+      hidePickSheet();
+    } else if (viewerOpen()) {
       closeViewer();
     } else if (compareOpen()) {
       closeCompare();

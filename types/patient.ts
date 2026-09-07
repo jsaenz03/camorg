@@ -6,6 +6,8 @@
  *   They are the only non-admin who can manage it unless sharing is enabled.
  * - `isOrgShared`: when true, every clinician in the org can view this patient.
  *   Mutually exclusive with per-doctor grants in practice (admin picks a mode).
+ * - `sharedDoctorCount`: per-doctor grants excluding the owner, counted at read
+ *   time so the access panel can badge "Shared" apart from "Private".
  * - `ownerName`: denormalised display name of the owner, populated at read time
  *   for UI badges. May be null on legacy rows or if the owner was deleted.
  */
@@ -33,6 +35,7 @@ export interface Patient {
   // Access control (migration 003)
   ownerClinicianId: string | null; // Owning doctor (NULL only on unmigrated legacy rows)
   isOrgShared: boolean; // Visible to every clinician in the org
+  sharedDoctorCount: number; // Grants to clinicians other than the owner (counted at read time)
   ownerName: string | null; // Display name of the owner (joined at read time)
 
   // Photo consent (migration 007). Status is derived, never stored.

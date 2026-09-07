@@ -1,6 +1,7 @@
 /**
  * Self-check for the comparison engine's pure logic (lib/photo-compare.ts):
- * the seed picks for the two panes, and the anchored/free transform math.
+ * the seed picks for the two panes, the anchored/free transform math, and
+ * the part/lesion-series cascade filters (each dropdown pruned by the other).
  *
  * Run: node scripts/self-check-compare.mjs
  *
@@ -11,10 +12,14 @@ import assert from 'node:assert/strict';
 import {
   applyPan,
   applyZoom,
+  comparePartOptions,
+  compareSeriesOptions,
   defaultComparePicks,
   DEFAULT_COMPARE_TRANSFORM,
+  filterComparePool,
   MAX_COMPARE_ZOOM,
   panTransform,
+  resolveCompareFilters,
   zoomTransform,
 } from '../lib/photo-compare.ts';
 
@@ -98,5 +103,50 @@ assert.deepEqual(zoomTransform(tf(3, 1, 2), 2), tf(6, 1, 2));
 
 // Default viewport is fit-and-centred on both panes.
 assert.deepEqual(DEFAULT_COMPARE_TRANSFORM, { zoom: 1, offset: { x: 0, y: 0 } });
+
+// ---------------------------------------------------------------------------
+// Part / series cascade filters
+// ---------------------------------------------------------------------------
+// A pool mixing linked chains and loose photos, as the photo service returns.
+const ph = (id, bodyPart, lesionGroup, capturedAt) => ({ id, bodyPart, lesionGroup, capturedAt });
+const pool = [
+  ph('a1', 'face', 'Face mole', '2026-09-01'),
+  ph('a2', 'face', 'Face mole', '2026-08-01'),
+  ph('a3', 'face', null, '2026-07-01'),          // loose face photo
+  ph('a4', 'hand', 'Palm chain', '2026-06-01'),
+  ph('a5', 'hand', null, '2026-05-01'),
+];
+
+// With no series chosen, every part with photos is offered.
+assert.deepEqual(comparePartOptions(pool, 'all').sort(), ['face', 'hand']);
+
+// Picking a series prunes the part choices to the parts that series covers.
+assert.deepEqual(comparePartOptions(pool, 'Face mole'), ['face']);
+assert.deepEqual(comparePartOptions(pool, 'Palm chain'), ['hand']);
+
+// Series choices: only linked photos contribute, pruned by the part filter.
+assert.deepEqual(compareSeriesOptions(pool, 'all'), ['Face mole', 'Palm chain']);
+assert.deepEqual(compareSeriesOptions(pool, 'face'), ['Face mole']);
+assert.deepEqual(compareSeriesOptions(pool, 'hand'), ['Palm chain']);
+assert.deepEqual(compareSeriesOptions([ph('x', 'face', null, '2026-01-01')], 'all'), []);
+
+// The pool filter applies both at once; 'all' never excludes anything.
+assert.deepEqual(
+  filterComparePool(pool, 'face', 'Face mole').map((p) => p.id),
+  ['a1', 'a2'],
+);
+assert.deepEqual(
+  filterComparePool(pool, 'all', 'all').map((p) => p.id),
+  ['a1', 'a2', 'a3', 'a4', 'a5'],
+);
+assert.deepEqual(filterComparePool(pool, 'hand', 'Face mole'), []);
+assert.deepEqual(filterComparePool(pool, 'face', 'all').map((p) => p.id), ['a1', 'a2', 'a3']);
+
+// Filter resolution: filters the pool can't support relax to 'all'; ones it
+// can support survive (a patient switch keeps a still-valid part choice).
+assert.deepEqual(resolveCompareFilters(pool, 'face', 'Face mole'), { part: 'face', series: 'Face mole' });
+assert.deepEqual(resolveCompareFilters(pool, 'chest', 'Face mole'), { part: 'all', series: 'Face mole' });
+assert.deepEqual(resolveCompareFilters(pool, 'face', 'Gone series'), { part: 'face', series: 'all' });
+assert.deepEqual(resolveCompareFilters([], 'face', 'Face mole'), { part: 'all', series: 'all' });
 
 console.log('compare engine self-check passed');

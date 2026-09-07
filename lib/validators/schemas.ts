@@ -37,6 +37,8 @@ export const photoRecordCreateSchema = z.object({
   pinY: z.number().min(0).max(1).optional().nullable(),
   pinSpace: z.enum(['body', 'part']).optional().nullable(),
   pinView: z.enum(['front', 'back']).optional().nullable(),
+  // Source file name for imports (dedupe key + provenance); captures omit it.
+  originalFileName: z.string().max(255, 'File name must be 255 characters or less').optional(),
   capturedAt: z.date().refine((d) => d.getTime() <= Date.now(), 'Capture date cannot be in the future'),
 });
 

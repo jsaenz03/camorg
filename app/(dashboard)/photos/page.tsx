@@ -9,7 +9,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Images, FilterX, Camera } from 'lucide-react';
+import { Images, FilterX, Camera, Upload } from 'lucide-react';
 import { useAllPhotos } from '@/lib/hooks/use-all-photos';
 import { usePatients } from '@/lib/hooks/use-patients';
 import { useAuth } from '@/lib/auth/auth-context';
@@ -22,6 +22,7 @@ import { PageHeader } from '@/components/page-header';
 import { EmptyState } from '@/components/empty-state';
 import { PhotoBento } from '@/components/photo/photo-bento';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
+import { ImportPhotosDialog } from '@/components/photo/import-photos-dialog';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Calendar } from '@/components/ui/calendar';
@@ -44,6 +45,7 @@ export default function PhotosPage() {
 
   const [activePhoto, setActivePhoto] = useState<PhotoRecord | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Filters run server-side (SQL) with the access scope, so the grid shows
   // the true filtered set instead of a client-side subset of the newest 500.
@@ -104,10 +106,16 @@ export default function PhotosPage() {
         title="Photos"
         description="Browse every capture across all patients."
         actions={
-          <Button onClick={() => openCapture()}>
-            <Camera className="size-4" />
-            Capture
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="size-4" />
+              Import
+            </Button>
+            <Button onClick={() => openCapture()}>
+              <Camera className="size-4" />
+              Capture
+            </Button>
+          </div>
         }
       />
 
@@ -258,10 +266,16 @@ export default function PhotosPage() {
                     Clear filters
                   </Button>
                 ) : (
-                  <Button onClick={() => openCapture()}>
-                    <Camera className="size-4" />
-                    Capture photo
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setImportOpen(true)}>
+                      <Upload className="size-4" />
+                      Import photos
+                    </Button>
+                    <Button onClick={() => openCapture()}>
+                      <Camera className="size-4" />
+                      Capture photo
+                    </Button>
+                  </div>
                 )
               }
             />
@@ -288,6 +302,8 @@ export default function PhotosPage() {
         onOpenPhoto={handlePhotoClick}
         onSnapReviewPhoto={handleSnapReviewPhoto}
       />
+
+      <ImportPhotosDialog open={importOpen} onOpenChange={setImportOpen} onImported={refresh} />
     </div>
   );
 }

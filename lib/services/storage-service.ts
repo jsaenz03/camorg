@@ -14,7 +14,7 @@
  */
 
 import { appDataDir, join } from '@tauri-apps/api/path';
-import { readDir, copyFile, mkdir, exists } from '@tauri-apps/plugin-fs';
+import { readDir, copyFile, mkdir, exists, stat, remove } from '@tauri-apps/plugin-fs';
 
 import {
   getDB,
@@ -26,6 +26,7 @@ import {
 import { accessService } from '@/lib/services/access-service';
 import { auditService } from '@/lib/services/audit-service';
 import { photosDirSchema } from '@/lib/validators/schemas';
+import { canDeleteSourceFile } from '@/lib/storage/photo-file-name';
 import {
   PermissionDeniedError,
   StorageUnavailableError,
@@ -46,6 +47,24 @@ export interface ChangePhotosDirResult {
   moved: number;
   /** The newly active photos directory. */
   activeDir: string;
+  /** The directory files were copied FROM, when a copy happened. */
+  sourceDir: string | null;
+  /** Names of the files copied out of sourceDir (empty when none). */
+  sourceFiles: string[];
+}
+
+/** Outcome of deleting copied files from the old storage folder. */
+export interface DeleteSourceFilesResult {
+  /** Files permanently removed from the old folder. */
+  deleted: number;
+  /** Files left in place (copy unverified at the new location, or not
+   *  Camog-named) — reported so nothing silently remains. */
+  skipped: number;
+  /** Files that errored or timed out (evicted cloud files, offline drives) —
+   *  kept untouched, deletable by hand later. */
+  failed: number;
+  /** True when the caller cancelled before the batch finished. */
+  cancelled: boolean;
 }
 
 export interface ChangePhotosDirOptions {
@@ -55,6 +74,38 @@ export interface ChangePhotosDirOptions {
    * the unavailable folder and reappear if storage is pointed back at it.
    */
   allowMissingSource?: boolean;
+  /** Called after each file copy (1-based done count, total files). */
+  onProgress?: (copied: number, total: number) => void;
+}
+
+export interface DeleteSourceFilesOptions {
+  /** Called after each file is handled (deleted, skipped, or failed). */
+  onProgress?: (done: number, total: number) => void;
+  /** Checked before each file — returning true stops the batch cleanly. */
+  isCancelled?: () => boolean;
+}
+
+/**
+ * Bound one filesystem IPC call so a wedged file (offline drive, cloud
+ * eviction) can never freeze the whole operation on a pending promise.
+ */
+function timely<T>(fn: () => Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} did not respond within ${Math.round(ms / 1000)}s`)),
+      ms,
+    );
+    fn().then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 export class StorageService {
@@ -99,6 +150,7 @@ export class StorageService {
     this.changing = true;
     try {
       let moved = 0;
+      const sourceFiles: string[] = [];
 
       // ponytail: plain string compare — same volume/case quirks on Windows
       // may miss aliases; worst case we copy files onto themselves harmlessly.
@@ -116,9 +168,13 @@ export class StorageService {
         if (sourceAvailable) {
           const entries = await readDir(oldDir);
           const files = entries.filter((e) => e.isFile);
+          let copied = 0;
           for (const file of files) {
             await copyFile(await join(oldDir, file.name), await join(targetDir, file.name));
+            copied++;
             moved++;
+            sourceFiles.push(file.name);
+            opts?.onProgress?.(copied, files.length);
           }
         }
       }
@@ -138,10 +194,108 @@ export class StorageService {
         } (${moved} ${moved === 1 ? 'file' : 'files'} copied)`,
       });
 
-      return { moved, activeDir: targetDir };
+      return {
+        moved,
+        activeDir: targetDir,
+        sourceDir: sourceFiles.length > 0 ? oldDir : null,
+        sourceFiles,
+      };
     } finally {
       this.changing = false;
     }
+  }
+
+  /**
+   * Permanently delete copied photo files from a previous storage folder —
+   * the optional cleanup after a successful changePhotosDir. Defensive by
+   * design: only Camog-named files whose copy exists at the active directory
+   * with a matching size are removed; everything else is skipped and
+   * counted. The folder itself is never deleted (it may be a folder the
+   * user owns), and the live storage directory can never be the target.
+   */
+  async deleteSourceFiles(
+    oldDir: string,
+    fileNames: string[],
+    activeDir: string,
+    opts?: DeleteSourceFilesOptions,
+  ): Promise<DeleteSourceFilesResult> {
+    const admin = await accessService.isAdmin().catch(() => false);
+    if (!admin) {
+      throw new PermissionDeniedError('Only admins can clean up the old photo folder');
+    }
+    if (fileNames.length === 0) {
+      return { deleted: 0, skipped: 0, failed: 0, cancelled: false };
+    }
+    // Never delete from the directory photos resolve against now.
+    // ponytail: plain string compare (same ceiling as changePhotosDir's
+    // oldDir/targetDir check) — a path alias to the same physical dir evades
+    // it; both values are service-canonical, so the shipped UI can't hit that.
+    const currentDir = await getPhotosDir();
+    if (oldDir === currentDir || oldDir === activeDir) {
+      throw new ValidationError('Refusing to delete files in the active photo folder');
+    }
+    if (!(await exists(oldDir))) {
+      throw new StorageUnavailableError(oldDir);
+    }
+    // The old folder's scope was granted while it was active this session;
+    // re-grant in case cleanup runs later (Rust re-validates the path).
+    await grantDirAccess(oldDir);
+
+    // Per-file timeouts (not one batch timeout): a single wedged file —
+    // offline drive, cloud-evicted — costs its own skip, not the whole
+    // operation. The stat path joins are IPC too, so they ride inside.
+    const STAT_TIMEOUT_MS = 15_000;
+    const REMOVE_TIMEOUT_MS = 30_000;
+
+    let deleted = 0;
+    let skipped = 0;
+    let failed = 0;
+    let cancelled = false;
+    let done = 0;
+    for (const name of fileNames) {
+      if (opts?.isCancelled?.()) {
+        cancelled = true;
+        break;
+      }
+      try {
+        // A missing copy at the new location is an expected skip, not an
+        // error — only source-side failures count as failed.
+        const sourceStat = await timely(
+          async () => stat(await join(oldDir, name)),
+          STAT_TIMEOUT_MS,
+          'Reading the old file',
+        );
+        const targetStat = await timely(
+          async () => stat(await join(activeDir, name)).catch(() => null),
+          STAT_TIMEOUT_MS,
+          'Reading the copied file',
+        );
+        if (sourceStat && canDeleteSourceFile(name, sourceStat.size, targetStat?.size ?? null)) {
+          await timely(
+            async () => remove(await join(oldDir, name)),
+            REMOVE_TIMEOUT_MS,
+            'Deleting the old file',
+          );
+          deleted++;
+        } else {
+          skipped++;
+        }
+      } catch {
+        failed++;
+      }
+      done++;
+      opts?.onProgress?.(done, fileNames.length);
+    }
+
+    void auditService.record('storage.source_cleanup', {
+      detail: `deleted ${deleted} of ${fileNames.length} copied file${
+        fileNames.length === 1 ? '' : 's'
+      } from ${oldDir}${
+        skipped > 0 ? ` (${skipped} skipped — copy unverified)` : ''
+      }${failed > 0 ? ` (${failed} failed)` : ''}${cancelled ? ' (cancelled)' : ''}`,
+    });
+
+    return { deleted, skipped, failed, cancelled };
   }
 }
 

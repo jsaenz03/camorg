@@ -105,6 +105,9 @@ export interface CompanionPhoto {
   laterality: 'left' | 'right' | null;  // Patient's own side, for the body diagram
   subpart: string | null;
   notes: string | null;            // clinicalNotes
+  lesionGroup: string | null;      // Lesion series name; photos sharing it on
+                                   // the same patient are a linked series (the
+                                   // phone's compare filters and link badges)
   capturedAt: number;              // Unix ms
   review: 'none' | 'scheduled' | 'due-soon' | 'overdue' | 'stale';
   reviewDueAt: number | null;      // Unix ms of the scheduled review

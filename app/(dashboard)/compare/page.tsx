@@ -3,17 +3,17 @@
 /**
  * Compare page
  *
- * Cross-patient lesion comparison. Pick a reference patient, a comparison
- * patient (the same patient twice gives the before/after workflow) and a
- * body part, then choose which captures fill each pane. Static-export
+ * Cross-patient lesion comparison. Pick a reference patient and a
+ * comparison patient (the same patient twice gives the before/after
+ * workflow), then choose which captures fill each pane — part and
+ * lesion-series filters live inside the shared compare view. Static-export
  * friendly: /compare?patient=<id>&part=<bodyPart> preselects the pickers.
  */
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Columns2, Users } from 'lucide-react';
-import { BODY_PARTS, BodyPartLabels } from '@/types/body-part';
-import type { BodyPart } from '@/types/body-part';
+import { BODY_PARTS, type BodyPart } from '@/types/body-part';
 import { PageHeader } from '@/components/page-header';
 import { EmptyState } from '@/components/empty-state';
 import { PhotoCompareView } from '@/components/photo/photo-compare-view';
@@ -35,7 +35,8 @@ function CompareView() {
 
   const [patientAId, setPatientAId] = useState<string | null>(null);
   const [patientBId, setPatientBId] = useState<string | null>(null);
-  const [part, setPart] = useState<BodyPart | 'all'>(() => {
+  // Deep-link seed for the view's part filter (?part=<bodyPart>).
+  const [initialPart] = useState<BodyPart | 'all'>(() => {
     const requested = searchParams.get('part');
     return requested && (BODY_PARTS as string[]).includes(requested)
       ? (requested as BodyPart)
@@ -70,9 +71,10 @@ function CompareView() {
   const patientA = patients.find((p) => p.id === patientAId) ?? null;
   const patientB = patients.find((p) => p.id === patientBId) ?? null;
 
-  const partFilter = part === 'all' ? undefined : part;
-  const left = usePhotos({ patientId: patientAId ?? undefined, bodyPart: partFilter });
-  const right = usePhotos({ patientId: patientBId ?? undefined, bodyPart: partFilter });
+  // The shared view owns the part/series filters (they prune its own pools),
+  // so the page fetches each patient's full photo set.
+  const left = usePhotos({ patientId: patientAId ?? undefined });
+  const right = usePhotos({ patientId: patientBId ?? undefined });
 
   const patientPicker = (
     label: string,
@@ -121,25 +123,9 @@ function CompareView() {
         />
       ) : (
         <>
-          <div className="mb-4 grid gap-3 sm:grid-cols-3">
+          <div className="mb-4 grid gap-3 sm:grid-cols-2">
             {patientPicker('Reference patient', patientAId, setPatientAId, 'Reference patient')}
             {patientPicker('Comparison patient', patientBId, setPatientBId, 'Comparison patient')}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Body part</Label>
-              <Select value={part} onValueChange={(v) => setPart(v as BodyPart | 'all')}>
-                <SelectTrigger aria-label="Body part">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All body parts</SelectItem>
-                  {BODY_PARTS.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {BodyPartLabels[p]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
 
           <div className="flex h-[64dvh] min-h-[420px] flex-col">
@@ -154,6 +140,7 @@ function CompareView() {
                 rightPool={right.photos}
                 leftLabel={`Reference — ${patientA?.name ?? ''}`}
                 rightLabel={`Comparison — ${patientB?.name ?? ''}`}
+                initialPart={initialPart}
               />
             )}
           </div>

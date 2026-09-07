@@ -74,6 +74,9 @@ class CompanionService {
         laterality: BILATERAL_BODY_PARTS.has(ph.bodyPart as BodyPart) ? ph.laterality : null,
         subpart: ph.subpart,
         notes: ph.clinicalNotes,
+        // Lesion series link (the phone's compare surface filters and badges
+        // linked photos with it).
+        lesionGroup: ph.lesionGroup,
         capturedAt: ph.capturedAt.getTime(),
         // Review state drives the phone's review banners and its per-photo
         // Mark reviewed button (same computation the desktop UI shows).

@@ -15,6 +15,88 @@ export function defaultComparePicks(
   return { leftId, rightId: rightPool.find((p) => p.id !== leftId)?.id ?? null };
 }
 
+/**
+ * Lesion-series filtering for the compare surfaces. A "linkage" is a lesion
+ * series (lesionGroup): photos sharing one on the same patient are a linked
+ * before/after chain. The two filters cascade — picking a series leaves only
+ * the body parts that series covers, picking a part leaves only the series
+ * under that part — so the pools and the dropdown choices prune together.
+ *
+ * Kept import-free (structural photos) so scripts/self-check-compare.mjs can
+ * load this module straight from Node.
+ */
+
+/** Structural minimum the filters need from a photo record. */
+export interface FilterablePhoto {
+  bodyPart: string;
+  lesionGroup: string | null;
+}
+
+export type ComparePartFilter = string | 'all';
+export type CompareSeriesFilter = string | 'all';
+
+/**
+ * Body parts that still have photos under the current series filter — the
+ * part dropdown's pruned choices.
+ */
+export function comparePartOptions(
+  photos: FilterablePhoto[],
+  series: CompareSeriesFilter,
+): string[] {
+  const parts = new Set<string>();
+  for (const p of photos) {
+    if (series === 'all' || p.lesionGroup === series) parts.add(p.bodyPart);
+  }
+  return [...parts];
+}
+
+/**
+ * Lesion series that still have photos under the current part filter — the
+ * linkage dropdown's pruned choices. Photos without a series never appear.
+ */
+export function compareSeriesOptions(
+  photos: FilterablePhoto[],
+  part: ComparePartFilter,
+): string[] {
+  const groups = new Set<string>();
+  for (const p of photos) {
+    if (part !== 'all' && p.bodyPart !== part) continue;
+    if (p.lesionGroup) groups.add(p.lesionGroup);
+  }
+  return [...groups].sort((a, b) => a.localeCompare(b));
+}
+
+/** A photo survives both filters — the pane pool after pruning. */
+export function filterComparePool<P extends FilterablePhoto>(
+  photos: P[],
+  part: ComparePartFilter,
+  series: CompareSeriesFilter,
+): P[] {
+  return photos.filter(
+    (p) =>
+      (part === 'all' || p.bodyPart === part) &&
+      (series === 'all' || p.lesionGroup === series),
+  );
+}
+
+/**
+ * Drop filters the pool can no longer support (patient switched on the
+ * Compare page, series renamed away) instead of silently emptying the panes.
+ */
+export function resolveCompareFilters(
+  photos: FilterablePhoto[],
+  part: ComparePartFilter,
+  series: CompareSeriesFilter,
+): { part: ComparePartFilter; series: CompareSeriesFilter } {
+  const nextPart =
+    part !== 'all' && comparePartOptions(photos, 'all').includes(part) ? part : 'all';
+  const nextSeries =
+    series !== 'all' && compareSeriesOptions(photos, 'all').includes(series)
+      ? series
+      : 'all';
+  return { part: nextPart, series: nextSeries };
+}
+
 /** Which comparison pane a gesture targets. */
 export type CompareSide = 'left' | 'right';
 

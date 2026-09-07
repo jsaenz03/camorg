@@ -5,17 +5,21 @@
  *
  * The two-pane comparison viewer shared by the patient's before/after
  * dialog and the cross-patient Compare page. Each side picks from its own
- * pool (usually one patient's photos). An anchor toggle controls the
- * viewport link: anchored (the default) a drag or scroll on either photo
+ * pool (usually one patient's photos) via a thumbnail picker modal. A body
+ * part and a lesion-series (linkage) filter narrow both pools at once, each
+ * dropdown pruned to the choices the other filter still allows — so the
+ * linked before/after chains are easy to isolate. An anchor toggle controls
+ * the viewport link: anchored (the default) a drag or scroll on either photo
  * moves both together; unanchored each pane pans and zooms freely — and
- * re-anchoring makes the next gesture move them together from wherever
- * they were left, so independently framed lesions stay framed.
+ * re-anchoring makes the next gesture move them together from wherever they
+ * were left, so independently framed lesions stay framed.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import {
   Columns2,
+  Images,
   Layers,
   Link2,
   Link2Off,
@@ -25,14 +29,20 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
-import { bodyPartDisplayLabel } from '@/types/body-part';
+import { BodyPartLabels, bodyPartDisplayLabel, type BodyPart } from '@/types/body-part';
 import { photoService } from '@/lib/services/photo-service';
 import {
   applyPan,
   applyZoom,
+  comparePartOptions,
+  compareSeriesOptions,
   COMPARE_ZOOM_STEP,
   defaultComparePicks,
   DEFAULT_COMPARE_TRANSFORM,
+  filterComparePool,
+  resolveCompareFilters,
+  type ComparePartFilter,
+  type CompareSeriesFilter,
   type CompareSide,
   type CompareTransform,
   type CompareTransforms,
@@ -46,6 +56,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { PhotoComparePickerDialog } from '@/components/photo/photo-compare-picker';
 import { cn } from '@/lib/utils';
 
 type Mode = 'side' | 'overlay';
@@ -58,13 +69,15 @@ interface PhotoCompareViewProps {
   /** Picker labels — name the patient (Compare page) or the role (dialog). */
   leftLabel: string;
   rightLabel: string;
+  /** Seed body-part filter (Compare page deep link ?part=). */
+  initialPart?: BodyPart | 'all';
   /** Sizing hook for the host page; defaults to filling a flex column. */
   className?: string;
 }
 
 function photoLabel(photo: PhotoRecord): string {
   const part = bodyPartDisplayLabel(photo.bodyPart, photo.laterality);
-  return `${format(photo.capturedAt, 'd MMM yyyy')} · ${part}${photo.subpart ? ` · ${photo.subpart}` : ''}`;
+  return `${format(photo.capturedAt, 'd MMM yyyy')} · ${part}${photo.subpart ? ` · ${photo.subpart}` : ''}${photo.lesionGroup ? ` · ${photo.lesionGroup}` : ''}`;
 }
 
 export function PhotoCompareView({
@@ -72,19 +85,50 @@ export function PhotoCompareView({
   rightPool,
   leftLabel,
   rightLabel,
+  initialPart = 'all',
   className,
 }: PhotoCompareViewProps) {
+  // Cascade filters: the part dropdown lists the parts the current series
+  // filter still covers, the series dropdown the series under the current
+  // part — each prunes the other's choices and both pools.
+  const [partFilter, setPartFilter] = useState<ComparePartFilter>(initialPart);
+  const [seriesFilter, setSeriesFilter] = useState<CompareSeriesFilter>('all');
+
   const leftSorted = useMemo(
-    () => [...leftPool].sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime()),
-    [leftPool],
+    () =>
+      filterComparePool(
+        [...leftPool].sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime()),
+        partFilter,
+        seriesFilter,
+      ),
+    [leftPool, partFilter, seriesFilter],
   );
   const rightSorted = useMemo(
-    () => [...rightPool].sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime()),
-    [rightPool],
+    () =>
+      filterComparePool(
+        [...rightPool].sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime()),
+        partFilter,
+        seriesFilter,
+      ),
+    [rightPool, partFilter, seriesFilter],
+  );
+
+  // Both pools feed the dropdown choices; a part only appears while some
+  // photo under the series filter carries it (and vice versa).
+  const unionPool = useMemo(() => [...leftPool, ...rightPool], [leftPool, rightPool]);
+  const partOptions = useMemo(
+    () => comparePartOptions(unionPool, seriesFilter),
+    [unionPool, seriesFilter],
+  );
+  const seriesOptions = useMemo(
+    () => compareSeriesOptions(unionPool, partFilter),
+    [unionPool, partFilter],
   );
 
   const [leftId, setLeftId] = useState<string | null>(null);
   const [rightId, setRightId] = useState<string | null>(null);
+  // Which pane's thumbnail picker modal is open, if either.
+  const [pickSheet, setPickSheet] = useState<CompareSide | null>(null);
   const [mode, setMode] = useState<Mode>('side');
   const [opacity, setOpacity] = useState(50);
 
@@ -136,9 +180,17 @@ export function PhotoCompareView({
     [leftSorted, rightSorted],
   );
   useEffect(() => {
-    const picks = defaultComparePicks(leftSorted, rightSorted);
-    setLeftId(picks.leftId);
-    setRightId(picks.rightId);
+    // Pools changed (patient switch, manifest refresh): drop filters the new
+    // pools can't support before seeding, so a stale part never empties the
+    // panes. Setting a filter re-runs this effect through poolKey.
+    const resolved = resolveCompareFilters(unionPool, partFilter, seriesFilter);
+    if (resolved.part !== partFilter) setPartFilter(resolved.part);
+    if (resolved.series !== seriesFilter) setSeriesFilter(resolved.series);
+    if (resolved.part === partFilter && resolved.series === seriesFilter) {
+      const picks = defaultComparePicks(leftSorted, rightSorted);
+      setLeftId(picks.leftId);
+      setRightId(picks.rightId);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- poolKey covers pool identity; array deps would reseed on every refresh
   }, [poolKey]);
 
@@ -364,23 +416,27 @@ export function PhotoCompareView({
     </div>
   );
 
-  const picker = (
-    which: 'left' | 'right',
+  // Filter dropdown: choices already pruned by the other filter (see the
+  // partOptions/seriesOptions memos above).
+  const filterSelect = (
     label: string,
-    pool: PhotoRecord[],
-    id: string | null,
-    setId: (id: string) => void,
+    value: ComparePartFilter | CompareSeriesFilter,
+    onChange: (v: string) => void,
+    options: string[],
+    allLabel: string,
+    optionLabel: (v: string) => string,
   ) => (
     <div className="flex flex-col gap-1">
       <Label className="text-xs text-muted-foreground">{label}</Label>
-      <Select value={id ?? undefined} onValueChange={setId}>
-        <SelectTrigger aria-label={`Photo to compare, ${which}`}>
-          <SelectValue placeholder="Choose a photo" />
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger aria-label={label} className="min-w-32">
+          <SelectValue placeholder={allLabel} />
         </SelectTrigger>
         <SelectContent>
-          {pool.map((p) => (
-            <SelectItem key={p.id} value={p.id}>
-              {photoLabel(p)}
+          <SelectItem value="all">{allLabel}</SelectItem>
+          {options.map((o) => (
+            <SelectItem key={o} value={o}>
+              {optionLabel(o)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -388,11 +444,36 @@ export function PhotoCompareView({
     </div>
   );
 
+  // Picker: a button naming the pane's current photo (with its series link)
+  // that opens the thumbnail modal. Seeing the photos beats reading dates in
+  // a dropdown.
+  const picker = (which: CompareSide, label: string, photo: PhotoRecord | null) => (
+    <div className="flex min-w-44 flex-1 flex-col gap-1">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Button
+        type="button"
+        variant="outline"
+        aria-haspopup="dialog"
+        aria-label={`Choose photo for ${which} pane`}
+        className="justify-between gap-2 font-normal"
+        onClick={() => setPickSheet(which)}
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          {photo?.lesionGroup && <Link2 className="size-3.5 shrink-0 text-muted-foreground" />}
+          <span className="truncate">{photo ? photoLabel(photo) : 'Choose a photo'}</span>
+        </span>
+        <Images className="size-4 shrink-0 text-muted-foreground" />
+      </Button>
+    </div>
+  );
+
   return (
     <div ref={rootRef} className={cn('flex min-h-0 flex-1 flex-col gap-3', className)}>
       <div className="flex flex-wrap items-end gap-3">
-        {picker('left', leftLabel, leftSorted, leftId, setLeftId)}
-        {picker('right', rightLabel, rightSorted, rightId, setRightId)}
+        {filterSelect('Body part', partFilter, setPartFilter, partOptions, 'All body parts', (p) => BodyPartLabels[p as BodyPart] ?? p)}
+        {filterSelect('Link series', seriesFilter, setSeriesFilter, seriesOptions, 'All series', (s) => s)}
+        {picker('left', leftLabel, left)}
+        {picker('right', rightLabel, right)}
         <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Mode</Label>
           <div className="flex rounded-lg border p-1" role="group" aria-label="Compare mode">
@@ -500,6 +581,23 @@ export function PhotoCompareView({
           overlayPane
         )}
       </div>
+
+      <PhotoComparePickerDialog
+        open={pickSheet === 'left'}
+        onOpenChange={(o) => !o && setPickSheet(null)}
+        pool={leftSorted}
+        selectedId={leftId}
+        onSelect={setLeftId}
+        title={leftLabel}
+      />
+      <PhotoComparePickerDialog
+        open={pickSheet === 'right'}
+        onOpenChange={(o) => !o && setPickSheet(null)}
+        pool={rightSorted}
+        selectedId={rightId}
+        onSelect={setRightId}
+        title={rightLabel}
+      />
     </div>
   );
 }

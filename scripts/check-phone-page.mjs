@@ -121,6 +121,16 @@ photos.push({
   lastReviewedAt: null,
 });
 
+// Lesion series (the compare "linkage"): Margot's three face photos share
+// one chain, her two chest photos another; Tane's face photos carry their
+// own. Drives the series filter, its part pruning and the link chips.
+const SERIES = {
+  ph3: 'Face mole', ph5: 'Face mole', ph7: 'Face mole',
+  ph15: 'Chest follow-up', ph18: 'Chest follow-up',
+  ph4: 'Tane face', ph6: 'Tane face', ph8: 'Tane face',
+};
+photos.forEach((p) => { p.lesionGroup = SERIES[p.id] || null; });
+
 // 1x2 white JPEG (tiny, stretched by CSS; fine for layout checks).
 const jpeg = Buffer.from(
   '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a' +
@@ -589,8 +599,9 @@ const gridHighlighted = await pageC.evaluate(
   () => document.querySelectorAll('#grid .cell-fig [data-part].hl').length,
 );
 
-// Compare: opens straight away (like the desktop dialog), pickers pre-seeded
-// with the two most recent photos; side/overlay modes; shared zoom.
+// Compare: opens straight away (like the desktop dialog), thumbnail pickers
+// pre-seeded with the two most recent photos; side/overlay modes; shared
+// zoom. Pickers are buttons that open a full-screen photo sheet.
 await pageC.click('#compare-btn');
 await pageC.waitForTimeout(400);
 await shot('5-compare-side');
@@ -603,10 +614,17 @@ const compareTheme = await pageC.evaluate(() => ({
   label: getComputedStyle(document.querySelector('.cmp-pickers label')).color,
 }));
 const pickersSeeded = await pageC.evaluate(() => {
-  const l = document.getElementById('cmp-left');
-  const r = document.getElementById('cmp-right');
-  return l.options.length === 9 && r.options.length === 9 &&
-    l.value === '0' && r.value === '2';
+  const l = document.getElementById('cmp-left-text').textContent;
+  const r = document.getElementById('cmp-right-text').textContent;
+  const ll = document.getElementById('cmp-left-link');
+  const rl = document.getElementById('cmp-right-link');
+  const imgs = Array.from(document.querySelectorAll('#cmp-frame img'))
+    .map((img) => img.getAttribute('src'));
+  // Newest p1 pair: ph1 (hand, no series) + ph3 (face, in "Face mole") —
+  // the link icon marks the series photo in the picker chrome.
+  return l.includes('Left Hand') && !l.includes('Face mole') &&
+    r.includes('Face mole') && !!rl && !rl.hidden && !!ll && ll.hidden &&
+    imgs.length === 2 && imgs[0] === 'img/ph1.jpg' && imgs[1] === 'img/ph3.jpg';
 });
 await pageC.click('#zoom-in');
 await pageC.click('#zoom-in');
@@ -627,10 +645,36 @@ await pageC.click('#cmp-anchor'); // -> Linked again
 await pageC.click('#zoom-in'); // both panes move again, each from its own zoom
 const reanchoredTransforms = await paneTransforms();
 const reanchoredPct = await pageC.textContent('#zoom-pct');
-await pageC.selectOption('#cmp-right', { index: 3 }); // pick change resets viewport
-await pageC.waitForTimeout(200);
+// Picker sheet (replaces the dropdown): grid of the pane's filtered pool,
+// series chips on linked photos, ring on the current pick; picking resets
+// the viewport like the desktop.
+await pageC.click('#cmp-right');
+await pageC.waitForTimeout(250);
+await shot('5d-compare-pick-sheet');
+const pickSheet = await pageC.evaluate(() => ({
+  open: !document.getElementById('screen-cmppick').hidden,
+  title: document.getElementById('pick-title').textContent,
+  cells: document.querySelectorAll('#pick-grid .pick-cell').length,
+  seriesChips: document.querySelectorAll('#pick-grid .cell-series').length,
+  selected: document.querySelectorAll('#pick-grid .pick-cell.sel').length,
+}));
+await pageC.click('#pick-grid button:nth-child(4)'); // ph7 (face, in series)
+await pageC.waitForTimeout(250);
+const pickSheetClosed = await pageC.evaluate(() => ({
+  hidden: document.getElementById('screen-cmppick').hidden,
+  label: document.getElementById('cmp-right-text').textContent,
+}));
 const resetTransforms = await paneTransforms();
 const resetPct = await pageC.textContent('#zoom-pct');
+// Series filter (the linkage): picking Margot's face chain narrows the pool
+// to its three photos and prunes the part dropdown to Face alone.
+await pageC.selectOption('#cmp-series', 'Face mole');
+await pageC.waitForTimeout(300);
+await shot('5e-compare-series-filter');
+const dialogSeries = await pageC.evaluate(() => ({
+  partOptions: document.getElementById('cmp-part').options.length,
+  chips: Array.from(document.querySelectorAll('#cmp-frame .chip')).map((c) => c.textContent),
+}));
 await pageC.click('#mode-overlay');
 await pageC.waitForTimeout(300);
 const overlayOn = await pageC.evaluate(() =>
@@ -644,8 +688,27 @@ await pageC.waitForTimeout(200);
 // Compare tab (desktop Compare-page parity): its own tab in the bar, opening
 // on two DIFFERENT patients — the first with photos, then the next different
 // one — with the photo pickers relabelled to the patient names, pane chips
-// naming the patient, a body-part filter narrowing both pools at once, and
-// the tab bar kept visible (it is a tab, not a dialog).
+// naming the patient, part + series filters narrowing both pools at once,
+// and the tab bar kept visible (it is a tab, not a dialog).
+const sheetPoolSize = async (side) => {
+  try {
+    await pageC.click(side === 'left' ? '#cmp-left' : '#cmp-right');
+  } catch (e) {
+    const dbg = await pageC.evaluate(() => {
+      const el = document.getElementById('cmp-right');
+      const b = el.getBoundingClientRect();
+      return { left: b.left, width: b.width, innerW: window.innerWidth };
+    });
+    console.error('SHEET-CLICK-FAIL', JSON.stringify(dbg));
+    await pageC.screenshot({ path: join(outDir, 'sheet-click-fail.png') });
+    throw e;
+  }
+  await pageC.waitForTimeout(250);
+  const n = await pageC.evaluate(() => document.querySelectorAll('#pick-grid .pick-cell').length);
+  await pageC.click('#pick-back');
+  await pageC.waitForTimeout(250);
+  return n;
+};
 await pageC.click('#tab-cmp');
 await pageC.waitForTimeout(400);
 await shot('5b-compare-tab');
@@ -662,35 +725,54 @@ const cmpTab = await pageC.evaluate(() => {
     leftLabel: sel('cmp-left-label').textContent,
     rightLabel: sel('cmp-right-label').textContent,
     partOptions: sel('cmp-part').options.length,
-    leftOpts: sel('cmp-left').options.length,
-    rightOpts: sel('cmp-right').options.length,
+    seriesOptions: sel('cmp-series').options.length,
     chips: Array.from(document.querySelectorAll('#cmp-frame .chip')).map((c) => c.textContent),
   };
 });
-// Body-part filter: "Chest" exists once per patient (p1's ph18, p2's ph16),
-// so both pools must narrow to a single photo while the chips keep naming
-// the patients.
+const cmpTabLeftPool = await sheetPoolSize('left');
+const cmpTabRightPool = await sheetPoolSize('right');
+// Series filter prunes the OTHER dropdown: "Face mole" is a Face-only chain,
+// so the part choices collapse to Face and the side without that chain
+// empties (Tane's face photos sit in their own series).
+await pageC.selectOption('#cmp-series', 'Face mole');
+await pageC.waitForTimeout(300);
+await shot('5c-compare-tab-series');
+const cmpSeries = await pageC.evaluate(() => ({
+  partOptions: document.getElementById('cmp-part').options.length,
+  empty: document.querySelector('#cmp-frame .empty') ?
+    document.querySelector('#cmp-frame .empty').textContent : null,
+}));
+const cmpSeriesLeftPool = await sheetPoolSize('left');
+await pageC.selectOption('#cmp-series', 'all');
+await pageC.waitForTimeout(300);
+// Body-part filter: "Chest" exists as ph18 + ph15 on p1 and ph16 on p2, so
+// both pools narrow while the chips keep naming the patients — and the
+// series choices prune to the chest chain (part prunes series, the other
+// direction of the cascade).
 await pageC.selectOption('#cmp-part', { label: 'Chest' });
 await pageC.waitForTimeout(300);
 await shot('5c-compare-tab-chest');
-const cmpChest = await pageC.evaluate(() => ({
-  leftOpts: document.getElementById('cmp-left').options.length,
-  rightOpts: document.getElementById('cmp-right').options.length,
-  chips: Array.from(document.querySelectorAll('#cmp-frame .chip')).map((c) => c.textContent),
-}));
+const cmpChest = {
+  left: await sheetPoolSize('left'),
+  right: await sheetPoolSize('right'),
+  seriesOptions: await pageC.evaluate(() => document.getElementById('cmp-series').options.length),
+  chips: await pageC.evaluate(() =>
+    Array.from(document.querySelectorAll('#cmp-frame .chip')).map((c) => c.textContent)),
+};
 // The same patient on both sides is the before/after workflow (the desktop
-// page's single-patient degrade); picks re-seed newest-first, right stepped
-// aside from the left.
+// page's single-patient degrade); a patient switch resets both filters and
+// picks re-seed newest-first, right stepped aside from the left.
 await pageC.selectOption('#cmp-patient-right', 'p1');
 await pageC.waitForTimeout(300);
 const cmpSamePatient = await pageC.evaluate(() => ({
-  leftOpts: document.getElementById('cmp-left').options.length,
-  rightOpts: document.getElementById('cmp-right').options.length,
   rightLabel: document.getElementById('cmp-right-label').textContent,
-  leftId: document.getElementById('cmp-left').value,
-  rightId: document.getElementById('cmp-right').value,
   partValue: document.getElementById('cmp-part').value,
+  seriesValue: document.getElementById('cmp-series').value,
+  imgs: Array.from(document.querySelectorAll('#cmp-frame img'))
+    .map((img) => img.getAttribute('src')),
 }));
+const cmpSameLeftPool = await sheetPoolSize('left');
+const cmpSameRightPool = await sheetPoolSize('right');
 // Tab semantics: another tab closes the surface, coming back restores it
 // with the patients the tab was left on.
 await pageC.click('#tab-all');
@@ -953,8 +1035,15 @@ const checks = [
   ['free zoom moves only the active pane', freeTransforms[0] !== freeTransforms[1]],
   ['re-anchoring moves both panes again', reanchoredPct === '244%' &&
     reanchoredTransforms[0] !== freeTransforms[0] && reanchoredTransforms[1] !== freeTransforms[1]],
-  ['choosing another photo resets the viewport', resetPct === '100%' &&
+  ['photo picker sheet shows the pool as thumbnails with series chips',
+    pickSheet.open === true && pickSheet.title === 'Later / current' &&
+    pickSheet.cells === 9 && pickSheet.seriesChips === 5 && pickSheet.selected === 1],
+  ['choosing from the sheet closes it and resets the viewport',
+    pickSheetClosed.hidden === true && pickSheetClosed.label.includes('Face mole') &&
+    resetPct === '100%' &&
     resetTransforms.length === 2 && resetTransforms.every((t) => t.includes('scale(1)'))],
+  ['series filter narrows the pool and prunes the part dropdown',
+    dialogSeries.partOptions === 2 && dialogSeries.chips.length === 2],
   ['overlay mode shows the opacity control', overlayOn === true],
   ['compare tab opens cross-patient with the tab bar kept visible',
     cmpTab.surfaceOpen && cmpTab.tabSelected === 'true' && cmpTab.barVisible &&
@@ -962,19 +1051,22 @@ const checks = [
     cmpTab.leftPid === 'p1' && cmpTab.rightPid === 'p2' &&
     cmpTab.leftLabel === 'Reference \u2014 Margot Whitfield' &&
     cmpTab.rightLabel === 'Comparison \u2014 Tane Ngata' &&
-    cmpTab.partOptions === 7],
+    cmpTab.partOptions === 7 && cmpTab.seriesOptions === 4],
   ['compare tab pools follow the chosen patients and chips name them',
-    cmpTab.leftOpts === 9 && cmpTab.rightOpts === 8 &&
+    cmpTabLeftPool === 9 && cmpTabRightPool === 8 &&
     cmpTab.chips.length === 2 &&
     cmpTab.chips[0].startsWith('Margot Whitfield') && cmpTab.chips[1].startsWith('Tane Ngata')],
-  ['compare tab body-part filter narrows both sides at once',
-    cmpChest.leftOpts === 2 && cmpChest.rightOpts === 1 &&
+  ['series filter prunes the part choices and empties the unlinked side',
+    cmpSeries.partOptions === 2 && cmpSeriesLeftPool === 3 &&
+    cmpSeries.empty === 'Nothing to compare \u2014 pick patients with photos.'],
+  ['compare tab body-part filter narrows both sides and prunes the series choices',
+    cmpChest.left === 2 && cmpChest.right === 1 && cmpChest.seriesOptions === 2 &&
     cmpChest.chips[0].startsWith('Margot Whitfield') && cmpChest.chips[1].startsWith('Tane Ngata')],
   ['same patient on both sides is the before/after workflow',
-    cmpSamePatient.leftOpts === 9 && cmpSamePatient.rightOpts === 9 &&
+    cmpSameLeftPool === 9 && cmpSameRightPool === 9 &&
     cmpSamePatient.rightLabel.includes('Margot Whitfield') &&
-    cmpSamePatient.partValue === 'all' &&
-    cmpSamePatient.leftId === '0' && cmpSamePatient.rightId === '2'],
+    cmpSamePatient.partValue === 'all' && cmpSamePatient.seriesValue === 'all' &&
+    cmpSamePatient.imgs[0] === 'img/ph1.jpg' && cmpSamePatient.imgs[1] === 'img/ph3.jpg'],
   ['compare tab state survives switching away and back',
     compareHiddenOnOtherTab === true && compareTabRestored.open &&
     compareTabRestored.leftPid === 'p1' && compareTabRestored.rightPid === 'p1'],

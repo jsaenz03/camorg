@@ -14,6 +14,10 @@ import { FolderOpen, HardDrive, Loader2, RotateCcw } from 'lucide-react';
 import type { StorageInfo } from '@/lib/services/storage-service';
 import { storageService } from '@/lib/services/storage-service';
 import { toErrorMessage } from '@/lib/utils/error-message';
+import {
+  StorageCleanupDialog,
+  type StorageCleanup,
+} from '@/components/settings/storage-cleanup-dialog';
 
 import {
   Card,
@@ -29,6 +33,8 @@ export function StoragePanel() {
   const [info, setInfo] = useState<StorageInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copyProgress, setCopyProgress] = useState<{ copied: number; total: number } | null>(null);
+  const [cleanup, setCleanup] = useState<StorageCleanup | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -53,42 +59,65 @@ export function StoragePanel() {
       if (info && picked === info.resolvedDir) return;
 
       const ok = await confirm(
-        'Store photos in the selected folder? Existing photos will be copied there (originals are kept).',
+        'Store photos in the selected folder? Existing photos will be copied there — you can delete the originals from the old folder afterwards.',
         { title: 'Change photo storage', kind: 'info' }
       );
       if (!ok) return;
 
       setBusy(true);
-      const result = await storageService.changePhotosDir(picked);
+      setCopyProgress(null);
+      const result = await storageService.changePhotosDir(picked, {
+        onProgress: (copied, total) => setCopyProgress({ copied, total }),
+      });
       await load();
       toast.success(
         result.moved > 0
           ? `Copied ${result.moved} photo file${result.moved === 1 ? '' : 's'} to the new folder`
           : 'Photo storage updated'
       );
+      // Copied files still sit in the old folder — offer the cleanup once
+      // the copy is confirmed, never before.
+      if (result.sourceFiles.length > 0 && result.sourceDir) {
+        setCleanup({
+          sourceDir: result.sourceDir,
+          files: result.sourceFiles,
+          activeDir: result.activeDir,
+        });
+      }
     } catch (err) {
       toast.error(toErrorMessage(err, 'Could not change photo storage'));
     } finally {
       setBusy(false);
+      setCopyProgress(null);
     }
   }
 
   async function resetToDefault() {
     try {
       const ok = await confirm(
-        'Move photo storage back to the default app folder? Existing photos will be copied there (originals are kept).',
+        'Move photo storage back to the default app folder? Existing photos will be copied there — you can delete the originals from the old folder afterwards.',
         { title: 'Reset photo storage', kind: 'info' }
       );
       if (!ok) return;
 
       setBusy(true);
-      const result = await storageService.changePhotosDir(null);
+      setCopyProgress(null);
+      const result = await storageService.changePhotosDir(null, {
+        onProgress: (copied, total) => setCopyProgress({ copied, total }),
+      });
       await load();
       toast.success(
         result.moved > 0
           ? `Copied ${result.moved} photo file${result.moved === 1 ? '' : 's'} to the default folder`
           : 'Photo storage updated'
       );
+      if (result.sourceFiles.length > 0 && result.sourceDir) {
+        setCleanup({
+          sourceDir: result.sourceDir,
+          files: result.sourceFiles,
+          activeDir: result.activeDir,
+        });
+      }
     } catch (err) {
       if (err instanceof Error && err.name === 'StorageUnavailableError') {
         // Current folder is an offline drive: offer to repoint without the
@@ -112,6 +141,7 @@ export function StoragePanel() {
       }
     } finally {
       setBusy(false);
+      setCopyProgress(null);
     }
   }
 
@@ -184,6 +214,27 @@ export function StoragePanel() {
           )}
         </div>
 
+        {copyProgress && (
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted-foreground">
+              Copying {copyProgress.copied} of {copyProgress.total}{' '}
+              file{copyProgress.total === 1 ? '' : 's'} to the new folder…
+            </p>
+            <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{
+                  width: `${
+                    copyProgress.total > 0
+                      ? Math.round((copyProgress.copied / copyProgress.total) * 100)
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         <p className="text-xs text-muted-foreground">
           Pick a local folder or a cloud-synced folder (OneDrive, Dropbox, iCloud
           Drive) to keep photos in cloud storage. Copies are one-way — deleting
@@ -191,6 +242,8 @@ export function StoragePanel() {
           app.
         </p>
       </CardContent>
+
+      <StorageCleanupDialog cleanup={cleanup} onClose={() => setCleanup(null)} />
     </Card>
   );
 }

@@ -34,7 +34,11 @@ const PATIENT_COLUMNS = `
   p.owner_clinician_id, p.is_org_shared,
   p.consent_given_at, p.consent_scope, p.consent_expires_at,
   p.review_due_at, p.last_reviewed_at,
-  owner.display_name AS owner_name
+  owner.display_name AS owner_name,
+  -- Null-safe: a grant to the owner is not a share to another clinician.
+  (SELECT COUNT(*) FROM patient_shares ps
+     WHERE ps.patient_id = p.id
+       AND ps.clinician_id IS NOT p.owner_clinician_id) AS shared_doctor_count
 `;
 
 function rowToPatient(row: Record<string, unknown>): Patient {
@@ -53,6 +57,7 @@ function rowToPatient(row: Record<string, unknown>): Patient {
     archivedAt: row.archived_at != null ? new Date(row.archived_at as number) : null,
     ownerClinicianId: (row.owner_clinician_id as string) ?? null,
     isOrgShared: Boolean(row.is_org_shared),
+    sharedDoctorCount: (row.shared_doctor_count as number) ?? 0,
     ownerName: (row.owner_name as string) ?? null,
     consentGivenAt: row.consent_given_at != null ? new Date(row.consent_given_at as number) : null,
     consentScope: (row.consent_scope as Patient['consentScope']) ?? null,
@@ -117,6 +122,7 @@ export class PatientService implements IPatientService {
       archivedAt: null,
       ownerClinicianId: clinician.id,
       isOrgShared: false,
+      sharedDoctorCount: 0,
       ownerName: clinician.displayName,
       consentGivenAt: null,
       consentScope: null,

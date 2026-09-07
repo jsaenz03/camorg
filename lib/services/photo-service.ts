@@ -186,7 +186,7 @@ export class PhotoService implements IPhotoService {
           validated.patientId,
           imageFilename,
           thumbFilename,
-          '', // originalFileName: not in the create DTO
+          validated.originalFileName ?? '', // provenance for imports; '' for captures
           validated.mimeType,
           storedBlob.size,
           validated.bodyPart,
@@ -227,7 +227,7 @@ export class PhotoService implements IPhotoService {
         patientId: validated.patientId,
         imageBlob: PLACEHOLDER_BLOB,
         imageThumbnail: PLACEHOLDER_BLOB,
-        originalFileName: '',
+        originalFileName: validated.originalFileName ?? '',
         mimeType: validated.mimeType,
         fileSizeBytes: storedBlob.size,
         attachmentCount: 0, // brand new — documents attach after the save
@@ -261,6 +261,21 @@ export class PhotoService implements IPhotoService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Original file names already imported for a patient — the dedupe key for
+   * bulk import's skip-if-already-imported. Empty set without patient access.
+   */
+  async getImportedFileNames(patientId: string): Promise<Set<string>> {
+    if (!(await accessService.canAccessPatient(patientId))) return new Set();
+    const db = await getDB();
+    const rows = await db.select<{ original_file_name: string }[]>(
+      `SELECT original_file_name FROM photos
+        WHERE patient_id = $1 AND original_file_name IS NOT NULL AND original_file_name != ''`,
+      [patientId],
+    );
+    return new Set(rows.map((r) => r.original_file_name));
   }
 
   /**

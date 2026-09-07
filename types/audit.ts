@@ -24,6 +24,7 @@ export type AuditAction =
   | 'patient.delete'
   | 'patient.sharing'
   | 'photo.create'
+  | 'photo.import'
   | 'photo.update'
   | 'photo.review'
   | 'photo.delete'
@@ -36,6 +37,7 @@ export type AuditAction =
   | 'backup.restore_copy'
   | 'audit.export'
   | 'storage.photos_dir'
+  | 'storage.source_cleanup'
   | 'licence.activation'
   | 'companion.start'
   | 'companion.stop'
@@ -86,6 +88,7 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'patient.delete': 'Deleted patient',
   'patient.sharing': 'Changed patient sharing',
   'photo.create': 'Added photo',
+  'photo.import': 'Imported photos from disk',
   'photo.update': 'Updated photo',
   'photo.review': 'Marked photo reviewed',
   'photo.delete': 'Deleted photo',
@@ -98,6 +101,7 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'backup.restore_copy': 'Prepared a backup restore copy',
   'audit.export': 'Downloaded the audit log',
   'storage.photos_dir': 'Changed the photo storage location',
+  'storage.source_cleanup': 'Deleted copied files from the old photo folder',
   'licence.activation': 'Activated a licence',
   'companion.start': 'Opened phone link session',
   'companion.stop': 'Closed phone link session',

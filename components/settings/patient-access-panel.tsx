@@ -263,11 +263,13 @@ function SharingBadge({ patient }: { patient: Patient }) {
       </Badge>
     );
   }
-  // Without a join to patient_shares here we can't distinguish "shared with N
-  // doctors" from "private" cheaply; show "Shared" optimistically only when the
-  // owner isn't the sole viewer. To stay accurate without another query, we
-  // surface Private / Org-wide only. Specific-doctor state is visible in the
-  // editor dialog.
+  if (patient.sharedDoctorCount > 0) {
+    return (
+      <Badge variant="secondary" className="gap-1">
+        <Users className="size-3" /> Shared ({patient.sharedDoctorCount})
+      </Badge>
+    );
+  }
   return (
     <Badge variant="outline" className="gap-1">
       <Lock className="size-3" /> Private

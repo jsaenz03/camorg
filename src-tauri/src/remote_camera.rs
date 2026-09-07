@@ -1464,6 +1464,41 @@ mod tests {
     assert!(PAGE_HTML.contains("blurred"));
   }
 
+  // Compare linkage: the manifest's lesionGroup drives a body-part +
+  // series filter pair whose choices prune each other, photo pickers are
+  // thumbnail buttons opening a full-screen sheet, and linked photos carry
+  // a visible series chip — in BOTH the per-patient dialog and the
+  // cross-patient Compare tab (refreshCompare shared by the two).
+  #[test]
+  fn phone_page_compare_linkage_filters_and_thumb_picker() {
+    // Filters: part and series dropdowns, each pruning the other's options.
+    assert!(PAGE_HTML.contains(r#"id="cmp-filters""#));
+    assert!(PAGE_HTML.contains(r#"id="cmp-series""#));
+    assert!(PAGE_HTML.contains("function cmpSeriesOptions"));
+    assert!(PAGE_HTML.contains("function cmpPartOptions"));
+    // Pools filter by both; a photo's series link resolves leniently for
+    // manifests predating the field.
+    assert!(PAGE_HTML.contains("function cmpGroup"));
+    assert!(PAGE_HTML.contains("p.lesionGroup || null"));
+    // Thumbnail picker buttons (not dropdowns) that open the sheet.
+    assert!(PAGE_HTML.contains(r#"class="cmp-pick""#));
+    assert!(PAGE_HTML.contains("cmp-left-thumb"));
+    assert!(PAGE_HTML.contains("function openPickSheet"));
+    assert!(PAGE_HTML.contains(r#"id="screen-cmppick""#));
+    assert!(PAGE_HTML.contains("'pick-cell'"));
+    assert!(PAGE_HTML.contains("' sel'"));
+    assert!(PAGE_HTML.contains("cell-series"));
+    assert!(PAGE_HTML.contains("function syncPickerButtons"));
+    // One refresh path for both compare entry points; the sheet rides
+    // history (back closes the sheet first) and hides with the surface.
+    assert!(PAGE_HTML.contains("function refreshCompare"));
+    assert!(PAGE_HTML.contains("function prepareCompareTab"));
+    assert!(PAGE_HTML.contains("function pickSheetOpen"));
+    assert!(PAGE_HTML.contains("hidePickSheet();"));
+    // Picker labels carry the series name so links read in the chrome too.
+    assert!(PAGE_HTML.contains("p.lesionGroup ? ' \\u00b7 ' + entry.p.lesionGroup"));
+  }
+
   // Send-from-library + the all-photos tab + patient detail lines: the phone
   // packs the same affordances the desktop offers (upload dialog, Photos
   // page, patient header details).
