@@ -30,9 +30,9 @@ other tools on the machine.
      instead of a browser — files fetched with `curl` carry no quarantine
      flag. Pick the file for your Mac from the
      [distribution page](https://camog-license.cliniciq.com.au), e.g. for
-     Apple Silicon and version `X.Y.Z`:
+     Apple Silicon:
      ```bash
-     curl -LO https://camog-license.cliniciq.com.au/download/vX.Y.Z/Camog_X.Y.Z_aarch64.dmg
+     curl -LO https://camog-license.cliniciq.com.au/download/Camog-macOS-AppleSilicon.dmg
      ```
      (Intel Macs: the `_x64.dmg` file.)
 4. The first-run wizard appears: name your organisation and create the first

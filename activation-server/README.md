@@ -95,11 +95,20 @@ the old device drops to read-only on its next local token check only if its
 licence expires — a revoked device that still holds a valid token keeps
 working until the licence term ends (accepted ceiling; see spec 003).
 
-## Hosting the macOS/Windows installers here (optional)
+## Hosting the macOS installers here (per release)
 
-Static assets cap around 25 MiB per file on the free plan — check the DMG
-sizes before committing to this. If they fit, drop them into `public/`
-(e.g. `public/download/`) and deploy; otherwise use object storage (R2) or
-any static host and point the ToS cl 9.1 / cl 18 / README links there.
-GitHub release URLs die when the repo goes private, so pick one of the two
-before making the repo private.
+The public download links (ToS cl 9.1/18, MACOS_GUIDE, landing page) point at
+`/download/` with **stable filenames**, so links never rot between releases.
+Workers static assets cap at ~25 MiB per file; the DMGs are ~9–10 MiB —
+re-check if the app grows a lot. The binaries are gitignored, so each release:
+
+```
+gh release download vX.Y.Z -p 'Camog_X.Y.Z_aarch64.dmg' -p 'Camog_X.Y.Z_x64.dmg' -D /tmp/camog-rel
+cp /tmp/camog-rel/Camog_X.Y.Z_aarch64.dmg activation-server/public/download/Camog-macOS-AppleSilicon.dmg
+cp /tmp/camog-rel/Camog_X.Y.Z_x64.dmg       activation-server/public/download/Camog-macOS-Intel.dmg
+cd activation-server && npx wrangler deploy
+```
+
+Windows distribution goes through the Microsoft Store (MSSTORE_GUIDE.md);
+the landing page's Store line replaces any direct Windows download. If the
+DMGs ever exceed the asset cap, move them to R2 and keep the same URLs.
