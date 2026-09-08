@@ -27,7 +27,6 @@ import { PhotoUpload } from '@/components/photo/photo-upload';
 import { useCapture, reviewFollowUpCapture } from '@/components/capture/capture-provider';
 import { ReviewBadge } from '@/components/patient/review-badge';
 import { RecordConsentDialog } from '@/components/patient/record-consent-dialog';
-import { PhotoReviewDueBadge } from '@/components/patient/photo-review-due-badge';
 import { EmptyState } from '@/components/empty-state';
 import { PageHeader } from '@/components/page-header';
 import { usePhotos } from '@/lib/hooks/use-photos';

@@ -2,10 +2,6 @@
 
 **Effective date:** 06/09/2026 · **Version:** 1.2
 
-> **DRAFT FOR REVIEW — NOT LEGAL ADVICE.**
-> Supplier details and commercial terms are completed (entity, trading name, ABN, address, contacts, distribution, licence model, governing law). This document must still be reviewed by a qualified Australian lawyer before publication or use — in particular the liability cap in clause 12.3.
-> Statements about how the Software works reflect Camog v0.4.x (v1.2 of these Terms updates the phone-link, audit-log and release-stage descriptions to that version). If the Software changes (for example, if telemetry, cloud services or fees are ever added), these Terms and the Privacy Policy must be updated to match.
-
 ---
 
 ## 1. Agreement to these Terms

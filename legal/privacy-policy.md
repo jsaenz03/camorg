@@ -2,10 +2,6 @@
 
 **Effective date:** 06/09/2026 · **Version:** 1.2
 
-> **DRAFT FOR REVIEW — NOT LEGAL ADVICE.**
-> Supplier details are completed (entity, ABN, address, privacy contact, distribution). This document must still be reviewed by a qualified Australian lawyer before publication or use.
-> Descriptions of how the Software works reflect Camog v0.4.x (v1.2 of this policy updates the phone-link, audit-log and encryption descriptions to that version). If the Software ever changes (for example, if telemetry, cloud services or automatic updates are added), this policy must be updated — claims like "we receive nothing" are only true while the code makes them true.
-
 ---
 
 ## 1. Who we are
