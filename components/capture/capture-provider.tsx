@@ -17,6 +17,7 @@
 
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { CaptureDialog } from '@/components/capture/capture-dialog';
+import { mergeCaptureOptions } from '@/lib/utils/capture-prefill';
 import type { PhotoRecord } from '@/types/photo';
 import type { BodyPart, BodyView, Laterality, PinpointSpace } from '@/types/body-part';
 
@@ -36,6 +37,11 @@ export interface CaptureOptions {
   patientName?: string;
   patientDob?: string;
   /**
+   * Id of the patient this capture is for. Lets a staged follow-up's
+   * location prefill apply only inside its own patient's file.
+   */
+  patientId?: string;
+  /**
    * Review follow-up: after save, join this photo's lesion series (or start
    * one anchored to it) so the new photo links to the original.
    */
@@ -54,6 +60,7 @@ export interface CaptureOptions {
 export function reviewFollowUpCapture(
   photo: PhotoRecord,
   context: {
+    patientId?: string;
     patientName?: string;
     patientDob?: string;
     onSaved?: (patientId: string) => void;
@@ -76,6 +83,14 @@ export function reviewFollowUpCapture(
 
 interface CaptureContextValue {
   openCapture: (options?: CaptureOptions) => void;
+  /**
+   * Declare the patient file open beneath any capture (the patient view
+   * page sets it on mount, clears it on unmount). A context-free
+   * openCapture — the phone-photo toast's Review action — inherits their
+   * address, so every capture opened inside a patient's file is addressed
+   * to that patient.
+   */
+  setAmbientPatient: (patient: CaptureOptions | null) => void;
 }
 
 const CaptureContext = createContext<CaptureContextValue | null>(null);
@@ -96,17 +111,25 @@ export function useCapture(): CaptureContextValue {
 export function CaptureProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   // Latest options for the host; every openCapture call replaces them, so a
-  // general open (sidebar) never inherits a previous patient's prefill.
+  // general open (sidebar) never inherits a previous patient's prefill —
+  // only the ambient patient file (if any) fills a context-free open.
   const optionsRef = useRef<CaptureOptions>({});
+  const ambientRef = useRef<CaptureOptions | null>(null);
+
+  const setAmbientPatient = useCallback((patient: CaptureOptions | null) => {
+    ambientRef.current = patient;
+  }, []);
 
   const openCapture = useCallback((options: CaptureOptions = {}) => {
-    optionsRef.current = options;
+    optionsRef.current = mergeCaptureOptions(ambientRef.current, options);
     setOpen(true);
   }, []);
 
   return (
     <CaptureHostContext.Provider value={{ open, onOpenChange: setOpen, optionsRef }}>
-      <CaptureContext.Provider value={{ openCapture }}>{children}</CaptureContext.Provider>
+      <CaptureContext.Provider value={{ openCapture, setAmbientPatient }}>
+        {children}
+      </CaptureContext.Provider>
     </CaptureHostContext.Provider>
   );
 }
@@ -119,11 +142,13 @@ export function CaptureProvider({ children }: { children: ReactNode }) {
 export function CaptureHost() {
   const host = useContext(CaptureHostContext);
   if (!host) throw new Error('CaptureHost must be used within CaptureProvider');
-  const { patientName, patientDob, linkPhotoId, prefill, onSaved } = host.optionsRef.current;
+  const { patientId, patientName, patientDob, linkPhotoId, prefill, onSaved } =
+    host.optionsRef.current;
   return (
     <CaptureDialog
       open={host.open}
       onOpenChange={host.onOpenChange}
+      patientId={patientId}
       patientName={patientName}
       patientDob={patientDob}
       linkPhotoId={linkPhotoId}

@@ -48,6 +48,7 @@ import { photoService } from '@/lib/services/photo-service';
 import { patientService } from '@/lib/services/patient-service';
 import { companionService, consumeReviewFollowUp } from '@/lib/services/companion-service';
 import { claimRemoteCapture } from '@/lib/utils/capture-dedupe';
+import { resolveCapturePrefill } from '@/lib/utils/capture-prefill';
 import { parseDobInput } from '@/lib/utils/date-formatting';
 import type { CapturePrefill } from '@/components/capture/capture-provider';
 import {
@@ -74,6 +75,8 @@ export interface CaptureDialogProps {
   /** Prefill the patient fields (capture-for-patient from their timeline). */
   patientName?: string;
   patientDob?: string;
+  /** Id of the patient this capture is for (guards a staged follow-up's prefill). */
+  patientId?: string;
   /** Review follow-up: link the saved photo to this one's lesion series. */
   linkPhotoId?: string;
   /** Prefill the metadata form — a review follow-up inherits the original's location. */
@@ -82,7 +85,7 @@ export interface CaptureDialogProps {
   onSaved?: (patientId: string) => void;
 }
 
-export function CaptureDialog({ open, onOpenChange, patientName, patientDob, linkPhotoId, prefill, onSaved }: CaptureDialogProps) {
+export function CaptureDialog({ open, onOpenChange, patientId, patientName, patientDob, linkPhotoId, prefill, onSaved }: CaptureDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Width tiers override the default sm:max-w-lg; the layout inside keys
@@ -100,6 +103,7 @@ export function CaptureDialog({ open, onOpenChange, patientName, patientDob, lin
         </DialogHeader>
         {open && (
           <CaptureFlow
+            patientId={patientId}
             patientName={patientName}
             patientDob={patientDob}
             linkPhotoId={linkPhotoId}
@@ -119,6 +123,8 @@ export function CaptureDialog({ open, onOpenChange, patientName, patientDob, lin
  * silently skipped. */
 interface FollowUpLink {
   linkPhotoId: string;
+  /** The original's patient — a staged follow-up prefills only inside their file. */
+  patientId: string;
   patientName?: string;
   patientDob?: string;
   prefill?: CapturePrefill;
@@ -134,6 +140,7 @@ interface PatientHint {
 
 /** One capture visit: mounts on dialog open, unmounts (state reset) on close. */
 function CaptureFlow({
+  patientId,
   patientName,
   patientDob,
   linkPhotoId,
@@ -141,6 +148,7 @@ function CaptureFlow({
   onSaved,
   onClose,
 }: {
+  patientId?: string;
   patientName?: string;
   patientDob?: string;
   linkPhotoId?: string;
@@ -178,6 +186,7 @@ function CaptureFlow({
     const patient = await patientService.getPatientById(original.patientId).catch(() => null);
     return {
       linkPhotoId: photoId,
+      patientId: original.patientId,
       patientName: patient?.name,
       patientDob: patient?.dateOfBirth ? format(patient.dateOfBirth, 'd/M/yyyy') : undefined,
       prefill: {
@@ -627,6 +636,27 @@ function CaptureFlow({
     );
   }
 
+  // The patient file this dialog was opened inside always addresses the
+  // photo; the photo's own address (a phone patient tag, a staged follow-up)
+  // applies only outside one. Rules pinned in scripts/self-check-capture-prefill.mjs.
+  const resolved = resolveCapturePrefill({
+    patient: patientName ? { patientId, patientName, patientDob } : undefined,
+    followUp: pendingLink,
+    hint: patientHint,
+    locationPrefill: prefill,
+  });
+  const resolvedPrefill = {
+    patientName: resolved.patientName,
+    patientDob: resolved.patientDob,
+    bodyPart: resolved.location?.bodyPart,
+    laterality: resolved.location?.laterality,
+    subpart: resolved.location?.subpart ?? '',
+    pinX: resolved.location?.pinX,
+    pinY: resolved.location?.pinY,
+    pinSpace: resolved.location?.pinSpace,
+    pinView: resolved.location?.pinView,
+  };
+
   return (
     <div className="@container space-y-6">
       {pending.length > 0 && (
@@ -766,20 +796,7 @@ function CaptureFlow({
                   onSubmit={handleFormSubmit}
                   onCancel={handleCancel}
                   isSubmitting={isSubmitting}
-                  defaultValues={{
-                    // The photo's own address wins: a review follow-up
-                    // resolves from its original, then a patient-tagged
-                    // phone snap, then the dialog's capture-for context.
-                    patientName: pendingLink?.patientName ?? patientHint?.patientName ?? patientName ?? '',
-                    patientDob: pendingLink?.patientDob ?? patientHint?.patientDob ?? patientDob ?? '',
-                    bodyPart: (pendingLink?.prefill ?? prefill)?.bodyPart,
-                    laterality: (pendingLink?.prefill ?? prefill)?.laterality,
-                    subpart: (pendingLink?.prefill ?? prefill)?.subpart ?? '',
-                    pinX: (pendingLink?.prefill ?? prefill)?.pinX,
-                    pinY: (pendingLink?.prefill ?? prefill)?.pinY,
-                    pinSpace: (pendingLink?.prefill ?? prefill)?.pinSpace,
-                    pinView: (pendingLink?.prefill ?? prefill)?.pinView,
-                  }}
+                  defaultValues={resolvedPrefill}
                 />
               ) : (
                 <div className="text-center py-12 text-muted-foreground">

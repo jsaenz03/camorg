@@ -74,7 +74,7 @@ function PatientTimelineView() {
   const patientId = searchParams.get('id') as string;
   const { clinician } = useAuth();
   const { reviewWarningDays, reviewStaleDays } = useBranding();
-  const { openCapture } = useCapture();
+  const { openCapture, setAmbientPatient } = useCapture();
   const [isMarkingReviewed, setIsMarkingReviewed] = useState(false);
 
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -168,12 +168,28 @@ function PatientTimelineView() {
     }
   }, [refresh, patientId]);
 
+  // While this patient's file is the page beneath, ANY capture opened over
+  // it — the phone-photo toast's Review action included — is addressed to
+  // this patient and refreshes the timeline on save, exactly like the
+  // Capture button above.
+  useEffect(() => {
+    if (!patient) return;
+    setAmbientPatient({
+      patientId: patient.id,
+      patientName: patient.name,
+      patientDob: patient.dateOfBirth ? format(patient.dateOfBirth, 'd/M/yyyy') : undefined,
+      onSaved: handleUploadSaved,
+    });
+    return () => setAmbientPatient(null);
+  }, [patient, handleUploadSaved, setAmbientPatient]);
+
   /** Opens capture for a review follow-up — prefilled with the original's
       location and linked to it via a shared lesion series on save. */
   const handleSnapReviewPhoto = useCallback(() => {
     if (!patient || !activePhoto) return;
     openCapture(
       reviewFollowUpCapture(activePhoto, {
+        patientId: patient.id,
         patientName: patient.name,
         patientDob: patient.dateOfBirth
           ? format(patient.dateOfBirth, 'd/M/yyyy')
@@ -308,6 +324,7 @@ function PatientTimelineView() {
             <Button
               onClick={() =>
                 openCapture({
+                  patientId: patient.id,
                   patientName: patient.name,
                   patientDob: patient.dateOfBirth
                     ? format(patient.dateOfBirth, 'd/M/yyyy')
