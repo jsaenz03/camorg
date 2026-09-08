@@ -653,6 +653,9 @@ export function PhotoDetailDialog({
               <p className="text-xs text-muted-foreground">
                 Name a series to link before/after photos of the same lesion —
                 they badge together in the timeline and can be filtered as one.
+                You can also drag one photo tile onto another in any gallery:
+                drop onto a different series (or an unlinked photo) to link,
+                onto the same series to unlink.
               </p>
             </div>
 
