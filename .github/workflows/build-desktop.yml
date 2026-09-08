@@ -1,9 +1,9 @@
 name: Build Desktop Installers
 
-# Produces all five installers from CI — macOS DMG (Apple silicon + Intel)
-# and Windows x64 (.msi + NSIS .exe + unsigned .msix for the Microsoft
-# Store; the Store signs it after certification) — since Tauri cannot
-# cross-compile Windows binaries from macOS.
+# Produces all four installers from CI — macOS DMG (Apple silicon + Intel)
+# and Windows x64 (.msi + NSIS .exe) — since Tauri cannot cross-compile
+# Windows binaries from macOS. (No MSIX: Tauri v2's CLI only bundles
+# msi/nsis on Windows; Store packaging happens outside tauri build.)
 #
 # Triggers:
 #   - push to default branch -> checks + build (artifacts) + rolling 'edge' pre-release
@@ -79,9 +79,7 @@ jobs:
           - platform: macos-latest
             args: "--target x86_64-apple-darwin"
           - platform: windows-latest
-            # msix is not part of Tauri's default Windows bundle set — request
-            # it explicitly for the Store submission.
-            args: "--bundles msi,nsis,msix"
+            args: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -128,7 +126,6 @@ jobs:
             src-tauri/target/*/release/bundle/**/*.app
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.msix
           if-no-files-found: error
 
   publish-edge:
@@ -155,7 +152,7 @@ jobs:
           set -euo pipefail
           # Move the 'edge' tag to this commit; recreate the release fresh.
           gh release delete edge --yes --cleanup-tag >/dev/null 2>&1 || true
-          mapfile -t files < <(find installers -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.msix' \))
+          mapfile -t files < <(find installers -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \))
           echo "Attaching ${#files[@]} installers:" && printf '  %s\n' "${files[@]}"
           gh release create edge "${files[@]}" \
             --target "$GITHUB_SHA" \
