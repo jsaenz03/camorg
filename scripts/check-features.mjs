@@ -106,11 +106,13 @@ check(
   (read('lib/services/photo-service.ts').match(/await ensureWritable/g) || []).length === 6,
 );
 
-// 9. Shipped legal docs (public/legal) must stay byte-identical to legal/.
+// 9. Shipped legal docs (public/legal + the activation server's copies) must
+//    stay byte-identical to legal/.
 for (const doc of ['terms-of-service.md', 'privacy-policy.md']) {
-  const shipped = read(`public/legal/${doc}`);
   const source = read(`legal/${doc}`);
-  check(`public/legal/${doc} matches legal/${doc}`, shipped === source);
+  for (const dir of ['public/legal', 'activation-server/public/legal']) {
+    check(`${dir}/${doc} matches legal/${doc}`, read(`${dir}/${doc}`) === source);
+  }
   check(`${doc}: supplier details filled`, source.includes('John Raphael Saenz') && source.includes('55 882 511 758'));
   check(
     `${doc}: no unfilled placeholders`,

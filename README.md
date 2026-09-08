@@ -177,14 +177,22 @@ stays local — but all rights are reserved (see `LICENSE`). Use, building,
 and redistribution require a commercial licence from the copyright holder.
 Compiling the source yourself does not grant one.
 
-Camog uses offline, per-install licences (see
-`specs/002-offline-licence/spec.md`). No server, no phone-home.
+Camog uses per-install licences with server-side seat counting (see
+`specs/002-offline-licence/spec.md` and
+`specs/003-licence-activation/spec.md`). The app's only outbound network call
+is the one-time activation check — the licence key and a device ID, nothing
+else; no telemetry, no patient data ever leaves the machine.
 
 - **Model**: one licence per practice; tier (`solo` / `practice` / `clinic`),
   seat count, and expiry ride inside an Ed25519-signed payload. The app stores
   the key in its local SQLite `settings` row and re-verifies the signature on
   every read.
-- **Trial**: first launch starts a 14-day trial.
+- **Activation**: the key + a device ID (held in `~/.camog/device-id`, outside
+  the app data folder so copying app data to another machine can't carry a
+  seat) go to the activation worker (`activation-server/`), which counts seats
+  and returns a signed token valid for the licence term. Activating needs
+  internet once; everything after that is offline until renewal.
+- **Trial**: first launch starts a 14-day trial (no network needed).
 - **After the trial / on expiry**: read-only mode — existing patients and
   photos stay viewable (records retention), but capturing, editing, and
   deletion are disabled until a key is activated (banner → Activate).
@@ -203,6 +211,11 @@ testing the renewal banner, expiry rejection, and read-only states.
 
 `genkeys` prints the public key to embed in `lib/licence/public-key.ts`; only
 the paired private key can issue keys the app accepts.
+
+Selling seats: deploy the activation worker (`activation-server/README.md`),
+then issue keys with `--seats N` — each key activates on N devices. A seat
+move to a replacement computer is `activation-server/scripts/seat-admin.mjs
+revoke` on the old device's ID (support request).
 
 ## Scripts
 

@@ -10,7 +10,7 @@ database engine are all bundled — you do **not** need Node.js, Rust, or any
 other tools on the machine.
 
 1. Download the latest installer from
-   [github.com/jsaenz03/camorg/releases](https://github.com/jsaenz03/camorg/releases):
+   [camog-license.cliniciq.com.au](https://camog-license.cliniciq.com.au):
    - `Camog_*_aarch64.dmg` — Macs with Apple Silicon (M1/M2/M3/M4)
    - `Camog_*_x64.dmg` — Intel Macs
    - (Windows machines: use the `.msi` — its setup wizard also installs the
@@ -29,10 +29,10 @@ other tools on the machine.
    - To avoid the workaround entirely, download the `.dmg` from Terminal
      instead of a browser — files fetched with `curl` carry no quarantine
      flag. Pick the file for your Mac from the
-     [releases page](https://github.com/jsaenz03/camorg/releases), e.g. for
+     [distribution page](https://camog-license.cliniciq.com.au), e.g. for
      Apple Silicon and version `X.Y.Z`:
      ```bash
-     curl -LO https://github.com/jsaenz03/camorg/releases/download/vX.Y.Z/Camog_X.Y.Z_aarch64.dmg
+     curl -LO https://camog-license.cliniciq.com.au/download/vX.Y.Z/Camog_X.Y.Z_aarch64.dmg
      ```
      (Intel Macs: the `_x64.dmg` file.)
 4. The first-run wizard appears: name your organisation and create the first
@@ -85,7 +85,7 @@ The next launch shows the first-run wizard again.
 ### Update
 
 Download the newer `.dmg` from
-[Releases](https://github.com/jsaenz03/camorg/releases) and drag it over the
+[distribution page](https://camog-license.cliniciq.com.au) and drag it over the
 existing app in Applications. Your data is untouched. Pick the release marked
 **Latest** — "Edge build" entries are automated pre-releases.
 
@@ -120,7 +120,9 @@ existing app in Applications. Your data is untouched. Pick the release marked
 
 - Passcodes are stored as PBKDF2 hashes (210k iterations, per-user salt) —
   never plaintext
-- Local SQLite storage only; nothing is transmitted off the device
+- Local SQLite storage only; nothing is transmitted off the device except the
+  one-time licence activation check (licence key + device ID — never patient
+  data; see the Privacy Policy)
 - Production installs have no default credentials — the first account is
   created by whoever sets up the organisation
 

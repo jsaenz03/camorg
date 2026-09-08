@@ -5,15 +5,17 @@
 // DOM with the exact class strings from
 // components/licence/licence-activation-dialog.tsx, pastes a long unbroken
 // licence key, and asserts the textarea stays inside the dialog.
-import { readFileSync, readdirSync } from 'fs';
+import { readFileSync } from 'fs';
 import { test, expect, type Page } from '@playwright/test';
 
-// The chunk's hash changes per build — load every compiled CSS chunk and let
-// the cascade sort it out.
-const APP_CSS = readdirSync('out/_next/static/chunks')
-  .filter((f) => f.endsWith('.css'))
-  .map((f) => readFileSync(`out/_next/static/chunks/${f}`, 'utf8'))
-  .join('\n');
+// Load the compiled CSS in the order the app actually applies it: the <link>
+// order of a built page. (Reading the chunks directory instead made the
+// cascade depend on chunk-hash sort order — a rebuild could flip which
+// field-sizing rule wins and fail this check spuriously.)
+const APP_CSS = Array.from(
+  readFileSync('out/legal/index.html', 'utf8').matchAll(/href="(\/_next\/static\/chunks\/[^"]+\.css)"/g),
+  (m) => readFileSync(`out${m[1]}`, 'utf8'),
+).join('\n');
 
 const HTML = (css: string) => `<!doctype html><html><head><style>${css}
   body{margin:0}</style></head><body>

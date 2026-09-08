@@ -1,6 +1,6 @@
 # Camog — Terms of Service
 
-**Effective date:** 06/09/2026 · **Version:** 1.2
+**Effective date:** 08/09/2026 · **Version:** 1.3
 
 ---
 
@@ -19,17 +19,17 @@
 The following points are summaries only and do not replace the full clauses that follow:
 
 - Camog is a **clinical documentation tool only** — it is not a diagnostic device and does not provide medical advice (clause 6).
-- **Your patient data stays on your devices.** The Software sends nothing to us: it has no telemetry, analytics or crash reporting (clause 7).
+- **Your patient data stays on your devices.** The Software has no telemetry, analytics or crash reporting; its only connection to us is the one-time licence activation check, which never includes patient information (clause 7).
 - **You are responsible for your privacy compliance** under the *Privacy Act 1988* (Cth), state and territory health records laws, and for obtaining patient consent to clinical photography (clause 7).
 - Our liability is limited as far as the law allows, but **your rights under the Australian Consumer Law are not excluded** (clauses 11–12).
 
 ## 3. Licence grant
 
-3.1 Subject to these Terms, we grant you a **non-exclusive, non-transferable, non-sublicensable, revocable** licence to install and run the Software on computers you own or control, for your internal clinical documentation and practice administration purposes.
+3.1 Subject to these Terms, we grant you a **non-exclusive, non-transferable, non-sublicensable, revocable** licence to install and run the Software on computers you own or control, up to the number of devices your licence key covers (its **seats**), for your internal clinical documentation and practice administration purposes.
 
-3.2 The Software is supplied under a licence key. A new installation operates as a full-featured **14-day trial**, after which the installation becomes **read-only** (existing records remain viewable) until a licence key issued by us is activated. Licence keys are verified entirely on your device. Contact us (clause 18) for current licence terms and any applicable fees.
+3.2 The Software is supplied under a licence key. A new installation operates as a full-featured **14-day trial**, after which the installation becomes **read-only** (existing records remain viewable) until a licence key issued by us is activated. Activating a licence key requires a **one-time internet connection** to our licence activation service, which verifies the key and records the devices it is activated on — that check transmits only the licence key and a random device identifier, never any patient information or practice records. After activation the Software works offline for the licence term. The key's seats bind to the devices it is activated on; to move a seat to a replacement computer, contact us (clause 18) — as always, for current licence terms and any applicable fees.
 
-3.3 The Software incorporates third-party open-source components (including the Tauri, React and Next.js frameworks and their dependencies). Those components are licensed to you under their own licence terms, and nothing in these Terms limits any rights those licences give you. A current list is in the `package.json` and `src-tauri/Cargo.toml` manifests distributed with the source code.
+3.3 The Software incorporates third-party open-source components, principally the Tauri, React and Next.js frameworks and their dependencies. Those components are licensed to you under their own licence terms, and nothing in these Terms limits any rights those licences give you. A list of the main components and their licences is available on request (clause 18).
 
 ## 4. Restrictions
 
@@ -67,7 +67,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 
 ## 7. Patient information and privacy
 
-7.1 The Software stores all patient information **locally on your computer** (a local database and image files on your device's storage, or a folder your administrator selects). The Software **does not transmit any patient information to us or to any third party**. It contains no telemetry, no analytics and no crash reporting, and it makes no outbound internet connections.
+7.1 The Software stores all patient information **locally on your computer** (a local database and image files on your device's storage, or a folder your administrator selects). The Software **does not transmit any patient information to us or to any third party**. It contains no telemetry, no analytics and no crash reporting. Its only outbound internet connection is the licence activation check described in clause 3.2, which transmits the licence key and a random device identifier and never any patient information.
 
 7.2 As a health service provider, you are bound by the *Privacy Act 1988* (Cth) and the Australian Privacy Principles (health service providers cannot rely on the small business exemption). In New South Wales, Victoria and the Australian Capital Territory, private health service providers must also comply with state or territory health records legislation. **You, not we, are the operator of the patient records held in the Software.**
 
@@ -75,7 +75,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 
 7.4 If your administrator configures the Software's storage or backup folder to be a **cloud-synced folder** (such as OneDrive, Dropbox or iCloud), patient photographs and backups may be transmitted and stored by that provider outside your device. That is your choice and your disclosure; you are responsible for assessing that provider's security, privacy policy and data storage locations against your obligations under the Australian Privacy Principles.
 
-7.5 The only personal information we may ever receive about you or your staff is information you choose to give us if you contact us for support (see our Privacy Policy).
+7.5 The only personal information we may ever receive about you or your staff is (a) information you choose to give us if you contact us for support, and (b) the activation data described in clause 3.2 — the licence key (which records the licensed practice's name and licence term) and a random device identifier. See our Privacy Policy for how both are handled.
 
 ## 8. Acceptable use
 
@@ -88,13 +88,13 @@ You must not use the Software:
 
 ## 9. Updates and availability
 
-9.1 Updates are distributed as downloadable installers from **https://github.com/jsaenz03/camorg/releases**. The Software has no automatic updater; you choose whether and when to install updates.
+9.1 Updates are distributed as installers through the **Microsoft Store** and as direct downloads from our distribution page, **https://camog-license.cliniciq.com.au**. The Software has no automatic updater; you choose whether and when to install updates.
 
 9.2 We do not guarantee that updates will be released, or that any release will remain available, for any period. Because the Software runs entirely on your device, we give no uptime, availability or support commitments except as required by the Australian Consumer Law.
 
-## 10. Pre-release software
+## 10. Early-stage software and installer signing
 
-Version 0.4.x is an early ("beta") release. It may contain defects, and features may change. The installers are **not code-signed**, so your operating system may show security warnings (for example macOS Gatekeeper or Windows SmartScreen) that you must assess before proceeding. Verify that you downloaded the installer from our official distribution point before installing.
+Camog is an early-stage release. It may contain defects, and features may change. Installers distributed through the Microsoft Store are signed by the Store. Installers downloaded directly from our distribution page are **not code-signed** (Apple notarisation is pending), so your operating system may show security warnings (for example macOS Gatekeeper or Windows SmartScreen) that you must assess before proceeding. Verify that you downloaded the installer from our official distribution point before installing.
 
 ## 11. Warranties and the Australian Consumer Law
 
@@ -128,7 +128,7 @@ To the extent permitted by law, you indemnify us against claims, losses and expe
 
 ## 15. Changes to these Terms
 
-We may amend these Terms from time to time. Material changes will be published at **https://github.com/jsaenz03/camorg/releases** with the relevant release. If you install or continue using the Software after the amended Terms take effect, you accept the amended Terms.
+We may amend these Terms from time to time. Material changes will be published at **https://camog-license.cliniciq.com.au** with the relevant release. If you install or continue using the Software after the amended Terms take effect, you accept the amended Terms.
 
 ## 16. Governing law
 
@@ -140,4 +140,4 @@ These Terms are governed by the laws of **New South Wales**, Australia, and you 
 
 ## 18. Contact
 
-**John Raphael Saenz**, trading as **ClinicIQ Solutions** · ABN **55 882 511 758** · **Wollongong NSW 2500, Australia** · Website: **https://cliniciq.com.au** · Email: **admin@cliniciq.com.au** · Distribution: **https://github.com/jsaenz03/camorg/releases**
+**John Raphael Saenz**, trading as **ClinicIQ Solutions** · ABN **55 882 511 758** · **Wollongong NSW 2500, Australia** · Website: **https://cliniciq.com.au** · Email: **admin@cliniciq.com.au** · Distribution: **Microsoft Store** and **https://camog-license.cliniciq.com.au**

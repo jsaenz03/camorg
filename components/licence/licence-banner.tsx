@@ -45,7 +45,9 @@ export function LicenceBanner() {
         <span>
           Read-only mode — existing records stay viewable.
           {status.licence
-            ? ` Licence expired ${format(status.licence.expiresAt, 'd/MM/yyyy')}.`
+            ? status.licence.expiresAt.getTime() > Date.now()
+              ? ' This licence needs re-activating on this device.'
+              : ` Licence expired ${format(status.licence.expiresAt, 'd/MM/yyyy')}.`
             : ' Trial has ended.'}
         </span>
         <Button size="sm" variant="secondary" className="h-7" onClick={openActivation}>

@@ -52,8 +52,8 @@ export function LicenceActivationDialog() {
           </DialogTitle>
           <DialogDescription>
             {status?.licence
-              ? `Currently licensed to ${status.licence.practice} until ${format(status.licence.expiresAt, 'd/MM/yyyy')}.`
-              : 'Paste the licence key you received by email.'}
+              ? `Currently licensed to ${status.licence.practice} until ${format(status.licence.expiresAt, 'd/MM/yyyy')}. Activating confirms this device's seat — a one-time internet check.`
+              : 'Paste the licence key you received by email. Activation needs a one-time internet connection.'}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -77,7 +77,8 @@ export function LicenceActivationDialog() {
             }}
           />
           <p className="text-xs text-muted-foreground">
-            Your licence covers one practice. Line breaks from email wrapping are fine.
+            Your licence covers one practice and the device seats it was issued with. Line breaks
+            from email wrapping are fine.
           </p>
           <Button onClick={submit} disabled={submitting || !key.trim()} className="w-full">
             {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}

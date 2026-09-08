@@ -1,0 +1,24 @@
+# Camog licence activation worker — seat counting + activation tokens.
+# Deploy runbook: ./README.md. Secrets are set via `wrangler secret put`
+# (TOKEN_SIGNING_KEY, ADMIN_TOKEN) and never live in this file.
+
+name = "camog-licence"
+main = "src/worker.mjs"
+compatibility_date = "2026-08-01"
+
+# Static assets (landing page + the public legal documents the Microsoft
+# Store listing links to) are served directly; API routes fall through to
+# the worker.
+[assets]
+directory = "./public"
+
+[vars]
+# Vendor licence public key — public by design (pair of the private key in
+# .keys/licence-ed25519.private.hex). Must match lib/licence/public-key.ts.
+LICENCE_PUBLIC_KEY = "b3190c8d90d3f4e292cd40d54eef7c346841549d3f8609f0771d390499ca859e"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "camog-licence"
+# Filled once by: wrangler d1 create camog-licence  (README step 2)
+database_id = "e486c530-916c-4dc5-b08a-f9e0b2a18d18"

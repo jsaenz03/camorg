@@ -106,3 +106,21 @@ export class LicenceReadOnlyError extends Error {
     this.name = 'LicenceReadOnlyError';
   }
 }
+
+/** The activation server could not be reached (activation needs internet once). */
+export class ActivationNetworkError extends Error {
+  constructor(
+    message: string = 'Could not reach the licence server. Activating a licence needs a one-time internet connection — check the network and try again.',
+  ) {
+    super(message);
+    this.name = 'ActivationNetworkError';
+  }
+}
+
+/** Every device seat on the licence is in use (seat move is a support request). */
+export class LicenceSeatLimitError extends Error {
+  constructor(message: string = 'All device seats for this licence are in use') {
+    super(message);
+    this.name = 'LicenceSeatLimitError';
+  }
+}

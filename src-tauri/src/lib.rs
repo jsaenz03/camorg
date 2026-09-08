@@ -3,6 +3,8 @@
 // scope grants and the phone-camera tether server.
 
 mod diagnostics;
+mod licence_activation;
+mod licence_device;
 mod photo_crypto;
 mod remote_camera;
 mod report;
@@ -131,6 +133,12 @@ pub fn run() {
       sql: include_str!("../migrations/019_audit_identity_backfill.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 20,
+      description: "licence: activation token (server-side seat enforcement)",
+      sql: include_str!("../migrations/020_licence_activation.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory
@@ -210,6 +218,11 @@ pub fn run() {
       if let Ok(dir) = app.path().app_data_dir() {
         photo_crypto::init_key_path(dir.join("photo-key"));
       }
+      // The licence device-ID file lives in the home directory (deliberately
+      // outside the app data dir the database sits in — see licence_device.rs).
+      if let Ok(dir) = app.path().home_dir() {
+        licence_device::init_device_path(dir);
+      }
       diagnostics::record(
         diagnostics::Level::Info,
         "app",
@@ -227,6 +240,8 @@ pub fn run() {
     .plugin(tauri_plugin_fs::init())
     .invoke_handler(tauri::generate_handler![
       grant_directory_access,
+      licence_device::device_id,
+      licence_activation::activate_licence,
       photo_crypto::photo_encrypt_bytes,
       photo_crypto::photo_decrypt_bytes,
       report::generate_case_report,

@@ -1,6 +1,6 @@
 # Camog Privacy Policy
 
-**Effective date:** 06/09/2026 · **Version:** 1.2
+**Effective date:** 08/09/2026 · **Version:** 1.3
 
 ---
 
@@ -13,7 +13,7 @@
 ## 2. At a glance
 
 - Camog is a **local-first desktop application**. Patient records and photographs are stored in a database and image folder **on your own computer** (or a folder your organisation's administrator chooses).
-- The Software **sends no information to us**. It has no telemetry, no analytics, no advertising tools, no crash reporting and no cloud backend, and it makes no outbound internet connections.
+- Apart from the **one-time licence activation check**, the Software **sends no information to us**. It has no telemetry, no analytics, no advertising tools, no crash reporting and no cloud backend. Its only outbound internet connection is the one-time licence activation check, which never includes patient information (see clauses 4.1 and 5).
 - We never see, receive, host, back up or access your patients' information through the Software.
 - If your administrator points the storage folder at a **cloud-synced folder** (OneDrive, Dropbox, iCloud or similar), your information may leave your computer through *that provider's* service — that is your organisation's choice and is not controlled by us or the Software (see clause 10).
 - The **phone link** feature runs a small web server on your own computer so a paired phone on your network can send photos to it and — while the signed-in clinician has library sharing switched on — view the same patients and photographs that clinician can already see on the computer. Traffic between the phone and the computer is **unencrypted** (plain HTTP). Access is controlled by a random pairing code that is exchanged once for a per-device session cookie; unauthenticated requests are rate-limited and the link ends itself after 30 minutes of inactivity (see clause 8.3).
@@ -32,15 +32,19 @@ This policy has two parts:
 
 ## 4. What we collect and hold
 
-**4.1 Through the Software: nothing.** The Software collects no information for us. It has no telemetry, analytics, crash reporting, advertising integrations, or automatic update checks, and its web view is blocked from connecting to the internet. We do not receive your organisation's data, your users' account data, your patients' photographs, or any usage statistics.
+**4.1 Through the Software: almost nothing.** In normal operation the Software collects no information for us. It has no telemetry, analytics, crash reporting, advertising integrations, or automatic update checks, and its web view is blocked from connecting to the internet. We do not receive your organisation's data, your users' account data, your patients' photographs, or any usage statistics. **The one exception is licence activation** (Terms of Service clause 3.2): when a licence key is activated, the Software sends the key and a random device identifier to our activation service. The key records the licensed practice's name and licence term; the device identifier is a random value unrelated to the device's serial number, user account or location.
 
 **4.2 If you contact us** (for example, by emailing support), we hold the personal information you choose to give us, such as your name, email address, phone number, organisation name and the contents of your message (which may include information about patients if you include it — **please de-identify patient details before sending us anything**).
 
-**4.3 When you download the Software** from our distribution page **https://github.com/jsaenz03/camorg/releases**, that page is hosted by a third party (such as GitHub). Your access to the page is governed by that provider's own privacy policy and terms; we do not control it.
+**4.3 Licence activation records.** When a licence key is activated, we hold a record binding the key's fingerprint (the key itself records the licensed practice's name and licence term) to the random device identifier, with activation timestamps. It contains no patient information and no information about individual staff members. How it is used, held and disclosed is in clause 5.
+
+**4.4 When you download the Software** from the **Microsoft Store** or from our distribution page **https://camog-license.cliniciq.com.au**, that channel is operated by third parties (Microsoft; and Cloudflare, which hosts the activation service). Your access to those channels is governed by the providers' own privacy policies and terms; we do not control them.
 
 ## 5. How we use, hold and disclose that information
 
 We use contact details only to respond to your enquiry and to keep a record of our correspondence. We hold correspondence only as long as needed for that purpose, then delete or de-identify it. We do not use it for direct marketing and do not disclose it except to service providers who help us operate our communications (such as email hosting) under confidentiality, or where required by law.
+
+Licence activation records (clause 4.3) are used only to enforce the device seats a licence covers and to support seat moves when a practice replaces a computer. They are held in Cloudflare's D1 database service for the licence term plus 12 months, then deleted. Cloudflare processes them only to host and secure the activation service (see clause 10).
 
 ## Part B — How Camog handles personal and health information
 
@@ -68,13 +72,13 @@ The Software does **not** collect: address, phone number, email address, Medicar
 
 **7.3 Security measures built into the Software.** Account passcodes are hashed with PBKDF2-SHA256 using a per-user random salt (passcodes are never stored in readable form); access is role-based (administrators see all patients; clinicians see only patients they own, that are organisation-shared, or explicitly granted to them); each account session expires after a configurable timeout; an idle privacy screen covers patient information after a configurable period of inactivity; all significant actions are written to an append-only audit log that administrators can review; and the phone-link server authenticates each request with a per-device session cookie issued when the phone first presents its random pairing code. The pairing code and sessions live only in the app's memory and the pairing code in the app data folder — sessions end when the link ends (manually, on app restart, or after 30 minutes of phone inactivity); unauthenticated requests are rate-limited per source address and answered identically to unknown routes; and the photo files the phone may fetch are restricted to an explicit whitelist of filenames.
 
-**7.4 Honest limitations you should plan around.** Photographs and thumbnails are **encrypted by the Software at rest** (AES-256-GCM); the decryption key is generated by the Software and held in a key file inside the application data directory (owner-only file permissions), and photographs cannot be opened without it. The **database is not encrypted** by the Software, and neither are exported report PDFs. Attached result files are **encrypted at rest** with the same key as photographs. Database backups are **encrypted with a passphrase** your practice chooses each time it creates a backup — the Software cannot recover a lost passphrase, and a backup without its passphrase cannot be restored. Backups are not scheduled automatically. Deleted photos are soft-deleted (recoverable) and no feature permanently deletes a patient record. We recommend full-disk encryption on every device running Camog, physically secured storage folders, and secure handling of backup files.
+**7.4 Honest limitations you should plan around.** Photographs and thumbnails are **encrypted by the Software at rest** (AES-256-GCM); the decryption key is generated by the Software and held in a key file inside the application data directory (owner-only file permissions), and photographs cannot be opened without it. The **database is not encrypted** by the Software, and neither are exported report PDFs. Attached result files are **encrypted at rest** with the same key as photographs. Database backups are **encrypted with a passphrase** your practice chooses each time it creates a backup — the Software cannot recover a lost passphrase, and a backup without its passphrase cannot be restored. Backups are not scheduled automatically. Deleted photos are soft-deleted (recoverable) and no feature permanently deletes a patient record. Licence activation also keeps a random device-identifier file (~/.camog/device-id) in the user's home directory, deliberately outside the application data folder; it contains no patient information, and deleting it simply means the licence must be re-activated (one internet check). We recommend full-disk encryption on every device running Camog, physically secured storage folders, and secure handling of backup files.
 
 ## 8. Use and disclosure (APP 1.4(c), APP 6)
 
 **8.1 Use.** All processing happens on your organisation's device. The Software uses patient information for: clinical documentation and monitoring of conditions over time (for example wound or lesion progression using the photo compare feature); practice administration and access control; accountability through the audit log; and backup.
 
-**8.2 Disclosure by the Software: none.** The Software does not disclose patient information to us or to any third party. It makes no outbound connections.
+**8.2 Disclosure by the Software: none.** The Software does not disclose patient information to us or to any third party. Its only outbound connection is the licence activation check (Terms of Service clause 3.2), which contains no patient information.
 
 **8.3 Disclosures your organisation controls.** Your organisation is responsible for ensuring each of the following has a lawful basis (generally, the primary purpose of providing health care, or consent):
 
@@ -92,6 +96,8 @@ The Software does not use, and must not be used to use, health information for d
 ## 10. Overseas disclosure (APP 1.4(f), APP 8)
 
 The Software itself discloses no information to anyone, in Australia or overseas. However, if your administrator configures storage or backups inside a cloud-synced folder, your provider may store the data on servers outside Australia. Your organisation must take reasonable steps (for example, checking the provider's privacy policy and contractual commitments) to ensure that provider protects the information to a standard substantially similar to the Australian Privacy Principles — and you remain accountable for it under APP 8.
+
+Our activation service is hosted on Cloudflare's worldwide network, so licence activation records (clause 4.3) may be processed outside Australia. Cloudflare is bound by its own privacy commitments as our infrastructure provider, and we remain accountable under APP 8 for that processing.
 
 ## 11. Health information, consent and clinical photography (APP 3)
 
@@ -113,7 +119,7 @@ Patients should direct requests for access to, or correction of, their informati
 
 The Software has **no automatic retention or destruction**: patients can only be archived (not deleted), photos are soft-deleted (recoverable), and no data is ever purged automatically. Your organisation must apply the health record retention rules applicable to your practice — as a general guide, health records must be retained for at least 7 years after the last entry, and records of child patients until the child turns 25, but the exact periods vary by state and territory and you should confirm your obligations.
 
-To truly destroy all Camog data on a device you must delete: the application data directory (which contains the database), **the configured storage folder** (photographs, thumbnails and any backups), and every copy of every backup file you created — and then securely erase them (for example, by wiping the drive). Deleting the app alone is not enough: encrypted photographs can only be read with the key file the Software keeps in the application data directory — deleting that directory also destroys the key. (Versions before 0.4.7 kept the key in the operating system's credential store; the Software migrates it to the key file and removes the old entry automatically.)
+To truly destroy all Camog data on a device you must delete: the application data directory (which contains the database), **the configured storage folder** (photographs, thumbnails and any backups), and every copy of every backup file you created — and then securely erase them (for example, by wiping the drive). Deleting the app alone is not enough: encrypted photographs can only be read with the key file the Software keeps in the application data directory — deleting that directory also destroys the key. (Versions before 0.4.7 kept the key in the operating system's credential store; the Software migrates it to the key file and removes the old entry automatically.) The licence device-identifier file (~/.camog/device-id) is stored in the user's home directory (clause 7.4); delete it too if you also want to clear that device's activation.
 
 ## 15. State and territory health privacy laws
 
@@ -146,7 +152,7 @@ From 10 December 2026, APP entities must disclose in their privacy policies the 
 
 ## 18. Changes to this policy
 
-We may update this policy from time to time. The current version, with its effective date, will be published at **https://github.com/jsaenz03/camorg/releases**. If we make a material change to how the Software handles information (for example, adding any telemetry or cloud feature), we will update this policy before or with the release that makes the change.
+We may update this policy from time to time. The current version, with its effective date, will be published at **https://camog-license.cliniciq.com.au**. If we make a material change to how the Software handles information (for example, adding any telemetry or cloud feature), we will update this policy before or with the release that makes the change.
 
 ## 19. Complaints
 
