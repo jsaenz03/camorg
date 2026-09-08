@@ -223,6 +223,11 @@ function CaptureFlow({
   // (photos the phone sent while no capture was open). A restored draft that
   // came from the tray is re-linked so saving also clears the staged file.
   useEffect(() => {
+    // A close during the (slow, decrypting) tray/draft reads must not let the
+    // orphaned closure toast its restore into the freshly mounted dialog —
+    // that double-toasts next to the new mount's own restore. Same disposed
+    // pattern as the phone-photo listener below.
+    let disposed = false;
     void (async () => {
       let entries: PendingPhotoEntry[] = [];
       try {
@@ -234,28 +239,41 @@ function CaptureFlow({
       const draft = readCaptureDraft();
       if (draft) {
         const linked = entries.find((e) => e.capturedAt === draft.capturedAt);
-        if (linked) {
-          setActivePendingId(linked.id);
-          if (linked.linkPhotoId) {
-            void resolveFollowUp(linked.linkPhotoId).then((link) => {
-              if (link) setPendingLink(link);
-            });
-          } else if (linked.patientId) {
-            void resolvePatientHint(linked.patientId).then((hint) => {
-              if (hint) setPatientHint(hint);
-            });
-          }
-        }
         try {
           const photo = await draftToCapturedPhoto(draft);
+          if (disposed) return;
+          // Only mark the staged copy in-review once the restore actually has
+          // a photo to show: marking first meant a failed restore left the
+          // tray thumbnail disabled with an empty form, so tapping it did
+          // nothing until the dialog was reopened (the draft was gone by then).
+          if (linked) {
+            setActivePendingId(linked.id);
+            if (linked.linkPhotoId) {
+              void resolveFollowUp(linked.linkPhotoId).then((link) => {
+                if (link) setPendingLink(link);
+              });
+            } else if (linked.patientId) {
+              void resolvePatientHint(linked.patientId).then((hint) => {
+                if (hint) setPatientHint(hint);
+              });
+            }
+          }
           setCapturedPhoto(photo);
-          toast.info('Restored your unsaved photo from earlier — save it or retake.');
+          // The draft re-restores on every open until saved, so a quick
+          // close-and-reopen would stack identical toasts — one id collapses
+          // them into a single bubble.
+          toast.info('Restored your unsaved photo from earlier — save it or retake.', {
+            id: 'capture-draft-restored',
+          });
         } catch {
           clearCaptureDraft();
         }
       }
-      setPending(entries);
+      if (!disposed) setPending(entries);
     })();
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   // One owner per photo while the dialog is open: the companion provider's
