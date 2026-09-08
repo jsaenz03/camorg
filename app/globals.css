@@ -147,6 +147,9 @@
   .print-report .print-break {
     break-inside: avoid;
   }
+  .print-report .print-keep {
+    break-after: avoid;
+  }
   @page {
     margin: 12mm;
   }

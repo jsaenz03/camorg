@@ -116,6 +116,11 @@ pub struct ReportPhoto {
   pub subpart: Option<String>,
   #[serde(default)]
   pub clinical_notes: Option<String>,
+  /// Lesion series name; photos sharing one arrive as a contiguous block
+  /// (ordered by the caller) and open with a "Linked series" heading. Absent
+  /// on unlinked photos and callers predating series grouping.
+  #[serde(default)]
+  pub series_label: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -1057,6 +1062,39 @@ fn draw_entry(s: &mut Surface, fig: &Figure, fonts: &Fonts, y_top: f32) -> f32 {
   y_top + dh.max(caption_bottom - y_top)
 }
 
+/// How many photos of the report belong to `name` — the member count shown on
+/// the heading, so a patient can check they have seen every photo of a lesion.
+fn series_member_count(photos: &[PhotoDraw], name: &str) -> usize {
+  photos
+    .iter()
+    .filter(|p| p.photo.series_label.as_deref() == Some(name))
+    .count()
+}
+
+/// The heading's text lines: the clinician's series name plus the member count.
+fn series_heading_lines(name: &str, count: usize, fonts: &Fonts) -> Vec<String> {
+  let count_label = if count == 1 { String::from("1 photo") } else { format!("{count} photos") };
+  wrap_text(&format!("{name} ({count_label})"), &fonts.medium, 10.0, CONTENT_W)
+}
+
+/// Height a series heading occupies, mirroring draw_series_heading's math.
+fn series_heading_height(name: &str, count: usize, fonts: &Fonts) -> f32 {
+  25.0 + series_heading_lines(name, count, fonts).len() as f32 * 12.0
+}
+
+/// Opens a series block: tracked micro label, then the series name with its
+/// member count. Drawn once where the block starts; the block's photos follow
+/// contiguously (the caller's ordering keeps them together).
+fn draw_series_heading(s: &mut Surface, y_top: f32, name: &str, count: usize, fonts: &Fonts) -> f32 {
+  tracked(s, MARGIN_X, y_top + 8.0, &fonts.micro(), "LINKED SERIES");
+  let mut cy = y_top + 21.0;
+  for line in series_heading_lines(name, count, fonts) {
+    text(s, MARGIN_X, cy, &fonts.medium, 10.0, &line, ink());
+    cy += 12.0;
+  }
+  series_heading_height(name, count, fonts)
+}
+
 /// Render the full document. `total_pages` is 0 on the first pass (footers
 /// omit the total); the caller re-renders with the counted total so every
 /// footer can say "Page x of y". Layout is a pure function of the inputs, so
@@ -1081,9 +1119,18 @@ fn render_report(
   let mut y = draw_header(&mut surface, req, fonts);
 
   let total = photos.len();
+  let mut prev_series: Option<&str> = None;
   for (i, pd) in photos.iter().enumerate() {
     let fig = Figure { pd, index: i + 1, total };
-    let h = entry_height(pd, fonts);
+    let series = pd.photo.series_label.as_deref();
+    let opens_series = series.is_some() && series != prev_series;
+    // A series heading counts toward the entry's height and moves to the next
+    // page with its first photo — never stranded at a page bottom.
+    let heading_h = match (opens_series, series) {
+      (true, Some(name)) => series_heading_height(name, series_member_count(photos, name), fonts),
+      _ => 0.0,
+    };
+    let h = heading_h + entry_height(pd, fonts);
     if y + h > CONTENT_BOTTOM {
       finish_page_footer(&mut surface, fonts, pages, total_pages);
       surface.finish();
@@ -1093,6 +1140,10 @@ fn render_report(
       pages += 1;
       y = draw_continuation_header(&mut surface, req, fonts);
     }
+    if let (true, Some(name)) = (opens_series, series) {
+      y += draw_series_heading(&mut surface, y, name, series_member_count(photos, name), fonts);
+    }
+    prev_series = series;
     y = draw_entry(&mut surface, &fig, fonts, y) + ENTRY_GAP;
   }
 
@@ -1341,6 +1392,30 @@ mod tests {
   }
 
   #[test]
+  fn series_heading_lines_fit_column_and_count_members() {
+    let f = load_fonts();
+    // One member and many read naturally.
+    assert_eq!(series_heading_lines("Short", 1, &f), vec!["Short (1 photo)"]);
+    assert_eq!(series_heading_lines("Short", 3, &f), vec!["Short (3 photos)"]);
+    // A long clinician-authored name (up to 100 chars) wraps inside the
+    // content column instead of running off the page.
+    let long = "Left cheek mole near the jawline first photographed in March ".repeat(2);
+    let lines = series_heading_lines(&long, 3, &f);
+    assert!(lines.len() >= 2, "long name must wrap: {lines:?}");
+    for line in &lines {
+      assert!(
+        f.medium.width(line, 10.0) <= CONTENT_W + 1.0,
+        "heading line overflows: {line:?}"
+      );
+    }
+    // Height tracks the wrapped line count, so pagination stays exact.
+    assert_eq!(
+      series_heading_height(&long, 3, &f),
+      25.0 + lines.len() as f32 * 12.0
+    );
+  }
+
+  #[test]
   fn renders_multipage_pdf_with_stable_pagination() {
     let sample = include_bytes!("../testdata/sample.jpg");
     let photo_meta: Vec<ReportPhoto> = (0..7)
@@ -1363,6 +1438,9 @@ mod tests {
           clinical_notes: Some(String::from(
             "Review photo. Border appears stable compared with the previous capture; no ulceration.",
           )),
+          // Photos 3 and 4 form one series block: the heading draws once where
+          // the block opens and the second photo continues without one.
+          series_label: (2..=3).contains(&i).then(|| String::from("Left cheek mole review")),
         }
       })
       .collect();

@@ -45,6 +45,7 @@ import {
   type PhotoReviewState,
 } from '@/lib/utils/photo-review';
 import { formatDateOfBirth } from '@/lib/utils/date-formatting';
+import { orderReportPhotos } from '@/lib/utils/report-order';
 
 class CompanionService {
   /**
@@ -178,6 +179,9 @@ class CompanionService {
     const active = photos
       .filter((ph) => photoPaths.has(ph.id))
       .sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
+    // The phone report reads like the desktop one: chronological spine, with
+    // each linked series kept contiguous under its heading.
+    const ordered = orderReportPhotos(active);
 
     const consent = consentStatus(patient);
     const consentLabel =
@@ -208,12 +212,13 @@ class CompanionService {
                 'dd/MM/yyyy',
               )}`
             : null,
-        photos: active.map((ph) => ({
+        photos: ordered.map((ph) => ({
           path: photoPaths.get(ph.id),
           capturedLabel: format(ph.capturedAt, 'dd/MM/yyyy'),
           bodyPart: bodyPartDisplayLabel(ph.bodyPart, ph.laterality),
           subpart: ph.subpart,
           clinicalNotes: ph.clinicalNotes,
+          seriesLabel: ph.lesionGroup,
         })),
       },
     });

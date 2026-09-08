@@ -28,6 +28,7 @@ import { photoService } from '@/lib/services/photo-service';
 import { auditService } from '@/lib/services/audit-service';
 import { accessService } from '@/lib/services/access-service';
 import { formatDateOfBirth } from '@/lib/utils/date-formatting';
+import { orderReportPhotos } from '@/lib/utils/report-order';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
@@ -45,6 +46,8 @@ interface ReportPhoto {
   pin: Pinpoint | null;
   subpart: string | null;
   clinicalNotes: string | null;
+  /** Lesion series; photos sharing one are kept contiguous under a heading. */
+  lesionGroup: string | null;
 }
 
 /** "Left hand" — side prefixed onto the display label for paired regions. */
@@ -101,15 +104,19 @@ function ReportView() {
         setPreparedBy(clinician ?? p.ownerName ?? 'Clinician');
         if (cancelled) return;
 
-        // Full-size images, oldest first (the report reads chronologically).
+        // Full-size images, oldest first (the report reads chronologically),
+        // except that photos linked into a lesion series are grouped into one
+        // contiguous block positioned at the series' earliest capture, so a
+        // patient reads each lesion's story front to back.
         // ponytail: capped at 50 — every image loads as a full-size base64
         // data URL, so a large timeline would freeze the report page.
         // Upgrade path: paginate the report or print from scaled-down copies.
         const MAX_REPORT_PHOTOS = 50;
-        const ordered = [...records]
+        const recent = [...records]
           .sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime())
           .slice(0, MAX_REPORT_PHOTOS)
           .sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
+        const ordered = orderReportPhotos(recent);
         const paths = await photoService.getActivePhotoFilePaths(patientId);
         const loaded: ReportPhoto[] = [];
         const bad: string[] = [];
@@ -135,6 +142,7 @@ function ReportView() {
                   : null,
               subpart: r.subpart,
               clinicalNotes: r.clinicalNotes,
+              lesionGroup: r.lesionGroup,
             });
           } catch {
             bad.push(r.id);
@@ -183,9 +191,23 @@ function ReportView() {
 
   const timelineLabel = useMemo(() => {
     if (photos.length === 0) return null;
-    const first = photos[0].capturedAt;
-    const last = photos[photos.length - 1].capturedAt;
+    // Series grouping means the array's ends are not its date extremes (a
+    // block starting early can hold the latest capture), so take min/max.
+    const times = photos.map((p) => p.capturedAt.getTime());
+    const first = new Date(Math.min(...times));
+    const last = new Date(Math.max(...times));
     return `${format(first, 'dd/MM/yyyy')} to ${format(last, 'dd/MM/yyyy')}`;
+  }, [photos]);
+
+  /** Series name → photo count, for the "n photos" note on series headings. */
+  const seriesCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const photo of photos) {
+      if (photo.lesionGroup) {
+        counts.set(photo.lesionGroup, (counts.get(photo.lesionGroup) ?? 0) + 1);
+      }
+    }
+    return counts;
   }, [photos]);
 
   function handlePrint() {
@@ -239,6 +261,7 @@ function ReportView() {
             pinView: p.pin?.view ?? null,
             subpart: p.subpart,
             clinicalNotes: p.clinicalNotes,
+            seriesLabel: p.lesionGroup,
           })),
         },
       });
@@ -380,7 +403,23 @@ function ReportView() {
         ) : (
           <div className="mt-8 space-y-8">
             {photos.map((photo, i) => (
-              <figure key={photo.id} className="print-break flex flex-col gap-4 sm:flex-row">
+              <div key={photo.id}>
+                {photo.lesionGroup && photos[i - 1]?.lesionGroup !== photo.lesionGroup && (
+                  <div className="print-keep">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                      Linked series · {seriesCounts.get(photo.lesionGroup)}{' '}
+                      {seriesCounts.get(photo.lesionGroup) === 1 ? 'photo' : 'photos'}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold">{photo.lesionGroup}</p>
+                  </div>
+                )}
+                <figure
+                  className={`print-break flex flex-col gap-4 sm:flex-row ${
+                    photo.lesionGroup && photos[i - 1]?.lesionGroup !== photo.lesionGroup
+                      ? 'mt-4'
+                      : ''
+                  }`}
+                >
                 <img
                   src={photo.url}
                   alt={`Photo ${i + 1}: ${photo.bodyPart}, taken ${format(photo.capturedAt, 'd MMM yyyy')}`}
@@ -442,6 +481,7 @@ function ReportView() {
                   ) : null}
                 </figcaption>
               </figure>
+              </div>
             ))}
           </div>
         )}
