@@ -4,8 +4,8 @@
  * Owns the phone link session at app level: starts/stops the tether server,
  * publishes the shared library, tracks phone connectivity, and catches photos
  * the phone sends while the capture screen is not mounted — they are staged
- * in the pending-photos tray (pending-photo-service) with a toast, so a
- * mid-consult snap is never lost.
+ * in the pending-photos tray (pending-photo-service) and the capture dialog
+ * opens on the snap straight away, so a mid-consult snap is never lost.
  *
  * Mounted once in the dashboard layout; the sidebar entry and the Phone link
  * dialog both consume this context. Ending the session (or unmounting, e.g.
@@ -39,7 +39,7 @@ import { ATTENTION_CHANGED_EVENT } from '@/lib/services/attention-events';
 import { useCapture } from '@/components/capture/capture-provider';
 import { auditService } from '@/lib/services/audit-service';
 import { photoService } from '@/lib/services/photo-service';
-import { storePendingPhoto, listPendingPhotos } from '@/lib/services/pending-photo-service';
+import { storePendingPhoto } from '@/lib/services/pending-photo-service';
 import { remotePhotoToCapturedPhoto } from '@/lib/services/camera-service';
 import type {
   CompanionPatientRequestEvent,
@@ -223,29 +223,22 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
         try {
           const photo = await remotePhotoToCapturedPhoto(event.payload.data);
           // A "Snap photo" review follow-up: this snap joins the reviewed
-          // photo's lesion series when it is saved from the tray. A
-          // patient-tagged snap (the phone's Take photo on a patient screen)
-          // carries that patient so the save prefills their details.
+          // photo's lesion series when it is saved. A patient-tagged snap
+          // (the phone's Take photo on a patient screen) carries that
+          // patient so the save prefills their details.
           const linkPhotoId = consumeReviewFollowUp();
-          await storePendingPhoto(
+          const entry = await storePendingPhoto(
             photo,
             linkPhotoId ?? undefined,
             event.payload.patientId ?? undefined,
           );
-          // Count the tray (not just this photo) so a burst of snaps reads
-          // correctly in one toast.
-          const waiting = (await listPendingPhotos().catch(() => [])).length;
-          toast('Photo received from your phone', {
-            description: linkPhotoId
-              ? 'Review follow-up — saving it links it into the reviewed photo’s series.'
-              : waiting > 1
-                ? `${waiting} photos are waiting in Capture for review.`
-                : 'Open Capture to review and save it.',
-            action: {
-              label: 'Review',
-              onClick: () => openCapture(),
-            },
-          });
+          // The snap opens the edit form straight away — a photo just taken
+          // on the phone wants reviewing now, not a hunt for a toast later.
+          // A patient file open beneath folds in through the ambient merge,
+          // so the form is addressed to that patient; outside one the snap
+          // keeps its own address (review follow-up or phone patient tag),
+          // and with neither the patient field waits to be filled.
+          openCapture({ pendingPhotoId: entry.id });
         } catch (error) {
           console.error('Failed to process photo from phone:', error);
           toast.error('Received the photo from your phone but could not read it. Try again.');

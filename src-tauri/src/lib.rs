@@ -6,6 +6,7 @@ mod diagnostics;
 mod licence_activation;
 mod licence_device;
 mod photo_crypto;
+mod provenance;
 mod remote_camera;
 mod report;
 

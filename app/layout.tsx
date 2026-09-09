@@ -25,6 +25,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Camog - Clinical Photo Documentation",
   description: "Clinical photo documentation system for capturing and managing patient photos",
+  // Silent provenance (src-tauri/src/provenance.rs): emitted as a meta tag
+  // in the exported HTML head — never rendered; audited by
+  // scripts/self-check-provenance.mjs.
+  other: { "camog-provenance": "com.camog.app" },
 };
 
 export default function RootLayout({

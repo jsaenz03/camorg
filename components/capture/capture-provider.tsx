@@ -43,9 +43,15 @@ export interface CaptureOptions {
   patientId?: string;
   /**
    * Review follow-up: after save, join this photo's lesion series (or start
-   * one anchored to it) so the new photo links to the original.
+   * one anchored to it) so the saved photo links to the original.
    */
   linkPhotoId?: string;
+  /**
+   * Staged tray photo to load straight into the review form on open — a
+   * phone snap that auto-opened the dialog (the companion provider stages
+   * the file, then opens capture with its tray id).
+   */
+  pendingPhotoId?: string;
   /** Prefill the metadata form — a review follow-up inherits the original's location. */
   prefill?: CapturePrefill;
   /** Called with the patient id after a successful save; skips the timeline navigation. */
@@ -86,7 +92,7 @@ interface CaptureContextValue {
   /**
    * Declare the patient file open beneath any capture (the patient view
    * page sets it on mount, clears it on unmount). A context-free
-   * openCapture — the phone-photo toast's Review action — inherits their
+   * openCapture — the companion provider's snap auto-open — inherits their
    * address, so every capture opened inside a patient's file is addressed
    * to that patient.
    */
@@ -142,7 +148,7 @@ export function CaptureProvider({ children }: { children: ReactNode }) {
 export function CaptureHost() {
   const host = useContext(CaptureHostContext);
   if (!host) throw new Error('CaptureHost must be used within CaptureProvider');
-  const { patientId, patientName, patientDob, linkPhotoId, prefill, onSaved } =
+  const { patientId, patientName, patientDob, linkPhotoId, pendingPhotoId, prefill, onSaved } =
     host.optionsRef.current;
   return (
     <CaptureDialog
@@ -152,6 +158,7 @@ export function CaptureHost() {
       patientName={patientName}
       patientDob={patientDob}
       linkPhotoId={linkPhotoId}
+      pendingPhotoId={pendingPhotoId}
       prefill={prefill}
       onSaved={onSaved}
     />

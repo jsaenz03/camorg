@@ -10,9 +10,11 @@ records.
 ## Decisions
 
 - **Commercial model**: per-practice subscription; tier (`solo`/`practice`/
-  `clinic`), seat count, and expiry ride inside a signed payload. Nothing is
-  enforced server-side (there is no server); seats are honour-system until a
-  future activation endpoint exists (phase 2, if ever needed).
+  `clinic`), seat count, and expiry ride inside a signed payload. Nothing was
+  enforced server-side when this spec shipped — seats were honour-system
+  until the activation endpoint shipped as spec 003
+  (`specs/003-licence-activation/spec.md`); the key format and on-device
+  states below are unchanged.
 - **Enforcement unit**: the install (machine). Each install stores its own
   licence in its own SQLite settings row.
 - **Trial**: 14 days from first launch, stamped lazily on the first

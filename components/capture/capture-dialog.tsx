@@ -79,13 +79,15 @@ export interface CaptureDialogProps {
   patientId?: string;
   /** Review follow-up: link the saved photo to this one's lesion series. */
   linkPhotoId?: string;
+  /** Staged tray photo to load straight into the review form on open. */
+  pendingPhotoId?: string;
   /** Prefill the metadata form — a review follow-up inherits the original's location. */
   prefill?: CapturePrefill;
   /** Called with the patient id after a successful save; skips the timeline navigation. */
   onSaved?: (patientId: string) => void;
 }
 
-export function CaptureDialog({ open, onOpenChange, patientId, patientName, patientDob, linkPhotoId, prefill, onSaved }: CaptureDialogProps) {
+export function CaptureDialog({ open, onOpenChange, patientId, patientName, patientDob, linkPhotoId, pendingPhotoId, prefill, onSaved }: CaptureDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Width tiers override the default sm:max-w-lg; the layout inside keys
@@ -107,6 +109,7 @@ export function CaptureDialog({ open, onOpenChange, patientId, patientName, pati
             patientName={patientName}
             patientDob={patientDob}
             linkPhotoId={linkPhotoId}
+            pendingPhotoId={pendingPhotoId}
             prefill={prefill}
             onSaved={onSaved}
             onClose={() => onOpenChange(false)}
@@ -144,6 +147,7 @@ function CaptureFlow({
   patientName,
   patientDob,
   linkPhotoId,
+  pendingPhotoId,
   prefill,
   onSaved,
   onClose,
@@ -152,6 +156,7 @@ function CaptureFlow({
   patientName?: string;
   patientDob?: string;
   linkPhotoId?: string;
+  pendingPhotoId?: string;
   prefill?: CapturePrefill;
   onSaved?: (patientId: string) => void;
   onClose: () => void;
@@ -236,12 +241,16 @@ function CaptureFlow({
         // Tray unreadable — capture still works; the draft restore below is
         // the safety net that matters for the current session.
       }
+      let draftRestored = false;
       const draft = readCaptureDraft();
       if (draft) {
         const linked = entries.find((e) => e.capturedAt === draft.capturedAt);
         try {
           const photo = await draftToCapturedPhoto(draft);
           if (disposed) return;
+          // Only true once the restore actually has a photo to show — a
+          // failed restore must not block the snap auto-open below.
+          draftRestored = true;
           // Only mark the staged copy in-review once the restore actually has
           // a photo to show: marking first meant a failed restore left the
           // tray thumbnail disabled with an empty form, so tapping it did
@@ -269,11 +278,44 @@ function CaptureFlow({
           clearCaptureDraft();
         }
       }
+      // A phone snap that auto-opened this dialog (the companion provider
+      // stages the file, then opens capture with its tray id) lands straight
+      // in the review form — the same resolution a tray tile tap runs, so
+      // its follow-up link / patient hint resolve before the form mounts.
+      // A restored draft keeps the form instead: the older photo stays under
+      // review and the new snap waits in the tray.
+      if (pendingPhotoId && !draftRestored) {
+        const entry = entries.find((e) => e.id === pendingPhotoId);
+        if (entry) {
+          try {
+            const photo = await loadPendingPhoto(entry.id);
+            const link = entry.linkPhotoId
+              ? await resolveFollowUp(entry.linkPhotoId).catch(() => null)
+              : null;
+            const hint = !link && entry.patientId
+              ? await resolvePatientHint(entry.patientId).catch(() => null)
+              : null;
+            if (!disposed) {
+              setActivePendingId(entry.id);
+              setCapturedPhoto(photo);
+              setPendingLink(link);
+              setPatientHint(hint);
+              if (!saveCaptureDraft(photo)) {
+                console.warn('[capture] draft could not be persisted (storage quota)');
+              }
+            }
+          } catch (error) {
+            // Loading failed — the photo stays in the tray for a manual tap.
+            console.error('Failed to auto-open the staged phone photo:', error);
+          }
+        }
+      }
       if (!disposed) setPending(entries);
     })();
     return () => {
       disposed = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one capture visit per mount; pendingPhotoId is the open-time value
   }, []);
 
   // One owner per photo while the dialog is open: the companion provider's

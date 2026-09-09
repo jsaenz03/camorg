@@ -6,7 +6,7 @@
  *
  *  1. A capture opened inside a patient file always addresses the photo to
  *     that patient — whatever entry point opened the dialog (the patient
- *     page's Capture button, the phone-photo toast's Review action) and
+ *     page's Capture button, the companion provider's snap auto-open) and
  *     whatever the photo itself carries. The photo's own address (a phone
  *     patient tag, a staged review follow-up) is kept only when no patient
  *     file is open (dashboard, photos page) — the snap keeps what it was
@@ -30,7 +30,7 @@ export interface PatientAddress {
  * Fold the ambient patient (the file open beneath the dialog) into an
  * openCapture call. An explicitly addressed capture (the patient page's
  * button, a review follow-up) is complete as called; ambient fills only a
- * context-free open — the phone-photo toast's Review action — so every
+ * context-free open — the companion provider's snap auto-open — so every
  * entry point inside a patient's file carries the same address.
  */
 export function mergeCaptureOptions(

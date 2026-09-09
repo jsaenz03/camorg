@@ -292,10 +292,21 @@ export default function HomePage() {
           title="No patients yet"
           description="Capture your first photo to create a patient record and start a timeline."
           action={
-            <Button onClick={() => openCapture()}>
-              <Camera className="size-4" />
-              Capture first photo
-            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button onClick={() => openCapture()}>
+                <Camera className="size-4" />
+                Capture first photo
+              </Button>
+              {/* Pairing stays reachable before the first photo exists: the
+                  header's Phone link button only renders once the dashboard
+                  widgets do, and its dialog is where the Tailscale URLs live. */}
+              <PhoneLinkDialog>
+                <Button variant="outline">
+                  <Smartphone className="size-4" />
+                  Phone link
+                </Button>
+              </PhoneLinkDialog>
+            </div>
           }
         />
       </div>

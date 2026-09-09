@@ -1109,7 +1109,10 @@ fn render_report(
   document.set_metadata(
     Metadata::new()
       .title(format!("Patient case report - {}", req.patient_name))
-      .creator(String::from("Camog"))
+      // Silent provenance: the document-info Creator field (PDF properties,
+      // never the document itself) carries the ownership mark, so every
+      // report leaving the device stays attributable (provenance.rs).
+      .creator(format!("Camog | {}", crate::provenance::PROVENANCE))
       .authors(vec![req.prepared_by.clone()]),
   );
 
