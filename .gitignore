@@ -65,3 +65,11 @@ guide/
 # installer binaries served by the activation worker (synced per release,
 # never committed — see activation-server/README.md)
 /activation-server/public/download/
+
+# OpenNext
+.open-next
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
