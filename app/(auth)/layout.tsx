@@ -12,7 +12,6 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Aperture } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useBranding } from '@/components/branding-boot';
@@ -40,12 +39,8 @@ export default function AuthLayout({
           href="/"
           className="mb-8 flex items-center justify-center gap-2 font-semibold tracking-tight"
         >
-          {logoDataUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element -- inline data URL, nothing for next/image to optimise
-            <img src={logoDataUrl} alt={orgName} className="size-6 object-contain" />
-          ) : (
-            <Aperture className="size-6 text-primary" />
-          )}
+          {/* eslint-disable-next-line @next/next/no-img-element -- inline data URL / static asset, nothing for next/image to optimise */}
+          <img src={logoDataUrl ?? '/logo.png'} alt={orgName} className="size-6 object-contain" />
           <span className="text-lg">{orgName}</span>
         </Link>
         {children}
