@@ -109,13 +109,119 @@ export function formatDateAU(ms) {
 }
 
 const escapeHtml = (s) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+/** Fills {{token}} placeholders; unknown tokens are left verbatim. */
+const fillTemplate = (template, values) =>
+  String(template).replace(/\{\{(\w+)\}\}/g, (raw, k) => (k in values ? values[k] : raw));
+
+// The licence email, ported verbatim from licence-keygen's
+// DEFAULT_EMAIL_TEMPLATE (core.mjs) so keygen-issued and webhook-issued keys
+// arrive in the same ClinicIQ livery: navy/gold header with the inline
+// cid:cliniciq-logo, key in a gold-edged mono panel, spec table, footer.
+// The logo PNG is served from this worker (public/logo-email.png) and
+// attached at send time by Resend with a matching content_id.
+const LICENCE_EMAIL_TEMPLATE = `<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Your {{app}} licence key</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f2f6fa;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f6fa;">
+      <tr>
+        <td align="center" style="padding:32px 12px;">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:100%;background:#ffffff;border:1px solid #d8e4f0;border-radius:10px;overflow:hidden;">
+            <tr>
+              <td style="background:#36494e;padding:24px 36px;">
+                <table role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="padding-right:14px;"><img src="cid:cliniciq-logo" alt="ClinicIQ Solutions" width="44" height="44" style="display:block;border:0;" /></td>
+                    <td>
+                      <div style="font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:17px;font-weight:700;letter-spacing:-0.01em;color:#ffffff;">{{vendor}}</div>
+                      <div style="margin-top:3px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12.5px;color:#a9cef4;">Licence delivery</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr><td style="height:3px;background:#c4a661;" height="3">&nbsp;</td></tr>
+            <tr>
+              <td style="padding:32px 36px 0;">
+                <h1 style="margin:0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:21px;font-weight:700;letter-spacing:-0.01em;color:#36494e;">Your {{app}} licence key</h1>
+                <p style="margin:14px 0 0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14.5px;line-height:1.6;color:#1a1d20;">Hi {{name}},</p>
+                <p style="margin:10px 0 0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14.5px;line-height:1.6;color:#1a1d20;">Thank you for your purchase. Here is the licence key for {{app}}; it unlocks {{seats_label}} and is valid until {{expiry}}.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 36px 0;">
+                <div style="font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#597081;">Licence key</div>
+                <div style="margin-top:8px;padding:14px 16px;background:#eef3f8;border:1px solid #d8e4f0;border-left:3px solid #c4a661;border-radius:10px;font-family:ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:13px;line-height:1.6;color:#36494e;word-break:break-all;">{{key}}</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 36px 0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #d8e4f0;">
+                  <tr>
+                    <td style="padding:9px 0;width:40%;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#597081;">Product</td>
+                    <td align="right" style="padding:9px 0;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:600;color:#1a1d20;">{{app}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:9px 0;width:40%;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#597081;">Licensed to</td>
+                    <td align="right" style="padding:9px 0;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:600;color:#1a1d20;">{{name}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:9px 0;width:40%;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#597081;">Tier</td>
+                    <td align="right" style="padding:9px 0;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:600;color:#1a1d20;">{{tier}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:9px 0;width:40%;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#597081;">Seats</td>
+                    <td align="right" style="padding:9px 0;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:600;color:#1a1d20;">{{seats}}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:9px 0;width:40%;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#597081;">Valid until</td>
+                    <td align="right" style="padding:9px 0;border-bottom:1px solid #d8e4f0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:600;color:#1a1d20;">{{expiry}}</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 36px 0;">
+                <p style="margin:0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.6;color:#1a1d20;">To activate, open {{app}} and paste the key when prompted. Activation needs a one-time internet connection; after that {{app}} runs fully offline for the licence term. Line breaks from email wrapping are fine.</p>
+                <p style="margin:10px 0 28px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.6;color:#1a1d20;">Questions? Just reply to this email.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:26px 36px 30px;border-top:1px solid #d8e4f0;">
+                <p style="margin:0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;line-height:1.6;color:#597081;">This key is licensed to the named business only.</p>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:14px 0 0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11.5px;color:#597081;">© {{year}} {{vendor}}</p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
 
 /** The delivery email: key, term, and how to activate. Plain text + HTML. */
 export function buildEmail({ practice, tier, seats, key, expiresAt }) {
   const expiry = formatDateAU(expiresAt);
   const tierLabel = tier ? tier[0].toUpperCase() + tier.slice(1) : '—';
   const subject = `Your Camog licence key (${practice})`;
+  const values = {
+    app: 'Camog',
+    name: escapeHtml(practice),
+    tier: escapeHtml(tierLabel),
+    seats: String(seats),
+    seats_label: `${seats} seat${seats === 1 ? '' : 's'}`,
+    expiry,
+    key: escapeHtml(key),
+    vendor: 'ClinicIQ Solutions',
+    year: String(new Date().getFullYear()),
+  };
+  const html = fillTemplate(LICENCE_EMAIL_TEMPLATE, values);
   const text = `Hi ${practice},
 
 Thank you for your purchase. Here is the licence key for Camog; it unlocks ${seats} seat${seats === 1 ? '' : 's'} and is valid until ${expiry}.
@@ -139,19 +245,5 @@ and activate the new key. Questions? Just reply to this email.
 
 ClinicIQ Solutions
 `;
-  const html = `<div style="font-family:system-ui,sans-serif;line-height:1.55;color:#1c1c1e;max-width:38rem">
-  <p>Hi ${escapeHtml(practice)},</p>
-  <p>Thank you for your purchase. Here is the licence key for <strong>Camog</strong>; it unlocks ${seats} seat${seats === 1 ? '' : 's'} and is valid until <strong>${expiry}</strong>.</p>
-  <p style="font-family:ui-monospace,monospace;font-size:13px;background:#f2f2f4;padding:12px;border-radius:6px;word-break:break-all">${escapeHtml(key)}</p>
-  <table style="font-size:14px">
-    <tr><td style="padding-right:16px;color:#555">Licensed to</td><td>${escapeHtml(practice)}</td></tr>
-    <tr><td style="padding-right:16px;color:#555">Tier</td><td>${escapeHtml(tierLabel)}</td></tr>
-    <tr><td style="padding-right:16px;color:#555">Seats</td><td>${seats}</td></tr>
-    <tr><td style="padding-right:16px;color:#555">Valid until</td><td>${expiry}</td></tr>
-  </table>
-  <p>To activate: open Camog, choose <strong>Activate</strong> (or Settings → Licence), and paste the key above. Activation needs a one-time internet connection; after that Camog runs fully offline for the licence term. Line breaks from email wrapping are fine.</p>
-  <p style="color:#555">Keep this email for your records. To renew, buy again before the expiry date and activate the new key. Questions? Just reply to this email.</p>
-  <p>ClinicIQ Solutions</p>
-</div>`;
   return { subject, text, html };
 }

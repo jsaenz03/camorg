@@ -242,7 +242,25 @@ async function sendLicenceEmail(env, to, subject, text, html) {
       authorization: `Bearer ${env.RESEND_API_KEY}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ from: EMAIL_FROM, to, reply_to: SUPPORT_EMAIL, subject, text, html }),
+    body: JSON.stringify({
+      from: EMAIL_FROM,
+      to,
+      reply_to: SUPPORT_EMAIL,
+      subject,
+      text,
+      html,
+      // Inline header logo (cid:cliniciq-logo in the template) — same asset
+      // the licence-keygen GUI embeds over SMTP; Resend fetches it from this
+      // worker's public assets, so no bytes ride in the bundle.
+      attachments: [
+        {
+          filename: 'logo-email.png',
+          path: 'https://camog-license.cliniciq.com.au/logo-email.png',
+          content_type: 'image/png',
+          content_id: 'cliniciq-logo',
+        },
+      ],
+    }),
   });
   if (!res.ok) throw new Error(`Resend delivery failed (${res.status})`);
 }

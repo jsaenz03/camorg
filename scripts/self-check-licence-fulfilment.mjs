@@ -155,4 +155,24 @@ assert.ok(email.html.includes(key), 'html body contains the key');
 assert.ok(email.text.includes(formatDateAU(payload.expiresAt)), 'expiry date present');
 assert.ok(/^[0-3]\d\/[01]\d\/\d{4}$/.test(formatDateAU(payload.expiresAt)), 'AU date format');
 
-console.log('licence-fulfilment self-check passed (12 checks).');
+// 12. The HTML is the licence-keygen livery (licence-keygen/core.mjs
+//     DEFAULT_EMAIL_TEMPLATE): ClinicIQ header with the inline cid logo,
+//     gold-edged key panel, spec table — and every {{token}} is filled.
+assert.ok(email.html.includes('cid:cliniciq-logo'), 'inline logo cid reference present');
+assert.ok(email.html.includes('ClinicIQ Solutions'), 'vendor brand present');
+assert.ok(email.html.includes('Licence delivery'), 'branded header strap present');
+assert.ok(email.html.includes('Licensed to'), 'spec table present');
+assert.ok(!/\{\{\w+\}\}/.test(email.html), 'no unfilled {{tokens}} remain');
+
+// 13. Buyer-typed values are HTML-escaped into the branded template.
+const hostile = buildEmail({
+  practice: 'Evil <img src=x onerror=alert(1)> "Corp"',
+  tier: 'solo',
+  seats: 1,
+  key,
+  expiresAt: payload.expiresAt,
+});
+assert.ok(!hostile.html.includes('<img src=x'), 'practice name escaped in HTML');
+assert.ok(hostile.html.includes('&lt;img src=x'), 'escaped form present');
+
+console.log('licence-fulfilment self-check passed (13 checks).');
