@@ -10,6 +10,7 @@
 import { format } from 'date-fns';
 import { BadgeCheck, ShieldAlert, Timer } from 'lucide-react';
 import { useLicence } from '@/lib/licence/licence-context';
+import { BuyLicenceLink } from '@/components/licence/buy-licence-link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -92,6 +93,10 @@ export function LicencePanel() {
         <Button onClick={openActivation}>
           {licence ? 'Change licence key' : 'Activate Camog'}
         </Button>
+        <p className="text-xs text-muted-foreground">
+          No key yet, or renewing? <BuyLicenceLink /> — checkout is on our website and the key
+          arrives by email.
+        </p>
       </CardContent>
     </Card>
   );

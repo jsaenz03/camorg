@@ -1,6 +1,6 @@
 # Camog — Terms of Service
 
-**Effective date:** 08/09/2026 · **Version:** 1.3
+**Effective date:** 09/09/2026 · **Version:** 1.4
 
 ---
 
@@ -75,7 +75,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 
 7.4 If your administrator configures the Software's storage or backup folder to be a **cloud-synced folder** (such as OneDrive, Dropbox or iCloud), patient photographs and backups may be transmitted and stored by that provider outside your device. That is your choice and your disclosure; you are responsible for assessing that provider's security, privacy policy and data storage locations against your obligations under the Australian Privacy Principles.
 
-7.5 The only personal information we may ever receive about you or your staff is (a) information you choose to give us if you contact us for support, and (b) the activation data described in clause 3.2 — the licence key (which records the licensed practice's name and licence term) and a random device identifier. See our Privacy Policy for how both are handled.
+7.5 The only personal information we may ever receive about you or your staff is (a) information you choose to give us if you contact us for support, (b) the activation data described in clause 3.2 — the licence key (which records the licensed practice's name and licence term) and a random device identifier — and (c) the purchase contact details you enter at our website's checkout (your billing email address and practice name), which we process only to deliver and support your licence; payment card details are handled by Stripe and are never received or stored by us. See our Privacy Policy for how all of these are handled.
 
 ## 8. Acceptable use
 

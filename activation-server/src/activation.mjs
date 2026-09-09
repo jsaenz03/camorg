@@ -49,7 +49,7 @@ const unhex = (s) => {
   return bytes;
 };
 
-const TIERS = ['solo', 'practice', 'clinic'];
+export const TIERS = ['solo', 'practice', 'clinic'];
 
 function checkLicencePayload(p) {
   if (!p || typeof p !== 'object') throw new ActivationError('invalid_key', 'Licence key payload is not valid.');
@@ -126,6 +126,26 @@ export async function issueToken({ fp, deviceId, exp }, tokenSecretKeyHex) {
   const payload = { v: 1, fp, deviceId, exp };
   const message = new TextEncoder().encode(JSON.stringify(payload));
   const signature = await signAsync(message, unhex(tokenSecretKeyHex));
+  return `${b64uEncode(message)}.${b64uEncode(signature)}`;
+}
+
+/**
+ * Signs a licence key — the fulfilment twin of scripts/licence-keygen.mjs
+ * `issue` (same payload shape, same Date-based month arithmetic). Used by the
+ * Stripe webhook so a purchase mints a key the app already verifies offline.
+ */
+export async function issueLicence({ practice, tier, seats, months = 12, now = Date.now() }, licenceSecretKeyHex) {
+  if (typeof practice !== 'string' || practice.trim().length === 0) {
+    throw new ActivationError('bad_request', 'Licence practice name is required.');
+  }
+  if (!TIERS.includes(tier)) throw new ActivationError('bad_request', 'Unknown licence tier.');
+  if (!Number.isInteger(seats) || seats <= 0) throw new ActivationError('bad_request', 'Seats must be a positive integer.');
+  if (!Number.isFinite(months) || months <= 0) throw new ActivationError('bad_request', 'Licence term must be positive.');
+  const expires = new Date(now);
+  expires.setMonth(expires.getMonth() + months);
+  const payload = { v: 1, practice, tier, seats, issuedAt: now, expiresAt: expires.getTime() };
+  const message = new TextEncoder().encode(JSON.stringify(payload));
+  const signature = await signAsync(message, unhex(licenceSecretKeyHex));
   return `${b64uEncode(message)}.${b64uEncode(signature)}`;
 }
 

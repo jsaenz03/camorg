@@ -233,6 +233,8 @@ pub fn run() {
       Ok(())
     })
     .plugin(tauri_plugin_dialog::init())
+    // Opens the hosted buy page (licence purchase) in the system browser.
+    .plugin(tauri_plugin_opener::init())
     .plugin(
       SqlBuilder::default()
         .add_migrations("sqlite:camog.db", migrations)

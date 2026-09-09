@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Camog — buy a licence</title>
+    <style>
+      /* Theme tokens mirror the app's shadcn theme (app/globals.css): clinical
+         teal on zinc neutrals, radius scale 0.625rem. Dark values are the
+         app's .dark block, applied on system preference. Geist is the app
+         font; visitors without it fall back to their system UI face. */
+      :root {
+        --radius: 0.625rem;
+        --background: oklch(1 0 0);
+        --foreground: oklch(0.145 0 0);
+        --card: oklch(1 0 0);
+        --primary: oklch(0.52 0.11 200);
+        --primary-hover: oklch(0.46 0.11 200);
+        --primary-foreground: oklch(0.99 0 0);
+        --secondary: oklch(0.97 0 0);
+        --muted: oklch(0.97 0 0);
+        --muted-foreground: oklch(0.556 0 0);
+        --accent: oklch(0.96 0.03 200);
+        --accent-foreground: oklch(0.35 0.08 200);
+        --border: oklch(0.922 0 0);
+        --ring: oklch(0.52 0.11 200);
+        --shadow: oklch(0 0 0 / 0.06);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --background: oklch(0.145 0 0);
+          --foreground: oklch(0.985 0 0);
+          --card: oklch(0.205 0 0);
+          --primary: oklch(0.68 0.12 200);
+          --primary-hover: oklch(0.74 0.12 200);
+          --primary-foreground: oklch(0.16 0.02 200);
+          --secondary: oklch(0.269 0 0);
+          --muted: oklch(0.269 0 0);
+          --muted-foreground: oklch(0.708 0 0);
+          --accent: oklch(0.3 0.05 200);
+          --accent-foreground: oklch(0.95 0.02 200);
+          --border: oklch(1 0 0 / 10%);
+          --ring: oklch(0.68 0.12 200);
+          --shadow: oklch(0 0 0 / 0.4);
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: var(--background);
+        color: var(--foreground);
+        max-width: 46rem;
+        margin: 0 auto;
+        padding: 2.5rem 1.25rem 4rem;
+        line-height: 1.55;
+        font-size: 16px;
+      }
+      a { color: var(--accent-foreground); }
+      a:focus-visible, button:focus-visible, summary:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 2px;
+        border-radius: calc(var(--radius) - 4px);
+      }
+      .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2.5rem; }
+      .wordmark { font-weight: 600; letter-spacing: -0.02em; font-size: 1.05rem; }
+      .top a { font-size: 0.9rem; text-decoration: none; }
+      .top a:hover { text-decoration: underline; }
+      h1 { font-size: 2rem; letter-spacing: -0.03em; line-height: 1.15; margin: 0 0 0.5rem; }
+      .lede { color: var(--muted-foreground); max-width: 40rem; margin: 0 0 2rem; }
+
+      .tiers { display: grid; gap: 1rem; margin: 0 0 1rem; }
+      @media (min-width: 56rem) { .tiers { grid-template-columns: repeat(3, 1fr); } }
+      .tier {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) + 4px);
+        padding: 1.25rem;
+        display: flex;
+        flex-direction: column;
+      }
+      .tier.recommended { border: 2px solid var(--primary); box-shadow: 0 1px 3px var(--shadow); }
+      .tier h2 { font-size: 1.05rem; margin: 0; letter-spacing: -0.01em; }
+      .badge {
+        display: inline-block;
+        align-self: flex-start;
+        background: var(--accent);
+        color: var(--accent-foreground);
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 0.1rem 0.6rem;
+        margin-bottom: 0.4rem;
+      }
+      .price { font-size: 1.9rem; font-weight: 600; letter-spacing: -0.02em; margin-top: 0.6rem; }
+      .terms { color: var(--muted-foreground); font-size: 0.85rem; margin-top: 0.1rem; }
+      .seats { font-weight: 600; font-size: 0.9rem; margin-top: 0.9rem; }
+      .fit { color: var(--muted-foreground); font-size: 0.875rem; margin: 0.15rem 0 0; }
+      .btn {
+        margin-top: auto;
+        padding-top: 1.1rem;
+      }
+      .btn a {
+        display: block;
+        text-align: center;
+        background: var(--primary);
+        color: var(--primary-foreground);
+        text-decoration: none;
+        font-weight: 500;
+        font-size: 0.95rem;
+        border-radius: calc(var(--radius) - 2px);
+        padding: 0.55rem 1rem;
+        transition: background 150ms ease;
+      }
+      .btn a:hover { background: var(--primary-hover); }
+      .btn a:active { transform: translateY(1px); }
+
+      .includes {
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) + 4px);
+        padding: 1rem 1.25rem;
+        margin: 0 0 3rem;
+      }
+      .includes-grid { display: grid; grid-template-columns: 1fr; gap: 0.35rem 1.5rem; }
+      @media (min-width: 40rem) { .includes-grid { grid-template-columns: 1fr 1fr; } }
+      .check { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.9rem; color: var(--muted-foreground); }
+      .check svg { width: 0.9rem; height: 0.9rem; flex: none; color: var(--primary); translate: 0 1px; }
+
+      h3 { font-size: 1.15rem; letter-spacing: -0.01em; margin: 0 0 0.9rem; }
+      .steps { display: grid; gap: 1rem; margin: 0 0 3rem; }
+      @media (min-width: 56rem) { .steps { grid-template-columns: repeat(3, 1fr); } }
+      .step h4 { margin: 0 0 0.2rem; font-size: 0.95rem; }
+      .step p { margin: 0; color: var(--muted-foreground); font-size: 0.9rem; }
+
+      details { border-bottom: 1px solid var(--border); }
+      details:last-of-type { border-bottom: 0; }
+      summary {
+        cursor: pointer;
+        font-weight: 500;
+        padding: 0.7rem 0;
+        list-style-position: outside;
+      }
+      details p { margin: 0 0 0.9rem; color: var(--muted-foreground); font-size: 0.925rem; max-width: 40rem; }
+      .faq { margin-bottom: 3rem; }
+
+      .fine { color: var(--muted-foreground); font-size: 0.85rem; }
+      .fine a { color: var(--muted-foreground); }
+      .fine a:hover { color: var(--accent-foreground); }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <span class="wordmark">Camog</span>
+      <a href="/">Back to downloads</a>
+    </div>
+
+    <h1>Choose your Camog licence</h1>
+    <p class="lede">
+      Annual per-practice licences for the clinical photo documentation app. Records and
+      photographs stay on your own computer.
+    </p>
+
+    <!--
+      Fulfilment is automated: when a payment completes, our licence server
+      signs a key and emails it to the buyer within a few minutes. The three
+      Payment Link URLs below are live (created per ./README.md, each with
+      metadata tier + seats and a "practice" checkout field) — to change
+      prices, create new links and update these hrefs.
+    -->
+    <div class="tiers">
+      <div class="tier">
+        <h2>Solo</h2>
+        <div class="price">A$179</div>
+        <div class="terms">per year</div>
+        <div class="seats">1 device seat</div>
+        <p class="fit">For solo practitioners.</p>
+        <div class="btn">
+          <!-- STRIPE_PAYMENT_LINK solo (metadata: tier=solo, seats=1) -->
+          <a href="https://buy.stripe.com/bJe00l5NPcJP2I5dy36oo00">Buy Solo</a>
+        </div>
+      </div>
+      <div class="tier recommended">
+        <span class="badge">Recommended</span>
+        <h2>Practice</h2>
+        <div class="price">A$399</div>
+        <div class="terms">per year</div>
+        <div class="seats">3 device seats</div>
+        <p class="fit">For small practices and specialists.</p>
+        <div class="btn">
+          <!-- STRIPE_PAYMENT_LINK practice (metadata: tier=practice, seats=3) -->
+          <a href="https://buy.stripe.com/dRm9AV5NPcJP5UhgKf6oo01">Buy Practice</a>
+        </div>
+      </div>
+      <div class="tier">
+        <h2>Clinic</h2>
+        <div class="price">A$799</div>
+        <div class="terms">per year</div>
+        <div class="seats">10 device seats</div>
+        <p class="fit">For multi-computer clinics.</p>
+        <div class="btn">
+          <!-- STRIPE_PAYMENT_LINK clinic (metadata: tier=clinic, seats=10) -->
+          <a href="https://buy.stripe.com/dRmeVf7VX117dmJ0Lh6oo02">Buy Clinic</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="includes">
+      <div class="includes-grid">
+        <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Unlimited patients and photographs</span>
+        <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Body-map capture and photo compare</span>
+        <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Consent records and case reports</span>
+        <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Phone-camera tether and backups</span>
+      </div>
+    </div>
+
+    <h3>How it works</h3>
+    <div class="steps">
+      <div class="step">
+        <h4>Pay securely</h4>
+        <p>Checkout is hosted by Stripe. Card details go to Stripe; we never see them.</p>
+      </div>
+      <div class="step">
+        <h4>Receive your key</h4>
+        <p>Your licence key arrives by email within a few minutes of paying.</p>
+      </div>
+      <div class="step">
+        <h4>Activate and work offline</h4>
+        <p>Paste the key into Camog (one-time internet check). After that, Camog runs fully offline for the licence term.</p>
+      </div>
+    </div>
+
+    <h3>Common questions</h3>
+    <div class="faq">
+      <details>
+        <summary>What happens when the licence expires?</summary>
+        <p>Camog becomes read-only: existing records stay viewable, capture and editing pause. Buy again, activate the new key, and everything continues. Your records are never touched.</p>
+      </details>
+      <details>
+        <summary>What counts as a seat, and can I move one?</summary>
+        <p>A seat is one activated computer. Replacing a computer is free: email us and we free the old seat for the new one.</p>
+      </details>
+      <details>
+        <summary>What currency are prices in?</summary>
+        <p>All prices are in Australian dollars (AUD). Stripe's receipt is your invoice.</p>
+      </details>
+    </div>
+
+    <p class="fine">
+      Questions or volume licensing: <a href="mailto:admin@cliniciq.com.au">admin@cliniciq.com.au</a><br />
+      Camog is made by ClinicIQ Solutions (ABN 55 882 511 758), Wollongong NSW ·
+      <a href="/legal/terms-of-service.md">Terms of Service</a> ·
+      <a href="/legal/privacy-policy.md">Privacy Policy</a>
+    </p>
+  </body>
+</html>

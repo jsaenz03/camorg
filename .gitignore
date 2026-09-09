@@ -32,6 +32,11 @@
 
 # licence signing keys (never commit; see scripts/licence-keygen.mjs)
 /.keys/
+/activation-server/.keys/
+
+# local wrangler dev secrets for the activation worker (never commit)
+/activation-server/.dev.vars
+/activation-server/.wrangler/
 
 # debug
 npm-debug.log*

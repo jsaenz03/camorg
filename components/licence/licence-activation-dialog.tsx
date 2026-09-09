@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { licenceService } from '@/lib/services/licence-service';
 import { useLicence } from '@/lib/licence/licence-context';
+import { BuyLicenceLink } from '@/components/licence/buy-licence-link';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -79,6 +80,10 @@ export function LicenceActivationDialog() {
           <p className="text-xs text-muted-foreground">
             Your licence covers one practice and the device seats it was issued with. Line breaks
             from email wrapping are fine.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            No key yet, or renewing? <BuyLicenceLink /> — checkout is on our website and the key
+            arrives by email.
           </p>
           <Button onClick={submit} disabled={submitting || !key.trim()} className="w-full">
             {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}

@@ -1,6 +1,6 @@
 # Camog Privacy Policy
 
-**Effective date:** 08/09/2026 · **Version:** 1.3
+**Effective date:** 09/09/2026 · **Version:** 1.4
 
 ---
 
@@ -18,6 +18,7 @@
 - If your administrator points the storage folder at a **cloud-synced folder** (OneDrive, Dropbox, iCloud or similar), your information may leave your computer through *that provider's* service — that is your organisation's choice and is not controlled by us or the Software (see clause 10).
 - The **phone link** feature runs a small web server on your own computer so a paired phone on your network can send photos to it and — while the signed-in clinician has library sharing switched on — view the same patients and photographs that clinician can already see on the computer. Traffic between the phone and the computer is **unencrypted** (plain HTTP). Access is controlled by a random pairing code that is exchanged once for a per-device session cookie; unauthenticated requests are rate-limited and the link ends itself after 30 minutes of inactivity (see clause 8.3).
 - The Software is **not connected to My Health Record** or any national e-health system.
+- If you **buy a licence** through our website's checkout, we hold the billing email address and practice name you enter there to deliver the key and support the licence. Payment card details go to **Stripe** — we never see them (see clauses 4.5 and 5).
 
 ## 3. About this policy and who it protects
 
@@ -40,11 +41,15 @@ This policy has two parts:
 
 **4.4 When you download the Software** from the **Microsoft Store** or from our distribution page **https://camog-license.cliniciq.com.au**, that channel is operated by third parties (Microsoft; and Cloudflare, which hosts the activation service). Your access to those channels is governed by the providers' own privacy policies and terms; we do not control them.
 
+**4.5 When you buy a licence.** When you purchase a licence through our website's checkout (operated by **Stripe**), we receive and hold the billing email address, the practice name entered at checkout, and the licence record generated from the purchase (the key, its tier and device seats, and its term). We never receive your card details — payment card information is collected, processed and stored by Stripe under its own privacy policy and PCI-DSS compliance. How these purchase records are used and held is in clause 5.
+
 ## 5. How we use, hold and disclose that information
 
 We use contact details only to respond to your enquiry and to keep a record of our correspondence. We hold correspondence only as long as needed for that purpose, then delete or de-identify it. We do not use it for direct marketing and do not disclose it except to service providers who help us operate our communications (such as email hosting) under confidentiality, or where required by law.
 
 Licence activation records (clause 4.3) are used only to enforce the device seats a licence covers and to support seat moves when a practice replaces a computer. They are held in Cloudflare's D1 database service for the licence term plus 12 months, then deleted. Cloudflare processes them only to host and secure the activation service (see clause 10).
+
+Purchase records (clause 4.5) are used only to deliver the licence key you bought, to support the licence (seat moves, renewals, refunds) and to meet our record-keeping obligations under Australian tax law. They are held in Cloudflare's D1 database service and in our Stripe account for the licence term plus 12 months (or longer where tax law requires financial records), then deleted. Stripe processes your payment details only to take the payment. We do not use purchase contact details for direct marketing.
 
 ## Part B — How Camog handles personal and health information
 

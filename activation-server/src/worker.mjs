@@ -6,7 +6,12 @@
  *   returns a server-signed activation token bound to (licence fp, deviceId).
  * GET/DELETE /v1/seats — admin (Bearer ADMIN_TOKEN): list and revoke seats
  *   (support-driven seat moves; revoke is soft so history survives).
- * Everything else: static assets (public/legal/*.md, landing page).
+ * POST /webhooks/stripe — purchase fulfilment: verifies Stripe's signature,
+ *   signs a 12-month licence key, records it in D1 (licences table) and
+ *   emails it to the buyer via Resend (runbook: ./README.md).
+ * GET /v1/licences — admin: look up an issued key by ?session= or ?fp=, or
+ *   the latest orders (support: resend a key, fulfil an unmapped session).
+ * Everything else: static assets (public/legal/*.md, landing page, /buy).
  *
  * Deployment: ./README.md. Storage schema: ./schema.sql.
  */
@@ -14,10 +19,13 @@
 import {
   ActivationError,
   decideSeat,
+  issueLicence,
   issueToken,
   licenceFingerprint,
+  SUPPORT_EMAIL,
   verifyLicence,
 } from './activation.mjs';
+import { EMAIL_FROM, buildEmail, constantTimeEqual, extractOrder, verifyStripeSignature } from './fulfil.mjs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -29,10 +37,21 @@ const json = (body, status = 200) =>
     headers: { 'content-type': 'application/json' },
   });
 
-const isAdmin = (request, env) =>
-  typeof env.ADMIN_TOKEN === 'string' &&
-  env.ADMIN_TOKEN.length >= 16 &&
-  request.headers.get('Authorization') === `Bearer ${env.ADMIN_TOKEN}`;
+const sha256Hex = async (value) => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+};
+
+// Admin bearer check in constant time: compare SHA-256 digests, never the
+// raw token (JS string comparison leaks length/prefix on mismatch).
+const isAdmin = async (request, env) => {
+  if (typeof env.ADMIN_TOKEN !== 'string' || env.ADMIN_TOKEN.length < 16) return false;
+  const [present, expected] = await Promise.all([
+    sha256Hex(request.headers.get('Authorization') ?? ''),
+    sha256Hex(`Bearer ${env.ADMIN_TOKEN}`),
+  ]);
+  return constantTimeEqual(present, expected);
+};
 
 export default {
   async fetch(request, env) {
@@ -41,10 +60,17 @@ export default {
       if (request.method === 'POST' && url.pathname === '/v1/activate') {
         return await activate(request, env);
       }
+      if (request.method === 'POST' && url.pathname === '/webhooks/stripe') {
+        return await fulfilStripe(request, env);
+      }
       if (url.pathname === '/v1/seats') {
-        if (!isAdmin(request, env)) return json({ error: 'unauthorised' }, 401);
+        if (!(await isAdmin(request, env))) return json({ error: 'unauthorised' }, 401);
         if (request.method === 'GET') return await listSeats(url, env);
         if (request.method === 'DELETE') return await revokeSeat(request, env);
+      }
+      if (request.method === 'GET' && url.pathname === '/v1/licences') {
+        if (!(await isAdmin(request, env))) return json({ error: 'unauthorised' }, 401);
+        return await listLicences(url, env);
       }
       return json({ error: 'not_found' }, 404);
     } catch (err) {
@@ -133,4 +159,122 @@ async function revokeSeat(request, env) {
   }
   const res = await env.DB.prepare(sql).bind(...bindings).run();
   return json({ fp, revoked: res.meta?.changes ?? 0 });
+}
+
+/**
+ * Purchase fulfilment. Every completed session is recorded once (keyed on
+ * the Stripe session id, so webhook retries are idempotent); the key is
+ * minted at first sight, and a failed email leaves emailed_at NULL so the
+ * Stripe retry path re-attempts delivery instead of minting a second key.
+ * Sessions whose Payment Link metadata lacks a valid tier/seats are recorded
+ * with tier NULL and NOT emailed — support fulfils them by hand (README).
+ */
+async function fulfilStripe(request, env) {
+  const raw = await request.text();
+  const ok = await verifyStripeSignature(
+    raw,
+    request.headers.get('stripe-signature') ?? '',
+    env.STRIPE_WEBHOOK_SECRET ?? '',
+  );
+  if (!ok) return json({ error: 'bad_signature' }, 400);
+  let event;
+  try {
+    event = JSON.parse(raw);
+  } catch {
+    return json({ error: 'bad_payload' }, 400);
+  }
+  if (!['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event?.type)) {
+    return json({ received: true });
+  }
+  const session = event.data?.object;
+  if (session?.payment_status !== 'paid') return json({ received: true });
+  const order = extractOrder(session);
+  if (!order.sessionId) return json({ error: 'bad_payload' }, 400);
+
+  let row = await env.DB.prepare('SELECT * FROM licences WHERE session_id = ?1').bind(order.sessionId).first();
+  if (!row) {
+    let key = null;
+    let fp = null;
+    let expiresAt = null;
+    if (order.tier && order.seats) {
+      key = await issueLicence(
+        { practice: order.practice, tier: order.tier, seats: order.seats, months: 12 },
+        env.LICENCE_PRIVATE_KEY,
+      );
+      // Verify what we minted with the same path the app's keys go through.
+      const payload = await verifyLicence(key, env.LICENCE_PUBLIC_KEY);
+      fp = await licenceFingerprint(key);
+      expiresAt = payload.expiresAt;
+    }
+    await env.DB
+      .prepare(
+        `INSERT INTO licences (session_id, email, practice, tier, seats, key_text, key_fp, expires_at, issued_at, emailed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)`,
+      )
+      .bind(order.sessionId, order.email, order.practice, order.tier, order.seats, key, fp, expiresAt, Date.now())
+      .run();
+    row = await env.DB.prepare('SELECT * FROM licences WHERE session_id = ?1').bind(order.sessionId).first();
+  }
+
+  if (!row.key_text) return json({ received: true, note: 'unmapped_tier_recorded' });
+  if (!row.emailed_at) {
+    if (!row.email) return json({ received: true, note: 'no_email_recorded' });
+    const { subject, text, html } = buildEmail({
+      practice: row.practice,
+      tier: row.tier,
+      seats: row.seats,
+      key: row.key_text,
+      expiresAt: row.expires_at,
+    });
+    await sendLicenceEmail(env, row.email, subject, text, html);
+    await env.DB
+      .prepare('UPDATE licences SET emailed_at = ?2 WHERE session_id = ?1')
+      .bind(row.session_id, Date.now())
+      .run();
+  }
+  return json({ received: true });
+}
+
+async function sendLicenceEmail(env, to, subject, text, html) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ from: EMAIL_FROM, to, reply_to: SUPPORT_EMAIL, subject, text, html }),
+  });
+  if (!res.ok) throw new Error(`Resend delivery failed (${res.status})`);
+}
+
+/** Admin: find an issued key for support (resend / manual fulfilment). */
+async function listLicences(url, env) {
+  const session = url.searchParams.get('session');
+  const fp = url.searchParams.get('fp');
+  if (session) {
+    const licence = await env.DB
+      .prepare('SELECT * FROM licences WHERE session_id = ?1')
+      .bind(session)
+      .first();
+    return json({ licence: licence ?? null });
+  }
+  if (fp) {
+    if (!/^[0-9a-f]{64}$/.test(fp)) {
+      throw new ActivationError('bad_request', 'Pass ?fp=<licence fingerprint> (sha-256 hex).');
+    }
+    const { results } = await env.DB
+      .prepare('SELECT * FROM licences WHERE key_fp = ?1')
+      .bind(fp)
+      .all();
+    return json({ fp, licences: results ?? [] });
+  }
+  // Latest orders for a support sweep — full keys only in the ?session=/
+  // ?fp= lookups, not dumped for every row at once.
+  const { results } = await env.DB
+    .prepare(
+      `SELECT session_id, email, practice, tier, seats, key_fp, expires_at, issued_at, emailed_at
+       FROM licences ORDER BY issued_at DESC LIMIT 50`,
+    )
+    .all();
+  return json({ licences: results ?? [] });
 }

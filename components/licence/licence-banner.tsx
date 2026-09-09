@@ -11,6 +11,7 @@
 import { format } from 'date-fns';
 import { BadgeCheck, ShieldAlert, Timer } from 'lucide-react';
 import { useLicence } from '@/lib/licence/licence-context';
+import { BuyLicenceLink } from '@/components/licence/buy-licence-link';
 import { Button } from '@/components/ui/button';
 
 const MS_PER_DAY = 86_400_000;
@@ -34,6 +35,7 @@ export function LicenceBanner() {
         <Button size="sm" variant="secondary" className="h-7" onClick={openActivation}>
           Activate
         </Button>
+        <BuyLicenceLink className="text-xs" />
       </div>
     );
   }
@@ -53,6 +55,7 @@ export function LicenceBanner() {
         <Button size="sm" variant="secondary" className="h-7" onClick={openActivation}>
           Activate
         </Button>
+        <BuyLicenceLink className="text-xs" />
       </div>
     );
   }
@@ -66,6 +69,7 @@ export function LicenceBanner() {
         <Button size="sm" variant="secondary" className="h-7" onClick={openActivation}>
           Renew
         </Button>
+        <BuyLicenceLink className="text-xs" />
       </div>
     );
   }
