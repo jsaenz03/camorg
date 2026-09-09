@@ -82,7 +82,7 @@ export function LicencePanel() {
               <Row label="Tier">
                 {licence.tier.charAt(0).toUpperCase() + licence.tier.slice(1)}
               </Row>
-              <Row label="Seats">{licence.seats}</Row>
+              <Row label="Device seats">{licence.seats}</Row>
               <Row label="Expires">{format(licence.expiresAt, 'd/MM/yyyy')}</Row>
             </>
           )}

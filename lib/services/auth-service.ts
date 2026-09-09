@@ -29,7 +29,7 @@ import {
 import type { IAuthService, SessionInfo } from '@/specs/001-role-you-are/contracts/auth-service';
 import { getDB, ensureBootstrapped } from '@/lib/db/database';
 import { resolveRegistrationMode } from '@/lib/services/registration-policy';
-import { hashPasscode, verifyPasscode, randomToken } from '@/lib/utils/crypto';
+import { hashPasscode, verifyPasscode, randomToken, sha256Hex } from '@/lib/utils/crypto';
 // Approvals/settings changes move the alert counts (pending signups, review
 // windows) — refetch the sidebar/dashboard counters immediately.
 import { notifyAttentionChanged } from '@/lib/services/attention-events';
@@ -293,11 +293,29 @@ export class AuthService implements IAuthService {
   private failedLogins = 0;
   private loginBlockedUntil = 0;
 
+  /**
+   * Same damper for invite-code resolution: the code is only 8 readable
+   * characters, so wrong guesses (signup form, accept form) cool down like
+   * failed logins instead of allowing unlimited online guessing.
+   */
+  private static readonly MAX_FAILED_INVITES = 5;
+  private static readonly INVITE_COOLDOWN_MS = 30_000;
+  private failedInvites = 0;
+  private inviteBlockedUntil = 0;
+
   private registerFailedLogin(): void {
     this.failedLogins += 1;
     if (this.failedLogins >= AuthService.MAX_FAILED_LOGINS) {
       this.loginBlockedUntil = Date.now() + AuthService.LOGIN_COOLDOWN_MS;
       this.failedLogins = 0;
+    }
+  }
+
+  private registerFailedInvite(): void {
+    this.failedInvites += 1;
+    if (this.failedInvites >= AuthService.MAX_FAILED_INVITES) {
+      this.inviteBlockedUntil = Date.now() + AuthService.INVITE_COOLDOWN_MS;
+      this.failedInvites = 0;
     }
   }
 
@@ -521,7 +539,7 @@ export class AuthService implements IAuthService {
     );
 
     if (invitation) {
-      await this.markInvitationAccepted(invitation.token, id);
+      await this.markInvitationAccepted(inviteToken!, id);
     }
 
     if (isActive) {
@@ -961,7 +979,14 @@ export class AuthService implements IAuthService {
 
     const id = uuidv4();
     const token = randomToken(8);
-    const tokenHash = await hashPasscode(token);
+    // The code's only persisted form is a deterministic fingerprint: it
+    // travels to the invitee out-of-band, and a database reader learns
+    // nothing redeemable. (Legacy rows kept the plaintext token plus a
+    // salted PBKDF2 hash that could not be looked up; resolveInvitation
+    // still matches those by the plaintext column for one release cycle.)
+    // The token column (UNIQUE) carries the same fingerprint so no readable
+    // code is written at all.
+    const tokenFingerprint = await sha256Hex(token);
     const nowMs = Date.now();
     const expiresAt = nowMs + validated.ttlDays * 24 * 60 * 60 * 1000;
     const mustChange = validated.kind === 'precreated';
@@ -975,8 +1000,8 @@ export class AuthService implements IAuthService {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL)`,
       [
         id,
-        token,
-        tokenHash,
+        tokenFingerprint,
+        tokenFingerprint,
         validated.kind,
         validated.username,
         validated.displayName,
@@ -1036,22 +1061,34 @@ export class AuthService implements IAuthService {
   }
 
   async resolveInvitation(token: string): Promise<Invitation> {
+    if (Date.now() < this.inviteBlockedUntil) {
+      const secs = Math.ceil((this.inviteBlockedUntil - Date.now()) / 1000);
+      throw new PermissionDeniedError(`Too many invalid codes. Try again in ${secs}s.`);
+    }
     const db = await getDB();
-    // Token is stored uppercase-normalised.
+    // Token is stored uppercase-normalised; new rows carry the fingerprint
+    // of it, legacy rows the plaintext (matched by the fallback below).
     const normalised = token.trim().toUpperCase();
     const rows = await db.select<Record<string, unknown>[]>(
-      'SELECT * FROM invitations WHERE token = $1',
-      [normalised],
+      'SELECT * FROM invitations WHERE token_hash = $1 OR token = $2',
+      [await sha256Hex(normalised), normalised],
     );
-    if (!rows.length) throw new NotFoundError('Invite code not found');
+    if (!rows.length) {
+      this.registerFailedInvite();
+      throw new NotFoundError('Invite code not found');
+    }
     const inv = rowToInvitation(rows[0]);
 
     if (inv.acceptedAt) {
+      this.registerFailedInvite();
       throw new AlreadyExistsError('This invite code has already been used');
     }
     if (Date.now() > inv.expiresAt.getTime()) {
+      this.registerFailedInvite();
       throw new SessionExpiredError('This invite code has expired');
     }
+    this.failedInvites = 0;
+    this.inviteBlockedUntil = 0;
     return inv;
   }
 
@@ -1313,11 +1350,13 @@ export class AuthService implements IAuthService {
   private async markInvitationAccepted(token: string, clinicianId: string): Promise<void> {
     const db = await getDB();
     const nowMs = Date.now();
+    // Fingerprint first (rows created by this build); the plaintext column
+    // keeps legacy pending invites redeemable across the upgrade.
     await db.execute(
       `UPDATE invitations
          SET accepted_at = $1, accepted_by = $2
-       WHERE token = $3`,
-      [nowMs, clinicianId, token.trim().toUpperCase()],
+       WHERE token_hash = $3 OR token = $4`,
+      [nowMs, clinicianId, await sha256Hex(token.trim().toUpperCase()), token.trim().toUpperCase()],
     );
   }
 }

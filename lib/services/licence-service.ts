@@ -10,9 +10,13 @@
  * Seat enforcement (specs/003-licence-activation): a licence only counts as
  * valid when the activation token returned by the licence server verifies
  * against the server's public key AND matches this device's ID. The device
- * ID is read from the home-directory device file via the `device_id` Rust
- * command (falling back to the DB value when unavailable), so copying the
- * app data folder to another machine does not carry the seat.
+ * ID lives in a machine-wide device file (home-dir fallback) that a copied
+ * database cannot reconstruct — and activation ROTATES to a freshly minted
+ * ID whenever the key differs from the stored one, so the token names a
+ * value that exists nowhere in the DB. Cloning the app data folder to
+ * another machine therefore lands read-only and must re-activate against
+ * the seat count; re-activating the same key (support seat moves, restored
+ * DB on the same machine) reuses the on-disk identity.
  */
 
 import { format } from 'date-fns';
@@ -191,10 +195,20 @@ export class LicenceService implements ILicenceService {
       );
     }
     const db = await getDB();
-    const rows = await db.select<Pick<LicenceSettingsRow, 'install_id'>[]>(
-      "SELECT install_id FROM settings WHERE id = 'app'"
+    const rows = await db.select<{ install_id: string | null; licence_key: string | null }[]>(
+      "SELECT install_id, licence_key FROM settings WHERE id = 'app'"
     );
-    const deviceId = await resolveDeviceId(rows[0]?.install_id ?? '');
+    // A key we have not activated before gets a freshly minted device ID:
+    // the old DB-seeded identity used to be reconstructible from a copied
+    // database, which silently carried the seat to another machine. Same-key
+    // re-activation keeps the on-disk identity — that is the support
+    // seat-move flow (revoke, re-activate) and same-machine recovery.
+    const sameKey = Boolean(rows[0]?.licence_key) && rows[0]?.licence_key === normalized;
+    const deviceId = sameKey
+      ? await resolveDeviceId(rows[0]?.install_id ?? '')
+      : await invoke<string>('device_id_fresh').catch(() =>
+          resolveDeviceId(rows[0]?.install_id ?? ''),
+        );
 
     // The one network round-trip in the entire app: the server verifies the
     // key's signature, counts device seats, and returns a token bound to
@@ -219,6 +233,12 @@ export class LicenceService implements ILicenceService {
       normalized,
       raw,
     ]);
+    // The fresh identity lands on disk only now that the server accepted the
+    // key — a failed activation attempt never de-activates the working
+    // licence this machine already holds.
+    if (!sameKey) {
+      await invoke('device_id_adopt', { id: deviceId }).catch(() => {});
+    }
     // Only the key's tail is logged — the audit trail must not become a
     // place where the full licence secret is readable.
     void auditService.record('licence.activation', {

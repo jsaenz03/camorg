@@ -219,8 +219,9 @@ pub fn run() {
       if let Ok(dir) = app.path().app_data_dir() {
         photo_crypto::init_key_path(dir.join("photo-key"));
       }
-      // The licence device-ID file lives in the home directory (deliberately
-      // outside the app data dir the database sits in — see licence_device.rs).
+      // The licence device-ID file prefers a machine-wide location and falls
+      // back to the home directory (never the app data dir the database sits
+      // in — see licence_device.rs).
       if let Ok(dir) = app.path().home_dir() {
         licence_device::init_device_path(dir);
       }
@@ -244,6 +245,8 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       grant_directory_access,
       licence_device::device_id,
+      licence_device::device_id_fresh,
+      licence_device::device_id_adopt,
       licence_activation::activate_licence,
       photo_crypto::photo_encrypt_bytes,
       photo_crypto::photo_decrypt_bytes,

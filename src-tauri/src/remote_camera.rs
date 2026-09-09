@@ -221,8 +221,42 @@ fn wait_for_library_change(shutdown: &AtomicBool, cap: Duration) -> bool {
   }
 }
 
-// The case report the webview has prepared for the phone, if any.
-static STAGED_REPORT: Mutex<Option<PathBuf>> = Mutex::new(None);
+// The case report the webview has prepared for the phone, if any — keyed to
+// the session that asked for it, time-bounded so a patient's report does not
+// linger on the link. Report preparation itself is single-flight (see
+// AWAITING_REPORT below): the staging slot can therefore never be claimed by
+// a different phone than the one whose request produced the PDF.
+#[derive(Clone)]
+struct StagedReport {
+  session: Option<[u8; 16]>,
+  path: PathBuf,
+  at: u64,
+}
+
+static STAGED_REPORT: Mutex<Option<StagedReport>> = Mutex::new(None);
+/// The single in-flight report request: (session, claimed-at). One report is
+/// prepared at a time — a second phone's request is refused until this slot
+/// is consumed by stage_remote_report or expires — so the staged PDF can
+/// never be attributed to (and downloaded by) the wrong phone.
+static AWAITING_REPORT: Mutex<Option<([u8; 16], u64)>> = Mutex::new(None);
+const STAGED_REPORT_TTL_MS: u64 = 10 * 60 * 1000;
+const AWAITING_REPORT_TTL_MS: u64 = 60 * 1000;
+
+/// The staged report a given session may download: the phone that asked for
+/// the report is the one that gets it (an unattached or stale stage serves
+/// nobody — the phone shows its error state and can request again).
+fn staged_report_for(
+  staged: &Option<StagedReport>,
+  session: Option<[u8; 16]>,
+  now: u64,
+) -> Option<PathBuf> {
+  let staged = staged.as_ref()?;
+  let holder = staged.session?;
+  if holder != session? || now.saturating_sub(staged.at) > STAGED_REPORT_TTL_MS {
+    return None;
+  }
+  Some(staged.path.clone())
+}
 
 /// Belt-and-braces filename gate alongside the whitelist: UUID-derived photo
 /// filenames are plain ASCII alphanumerics with dots, dashes, underscores.
@@ -334,6 +368,23 @@ const SESSION_COOKIE: &str = "camog_session";
 #[derive(Default)]
 struct SessionStore {
   sessions: Mutex<HashSet<[u8; 16]>>,
+  /// Leaky-bucket meter for state-changing POSTs, per session: a paired
+  /// client can snap and review at consult pace, but a scripted client
+  /// cannot flood the desktop with capture dialogs, review writes, or
+  /// report generations. GETs (long-poll, image grabs) stay unmetered; the
+  /// unauthenticated throttle lives in AuthGuard.
+  post_buckets: Mutex<HashMap<[u8; 16], (f64, u64)>>,
+}
+
+/// Bucket shape: a consult's worth of bursts (bulk-adding a dozen phone
+/// photos, say) passes straight through; sustained flood does not.
+const POST_BURST: f64 = 20.0;
+const POST_REFILL_PER_SEC: f64 = 10.0;
+
+/// Tokens in a bucket refilled at POST_REFILL_PER_SEC since `last`, capped.
+fn refilled(tokens: f64, last: u64, now: u64) -> f64 {
+  let elapsed_secs = now.saturating_sub(last) as f64 / 1000.0;
+  (tokens + elapsed_secs * POST_REFILL_PER_SEC).min(POST_BURST)
 }
 
 impl SessionStore {
@@ -353,6 +404,20 @@ impl SessionStore {
 
   fn contains(&self, id: &[u8; 16]) -> bool {
     self.sessions.lock().unwrap().contains(id)
+  }
+
+  /// Whether this session may make one more state-changing POST. Takes a
+  /// token out on true.
+  fn allow_post(&self, session: [u8; 16], now: u64) -> bool {
+    let mut buckets = self.post_buckets.lock().unwrap();
+    let entry = buckets.entry(session).or_insert((POST_BURST, now));
+    let tokens = refilled(entry.0, entry.1, now);
+    if tokens < 1.0 {
+      *entry = (tokens, now);
+      return false;
+    }
+    *entry = (tokens - 1.0, now);
+    true
   }
 
   /// Revoke every live session. stop_remote_camera calls this before the
@@ -766,14 +831,37 @@ fn handle_image(request: tiny_http::Request, filename: &str) {
   }
 }
 
+/// Claim the single in-flight report slot for `session`. Report generation
+/// is one-at-a-time by design: a second phone requesting while a PDF is
+/// being prepared gets refused (409, its UI retries) instead of
+/// overwriting the slot and receiving the first phone's patient's PDF.
+/// The claim expires so a request whose webview never stages (crash, error)
+/// cannot wedge report generation for everyone.
+fn try_claim_awaiting_report(
+  slot: &mut Option<([u8; 16], u64)>,
+  session: [u8; 16],
+  now: u64,
+) -> bool {
+  if let Some((_, noted_at)) = *slot {
+    if now.saturating_sub(noted_at) <= AWAITING_REPORT_TTL_MS {
+      return false;
+    }
+  }
+  *slot = Some((session, now));
+  true
+}
+
 /// Shared tail of the report control request: read the small JSON body, gate
 /// the patient against the shared manifest, and relay it to the webview as a
 /// Tauri event. The actual work happens webview-side through the normal
-/// services (access checks, DB writes, report generation).
+/// services (access checks, DB writes, report generation). The requesting
+/// session claims the single in-flight slot so the staged report comes back
+/// to this phone and only this phone (see stage_remote_report).
 fn handle_patient_request<R: Runtime>(
   app: &AppHandle<R>,
   mut request: tiny_http::Request,
   event: &str,
+  session: Option<[u8; 16]>,
 ) {
   let outcome = (|| -> Result<(), (u16, &'static str)> {
     if request.body_length().is_some_and(|len| len > MAX_CONTROL_BODY) {
@@ -796,6 +884,13 @@ fn handle_patient_request<R: Runtime>(
       .is_some_and(|lib| lib.allowed_patients.contains(&parsed.patient_id));
     if !allowed {
       return Err((404, "Not found"));
+    }
+    if let Some(s) = session {
+      let mut slot = AWAITING_REPORT.lock().unwrap();
+      if !try_claim_awaiting_report(&mut slot, s, now_ms()) {
+        return Err((409, "A report is already being prepared — try again shortly."));
+      }
+      drop(slot);
     }
     app
       .emit(event, &parsed)
@@ -850,9 +945,9 @@ fn handle_photo_review_request<R: Runtime>(
   }
 }
 
-fn handle_report_download(request: tiny_http::Request) {
+fn handle_report_download(request: tiny_http::Request, session: Option<[u8; 16]>) {
   let staged = STAGED_REPORT.lock().unwrap().clone();
-  let Some(path) = staged else {
+  let Some(path) = staged_report_for(&staged, session, now_ms()) else {
     respond_json(request, 404, "{\"ready\":false}".to_string());
     return;
   };
@@ -926,6 +1021,10 @@ fn handle_request<R: Runtime>(
   if !matches!(action, AuthAction::Rejected { .. }) {
     last_seen_ms.store(now_ms(), Ordering::Relaxed);
   }
+  // The authenticated session, when the request carries a live cookie — the
+  // report routes key staged PDFs to it and the POST meter consumes from it.
+  let session = session_from_cookie(cookie_header);
+  let method = request.method().clone();
   let path = match action {
     // The one-time exchange. 303 to the token-less root is what old saved
     // icons and old QR photos follow to this day; the Set-Cookie rides
@@ -941,7 +1040,21 @@ fn handle_request<R: Runtime>(
     // Token-less authenticated path ("", "hello", "img/<file>"…). A URL
     // without the leading slash matches no route and 404s like any unknown
     // path.
-    AuthAction::Authenticated => url.strip_prefix('/').unwrap_or(&url),
+    AuthAction::Authenticated => {
+      // State-changing POSTs are metered per session (see SessionStore).
+      let limited_post = method == Method::Post
+        && matches!(url.strip_prefix('/'), Some("photo" | "photo-review" | "report-request"));
+      if limited_post {
+        let allowed = session
+          .map(|s| sessions.allow_post(s, now_ms()))
+          .unwrap_or(true);
+        if !allowed {
+          respond_text(request, 429, "Too many requests");
+          return;
+        }
+      }
+      url.strip_prefix('/').unwrap_or(&url)
+    }
     AuthAction::Rejected { noted } => {
       // Wrong code, or a missing/dead cookie. The same response for every
       // rejected request, but the source is tracked and throttled — a
@@ -988,7 +1101,6 @@ fn handle_request<R: Runtime>(
     }
   };
 
-  let method = request.method().clone();
   if method == Method::Get && (path.is_empty() || path == "index.html") {
     let _ = request.respond(
       Response::from_string(PAGE_HTML).with_header(content_type("text/html; charset=utf-8")),
@@ -1021,7 +1133,7 @@ fn handle_request<R: Runtime>(
   } else if method == Method::Get && path.starts_with("img/") {
     handle_image(request, &path["img/".len()..]);
   } else if method == Method::Get && path == "report" {
-    handle_report_download(request);
+    handle_report_download(request, session);
   } else if method == Method::Post && path == "bye" {
     // Phone page beacons on hide/unload so the desktop can clear the
     // "connected" indicator instead of showing it forever.
@@ -1030,7 +1142,7 @@ fn handle_request<R: Runtime>(
   } else if method == Method::Post && path == "photo-review" {
     handle_photo_review_request(app, request);
   } else if method == Method::Post && path == "report-request" {
-    handle_patient_request(app, request, REPORT_EVENT);
+    handle_patient_request(app, request, REPORT_EVENT, session);
   } else if method == Method::Post && path == "photo" {
     if request.body_length().is_some_and(|len| len > MAX_BODY) {
       respond_text(request, 413, "Photo too large");
@@ -1222,6 +1334,7 @@ pub async fn stop_remote_camera() {
     }
   }
   *STAGED_REPORT.lock().unwrap() = None;
+  *AWAITING_REPORT.lock().unwrap() = None;
 }
 
 /// Rotate the pairing code ("New code" in the phone link dialog): stop the
@@ -1309,14 +1422,26 @@ pub fn update_remote_library(
 pub fn clear_remote_library() {
   *LIBRARY.lock().unwrap() = None;
   *STAGED_REPORT.lock().unwrap() = None;
+  *AWAITING_REPORT.lock().unwrap() = None;
   // A held long-poll must wake so the phone reverts to capture-only now.
   signal_library_changed();
 }
 
-/// Hand the phone a case report the webview has just generated.
+/// Hand the phone a case report the webview has just generated. The report
+/// binds to the single in-flight request's session (consumed here), so a
+/// second phone interleaving its own request was refused outright and can
+/// never download this patient's PDF.
 #[tauri::command]
 pub fn stage_remote_report(path: String) {
-  *STAGED_REPORT.lock().unwrap() = Some(PathBuf::from(path));
+  let awaiting = AWAITING_REPORT.lock().unwrap().take();
+  let session = awaiting
+    .filter(|(_, noted_at)| now_ms().saturating_sub(*noted_at) <= AWAITING_REPORT_TTL_MS)
+    .map(|(s, _)| s);
+  *STAGED_REPORT.lock().unwrap() = Some(StagedReport {
+    session,
+    path: PathBuf::from(path),
+    at: now_ms(),
+  });
 }
 
 // 256px copy of the app logo (public/logo.png) so the phone page carries the
@@ -1346,7 +1471,12 @@ include!("remote_camera_page.rs");
 
 #[cfg(test)]
 mod tests {
-  use super::{capture_id_from_headers, is_safe_filename, LINK_HTML, PAGE_HTML};
+  use super::{
+    capture_id_from_headers, is_safe_filename, staged_report_for, refilled, try_claim_awaiting_report,
+    SessionStore, StagedReport, POST_BURST, STAGED_REPORT_TTL_MS, AWAITING_REPORT_TTL_MS,
+    LINK_HTML, PAGE_HTML,
+  };
+  use std::path::PathBuf;
   use tiny_http::Header;
 
   fn capture_header(value: &str) -> Vec<Header> {
@@ -2363,5 +2493,77 @@ mod tests {
     assert!(manifest.contains(r##""start_url":"/t/0123456789abcdef/""##));
     assert!(manifest.contains(r##""icons":[{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}]"##));
     assert!(manifest.contains(r##""display":"standalone""##));
+  }
+
+  // Staged reports are per-session: the phone that asked gets its patient's
+  // PDF; a different session, a cookieless request, or an unattached stage
+  // get nothing, and a stale stage expires.
+  #[test]
+  fn staged_report_is_session_keyed_and_expiry_bounded() {
+    let session_a = [1u8; 16];
+    let session_b = [2u8; 16];
+    let staged = Some(StagedReport {
+      session: Some(session_a),
+      path: PathBuf::from("/tmp/report.pdf"),
+      at: 1_000,
+    });
+    assert_eq!(
+      staged_report_for(&staged, Some(session_a), 2_000),
+      Some(PathBuf::from("/tmp/report.pdf"))
+    );
+    assert_eq!(staged_report_for(&staged, Some(session_b), 2_000), None);
+    assert_eq!(staged_report_for(&staged, None, 2_000), None);
+    assert_eq!(staged_report_for(&staged, Some(session_a), 1_000 + STAGED_REPORT_TTL_MS + 1), None);
+    // A stage that never attached to a request serves nobody.
+    let unattached = Some(StagedReport { session: None, path: PathBuf::from("/tmp/x.pdf"), at: 0 });
+    assert_eq!(staged_report_for(&unattached, Some(session_a), 1), None);
+    assert_eq!(staged_report_for(&None, Some(session_a), 1), None);
+  }
+
+  // The POST meter: a burst up to the bucket size passes, the next request
+  // is refused, and tokens refill over time.
+  #[test]
+  fn post_meter_bursts_then_refills() {
+    assert_eq!(refilled(1.0, 1_000, 1_500), 6.0, "half a second = 5 tokens");
+    assert_eq!(refilled(POST_BURST, 0, 10_000), POST_BURST, "capped at burst");
+    let sessions = SessionStore::new();
+    let session = [7u8; 16];
+    for _ in 0..POST_BURST as i32 {
+      assert!(sessions.allow_post(session, 1_000), "burst passes");
+    }
+    assert!(!sessions.allow_post(session, 1_000), "empty bucket refused");
+    // 40ms later: 0.4 tokens — still short of one POST.
+    assert!(!sessions.allow_post(session, 1_040));
+    // A full refill window admits exactly the refilled amount.
+    let mut admitted = 0;
+    for t in 1_000..=2_000u64 {
+      if sessions.allow_post(session, t) {
+        admitted += 1;
+      }
+    }
+    assert!(admitted >= 10, "one second refills 10 tokens, got {admitted}");
+    // Another session has its own bucket.
+    assert!(sessions.allow_post([9u8; 16], 1_000));
+  }
+
+  // Report preparation is single-flight: the first claim wins, a second
+  // phone is refused while one is in flight, an expired claim frees the
+  // slot, and staging consumes it.
+  #[test]
+  fn awaiting_report_claim_is_exclusive_until_staged_or_expired() {
+    let mut slot = None;
+    let phone_a = [1u8; 16];
+    let phone_b = [2u8; 16];
+    assert!(try_claim_awaiting_report(&mut slot, phone_a, 1_000));
+    assert!(!try_claim_awaiting_report(&mut slot, phone_b, 2_000), "refused while in flight");
+    assert!(
+      !try_claim_awaiting_report(&mut slot, phone_b, 1_000 + AWAITING_REPORT_TTL_MS),
+      "still in flight at the TTL boundary"
+    );
+    assert!(try_claim_awaiting_report(&mut slot, phone_b, 1_000 + AWAITING_REPORT_TTL_MS + 1),
+      "expired claim frees the slot");
+    // stage_remote_report consumes the slot; the next request claims cleanly.
+    slot = None;
+    assert!(try_claim_awaiting_report(&mut slot, phone_a, 5_000));
   }
 }

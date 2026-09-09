@@ -212,7 +212,9 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
                   you&rsquo;re done — ending it also signs paired phones out, and
                   they re-scan to reconnect. It closes itself after 30 minutes of
                   inactivity, and with Start automatically on it reopens (same
-                  address) next time Camog starts. If the code was shared or
+                  address) next time Camog starts. If a different clinician
+                  signs in on the computer, the code rotates too — paired
+                  phones scan the new QR once. If the code was shared or
                   photographed, generate a new one — the old code stops working
                   straight away.
                 </p>

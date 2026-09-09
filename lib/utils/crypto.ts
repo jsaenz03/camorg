@@ -103,6 +103,17 @@ export async function verifyPasscode(
 }
 
 /**
+ * Deterministic SHA-256 hex. For lookup keys over non-secret values — the
+ * invitation code's stored fingerprint lives here. Not for passcodes (those
+ * need hashPasscode: a slow, salted hash is what a guessable credential
+ * requires).
+ */
+export async function sha256Hex(value: string): Promise<string> {
+  const digest = await subtle().digest('SHA-256', new TextEncoder().encode(value));
+  return bufToHex(digest);
+}
+
+/**
  * Generate a human-readable random token (default 8 chars).
  * Excludes ambiguous characters (I, O, 0, 1) for ease of manual entry.
  */

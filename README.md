@@ -187,15 +187,32 @@ else; no telemetry, no patient data ever leaves the machine.
   seat count, and expiry ride inside an Ed25519-signed payload. The app stores
   the key in its local SQLite `settings` row and re-verifies the signature on
   every read.
-- **Activation**: the key + a device ID (held in `~/.camog/device-id`, outside
-  the app data folder so copying app data to another machine can't carry a
-  seat) go to the activation worker (`activation-server/`), which counts seats
-  and returns a signed token valid for the licence term. Activating needs
-  internet once; everything after that is offline until renewal.
+- **Activation**: the key + a device ID (held machine-wide — `device-id`
+  under ProgramData / `/Library/Application Support/Camog` / `/var/lib/camog`
+  per platform, falling back to `~/.camog/`; never inside the app data
+  folder) go to the activation worker (`activation-server/`), which counts
+  seats and returns a signed token valid for the licence term. Activating a
+  NEW key rotates to a freshly minted device ID, so a token never names a
+  value a copied database could reconstruct — cloning app data to another
+  machine lands read-only and needs a free seat to re-activate. Re-activating
+  the SAME key reuses the on-disk identity (support seat moves, restored
+  database on the same machine). Activating needs internet once; everything
+  after that is offline until renewal.
 - **Trial**: first launch starts a 14-day trial (no network needed).
 - **After the trial / on expiry**: read-only mode — existing patients and
   photos stay viewable (records retention), but capturing, editing, and
   deletion are disabled until a key is activated (banner → Activate).
+
+**Forgot the admin passcode?** The sign-in screen's "Forgot passcode?" is the
+recovery path: typing the confirmation phrase factory-resets the app — the
+database (patients, photos, accounts, audit trail) and any `camog-backup-*.db`
+copies in the photos folder are deleted, and the app returns to first-run
+setup. Move backups you care about off the machine first. The wipe is
+deliberately available to whoever is at the computer: a machine-local app
+cannot distinguish its owner from a passer-by, so the protection is the
+confirmation phrase plus the physical presence it implies, not a second
+secret. Copying the app data folder to a new computer (or restoring an
+external backup) is the no-data-loss alternative.
 
 Issuing keys (vendor side; the private key lives in `.keys/`, gitignored):
 

@@ -37,6 +37,7 @@ import {
 import { claimRemoteCapture } from '@/lib/utils/capture-dedupe';
 import { ATTENTION_CHANGED_EVENT } from '@/lib/services/attention-events';
 import { useCapture } from '@/components/capture/capture-provider';
+import { authService } from '@/lib/services/auth-service';
 import { auditService } from '@/lib/services/audit-service';
 import { photoService } from '@/lib/services/photo-service';
 import { storePendingPhoto } from '@/lib/services/pending-photo-service';
@@ -124,23 +125,51 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /**
+   * Account-switch guard. The pairing token is machine-level, so without
+   * this a phone paired under a previous clinician reconnects whenever the
+   * link is up and inherits whoever is signed in now — an admin signing in
+   * later would widen that phone to the whole library. Rotating signs paired
+   * phones out and invalidates the saved link; they scan the new QR once.
+   * Same clinician (or a fresh record) → no rotation, so the home-screen
+   * icon keeps working across restarts. Returns the fresh session info when
+   * a rotation happened, else null.
+   */
+  const rotateIfOwnerChanged = useCallback(async (): Promise<RemoteCameraInfo | null> => {
+    const ownerKey = 'camog.phoneLink.owner';
+    const clinician = await authService.getCurrentClinician().catch(() => null);
+    if (!clinician) return null;
+    const previous = localStorage.getItem(ownerKey);
+    localStorage.setItem(ownerKey, clinician.id);
+    if (!previous || previous === clinician.id) return null;
+    const info = await invoke<RemoteCameraInfo>('reset_pairing_token');
+    toast.info('New phone-link code', {
+      description:
+        'A different clinician is signed in — phones paired earlier must scan the new QR once.',
+    });
+    return info;
+  }, []);
+
   const start = useCallback(async () => {
-    // Share the library first so the phone sees it the moment it pairs; a
-    // failure here degrades to capture-only rather than blocking the link.
-    if (stateRef.current.shareLibrary) {
-      await companionService
-        .publish()
-        .catch(() => toast.error('Could not share the photo library with your phone.', {
-          description: 'The link will still work for taking photos.',
-        }));
-    }
     try {
       // Adopt a server that is already running rather than restarting it —
       // a restart would mint a new token and silently kill the QR the phone
       // may already have open (capture-screen pairing, or a webview reload
       // that wiped this React state while the Rust server lived on).
       const existing = await invoke<RemoteCameraInfo | null>('remote_camera_active');
-      const info = existing ?? (await invoke<RemoteCameraInfo>('start_remote_camera'));
+      let info = existing ?? (await invoke<RemoteCameraInfo>('start_remote_camera'));
+      const rotated = await rotateIfOwnerChanged();
+      if (rotated) info = rotated;
+      // Share the library after any rotation so the new clinician's manifest
+      // never rides on a code that is about to die; a failure here degrades
+      // to capture-only rather than blocking the link.
+      if (stateRef.current.shareLibrary) {
+        await companionService
+          .publish()
+          .catch(() => toast.error('Could not share the photo library with your phone.', {
+            description: 'The link will still work for taking photos.',
+          }));
+      }
       setActive(true);
       setUrls(info.urls);
       setPhoneConnected(false);
@@ -153,7 +182,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
         description: error instanceof Error ? error.message : String(error),
       });
     }
-  }, []);
+  }, [rotateIfOwnerChanged]);
 
   const regenerate = useCallback(async () => {
     try {
@@ -381,8 +410,15 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
       try {
         const existing = await invoke<RemoteCameraInfo | null>('remote_camera_active');
         if (existing) {
+          // Re-adopted server: the account-switch guard applies here too —
+          // if the clinician changed since this link started, rotate and
+          // republish so the stale manifest never outlives its owner.
+          const rotated = await rotateIfOwnerChanged();
           setActive(true);
-          setUrls(existing.urls);
+          setUrls(rotated ? rotated.urls : existing.urls);
+          if (rotated && stateRef.current.shareLibrary) {
+            await companionService.publish().catch(() => {});
+          }
         } else if (remembered) {
           await start();
         }
@@ -390,7 +426,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
         /* the link is simply not available (e.g. dev server without Tauri) */
       }
     })();
-  }, [start]);
+  }, [start, rotateIfOwnerChanged]);
 
   // Leaving the dashboard (sign-out) ends the session.
   useEffect(() => {
