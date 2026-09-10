@@ -59,8 +59,9 @@ jobs:
           }
 
           $candidates = @(
-            $entry.InstallLocation,
+            if ($entry) { $entry.InstallLocation.Trim('"') },
             (Join-Path $env:LOCALAPPDATA 'Programs\Camog'),
+            (Join-Path $env:LOCALAPPDATA 'Camog'),
             (Join-Path $env:ProgramFiles 'Camog')
           ) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'Camog.exe')) }
 
