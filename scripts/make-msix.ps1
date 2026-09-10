@@ -1,4 +1,4 @@
-# Make-MSIX — packages an installed Camog Windows build into an .msix for
+﻿# Make-MSIX — packages an installed Camog Windows build into an .msix for
 # Microsoft Store submission (Partner Center accepts only MSIX for packaged
 # apps; Store re-signs the final package, so local signing is optional and
 # only needed for local validation).
@@ -67,12 +67,17 @@ foreach ($size in 44, 150) {
 
 # AppxManifest — Win32 full-trust app. The WebView2 package dependency is
 # included unless -NoWebView2Dependency is set (see param comment).
-$webview2Dependency = if ($NoWebView2Dependency) { "" } else @"
+# (Plain if-statement: a here-string directly after `else` does not parse
+# under Windows PowerShell 5.1.)
+$webview2Dependency = ""
+if (-not $NoWebView2Dependency) {
+  $webview2Dependency = @"
 
     <PackageDependency Name="Microsoft.WebView2"
       MinVersion="119.0.2151.48"
       Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" />
 "@
+}
 $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
 <Package
