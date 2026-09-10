@@ -104,10 +104,9 @@ $manifest = @"
       <uap:VisualElements
         DisplayName="$DisplayName"
         Description="Clinical photo documentation"
-        BackgroundColor="transparent"
+        BackgroundColor="#007B82"
         Square150x150Logo="assets\Square150x150Logo.png"
         Square44x44Logo="assets\Square44x44Logo.png">
-        <uap:DefaultTile Square44x44Logo="assets\Square44x44Logo.png" Square150x150Logo="assets\Square150x150Logo.png" />
       </uap:VisualElements>
     </Application>
   </Applications>
