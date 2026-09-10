@@ -1,0 +1,114 @@
+name: MSIX test package
+
+# Produces a SIGNED-BUT-SELF-SIGNED .msix for local testing only — NOT for
+# Store upload. It installs the release's NSIS setup silently on a GitHub
+# Windows runner, wraps the installed app with scripts/make-msix.ps1
+# (-NoWebView2Dependency, so a sideloaded install doesn't demand the WebView2
+# framework package; Windows 11's evergreen runtime serves the app itself),
+# signs it with a throwaway self-signed certificate, and uploads the .msix +
+# the .cer to import before installing.
+#
+# The tile logos inside are the script's generated placeholders — replace
+# them with real brand tiles before any real (Partner Center) submission.
+
+on:
+  workflow_dispatch:
+    inputs:
+      setup_asset:
+        description: "Release asset URL of the NSIS setup (x64-setup.exe)"
+        default: "https://github.com/jsaenz03/camorg/releases/download/v0.7.3/Camog_0.7.3_x64-setup.exe"
+      msix_version:
+        description: "MSIX version (x.y.z.0)"
+        default: "0.7.3.0"
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout (for scripts/make-msix.ps1)
+        uses: actions/checkout@v4
+
+      - name: Download the NSIS setup
+        shell: pwsh
+        run: Invoke-WebRequest -Uri "${{ github.event.inputs.setup_asset }}" -OutFile setup.exe
+
+      - name: Install the app silently (per-user)
+        shell: pwsh
+        run: |
+          Start-Process -FilePath .\setup.exe -ArgumentList '/S' -Wait
+          Start-Sleep -Seconds 5
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Camog'
+          if (-not (Test-Path (Join-Path $dir 'Camog.exe'))) {
+            throw "Camog.exe not found in $dir after silent install"
+          }
+          Write-Host "Installed to $dir"
+
+      - name: Pack the MSIX
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make-msix.ps1 `
+            -AppDir (Join-Path $env:LOCALAPPDATA 'Programs\Camog') `
+            -Version "${{ github.event.inputs.msix_version }}" `
+            -IdentityName "CamogDesktopTest" `
+            -Publisher "CN=Camog Test" `
+            -OutDir .\msix `
+            -NoWebView2Dependency
+
+      - name: Self-sign for sideloading
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cert = New-SelfSignedCertificate -Type Custom -Subject "CN=Camog Test" `
+            -KeyUsage DigitalSignature -FriendlyName "Camog test MSIX" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+          $pfxPassword = ConvertTo-SecureString -String "camog-test" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath .\camog-test.pfx -Password $pfxPassword
+          Export-Certificate -Cert $cert -FilePath .\camog-test.cer
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          $msix = Get-ChildItem .\msix\*.msix | Select-Object -First 1 -ExpandProperty FullName
+          & $signtool sign /fd SHA256 /f .\camog-test.pfx /p "camog-test" "$msix"
+
+      - name: Install instructions for the tester
+        shell: pwsh
+        run: |
+          @'
+          Camog TEST MSIX — sideload install (not for the Store)
+          =======================================================
+          1. Import the test certificate (one-time per machine):
+             double-click camog-test.cer > Install Certificate >
+             Local Machine > Place all certificates in the following store >
+             Browse... > Trusted People > Finish.
+             (Or from an admin PowerShell:
+              certutil -addstore -f TrustedPeople camog-test.cer)
+          2. Double-click the .msix and click Install. Windows 11 allows
+             sideloading by default; on Windows 10 enable Sideload apps in
+             Settings > Update & Security > For developers first.
+          3. Launch Camog from the Start menu.
+
+          Things worth checking (the reason this package exists):
+          - App launches and renders (WebView2 under package identity).
+          - Sign-in works; licence activation succeeds and Settings shows
+            the version 0.7.3.
+          - Licence device identity: does C:\ProgramData still hold the
+            machine identity where the licence system expects it?
+          - Phone link opens; expect the generic Windows firewall prompt
+            the first time it listens (the NSIS firewall rule does not
+            exist in an MSIX install).
+          - Capture a photo, open photo detail, generate a report.
+          - Uninstall from the Start menu removes it cleanly.
+          '@ | Out-File -FilePath .\INSTALL-test-msix.txt -Encoding utf8
+
+      - name: Upload the test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: camog-test-msix
+          path: |
+            msix/*.msix
+            camog-test.cer
+            INSTALL-test-msix.txt
+          if-no-files-found: error

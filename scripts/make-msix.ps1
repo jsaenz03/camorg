@@ -26,7 +26,13 @@ param(
   [Parameter(Mandatory = $true)][string]$Publisher,        # Partner Center publisher (CN=...)
   [string]$Executable = "Camog.exe",
   [string]$DisplayName = "Camog",
-  [string]$OutDir = ".\msix"
+  [string]$OutDir = ".\msix",
+  # Sideloading a test package fails unless the machine has Microsoft's
+  # WebView2 framework package (the Store resolves the dependency
+  # automatically; a direct install does not). Skip it for local test
+  # builds — the app's own WebView2 loader still finds the evergreen
+  # runtime that Windows 11 ships.
+  [switch]$NoWebView2Dependency
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,7 +65,14 @@ foreach ($size in 44, 150) {
   $bmp.Dispose()
 }
 
-# AppxManifest — Win32 full-trust app with the WebView2 framework dependency.
+# AppxManifest — Win32 full-trust app. The WebView2 package dependency is
+# included unless -NoWebView2Dependency is set (see param comment).
+$webview2Dependency = if ($NoWebView2Dependency) { "" } else @"
+
+    <PackageDependency Name="Microsoft.WebView2"
+      MinVersion="119.0.2151.48"
+      Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" />
+"@
 $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
 <Package
@@ -73,10 +86,7 @@ $manifest = @"
     <Logo>assets\Square44x44Logo.png</Logo>
   </Properties>
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
-    <PackageDependency Name="Microsoft.WebView2"
-      MinVersion="119.0.2151.48"
-      Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />$webview2Dependency
   </Dependencies>
   <Resources>
     <Resource Language="en-au" />
