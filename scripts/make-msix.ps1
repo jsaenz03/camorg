@@ -93,8 +93,11 @@ $manifest = @"
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />$webview2Dependency
   </Dependencies>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
   <Resources>
-    <Resource Language="en-au" />
+    <Resource Language="en-AU" />
   </Resources>
   <Applications>
     <Application Id="Camog" Executable="$Executable" EntryPoint="Windows.FullTrustApplication">
@@ -108,9 +111,6 @@ $manifest = @"
       </uap:VisualElements>
     </Application>
   </Applications>
-  <Capabilities>
-    <rescap:Capability Name="runFullTrust" />
-  </Capabilities>
 </Package>
 "@
 $manifest | Out-File -FilePath (Join-Path $staging "AppxManifest.xml") -Encoding utf8
