@@ -35,22 +35,31 @@ jobs:
         shell: pwsh
         run: Invoke-WebRequest -Uri "${{ github.event.inputs.setup_asset }}" -OutFile setup.exe
 
-      - name: Install the app silently (per-user)
+      - name: Install the app silently, then find it
         shell: pwsh
         run: |
           Start-Process -FilePath .\setup.exe -ArgumentList '/S' -Wait
           Start-Sleep -Seconds 5
-          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Camog'
-          if (-not (Test-Path (Join-Path $dir 'Camog.exe'))) {
-            throw "Camog.exe not found in $dir after silent install"
+          $candidates = @(
+            (Join-Path $env:LOCALAPPDATA 'Programs\Camog'),
+            (Join-Path $env:ProgramFiles 'Camog'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Camog')
+          )
+          $appDir = $candidates | Where-Object { Test-Path (Join-Path $_ 'Camog.exe') } | Select-Object -First 1
+          if (-not $appDir) {
+            Write-Host "Installed-file search:"
+            Get-ChildItem "$env:LOCALAPPDATA\Programs", $env:ProgramFiles -Directory -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty FullName
+            throw "Camog.exe not found in any standard install location after silent install"
           }
-          Write-Host "Installed to $dir"
+          Write-Host "Installed to $appDir"
+          "APPDIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Pack the MSIX
         shell: pwsh
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make-msix.ps1 `
-            -AppDir (Join-Path $env:LOCALAPPDATA 'Programs\Camog') `
+            -AppDir "$env:APPDIR" `
             -Version "${{ github.event.inputs.msix_version }}" `
             -IdentityName "CamogDesktopTest" `
             -Publisher "CN=Camog Test" `
