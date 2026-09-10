@@ -81,19 +81,35 @@ jobs:
           }
 
           # 3) Fallback: bypass the installer entirely — extract the NSIS
-          # payload with 7-Zip (preinstalled on the runner images).
+          # payload with 7-Zip (preinstalled on the runner images). The
+          # payload stores the app binary under a build-time name; the
+          # largest .exe is the Tauri binary, renamed to Camog.exe below.
           if (-not $appDir) {
-            Write-Host "Silent install produced no files - extracting the setup payload instead"
+            Write-Host "Silent install produced no usable files - extracting the setup payload instead"
             $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
             if (-not $sevenZip) { $sevenZip = 'C:\Program Files\7-Zip\7z.exe' }
             if (-not (Test-Path $sevenZip)) { throw "7-Zip not found at $sevenZip" }
             New-Item -ItemType Directory -Force -Path C:\CamogStaged | Out-Null
             $sevenOut = & $sevenZip x .\setup.exe -oC:\CamogStaged -y
             Write-Host "7z exit code: $LASTEXITCODE"
-            $sevenOut | Select-Object -Last 12 | ForEach-Object { Write-Host "7z: $_" }
-            $exe = Get-ChildItem C:\CamogStaged -Filter Camog.exe -Recurse | Select-Object -First 1
-            if (-not $exe) { throw "Camog.exe not produced by install or by extraction" }
-            $appDir = $exe.DirectoryName
+            $sevenOut | Select-Object -Last 8 | ForEach-Object { Write-Host "7z: $_" }
+            Write-Host "Extracted payload:"
+            Get-ChildItem C:\CamogStaged -Recurse -File |
+              ForEach-Object { Write-Host ("  " + $_.FullName.Substring(15) + "  " + $_.Length) }
+            $mainExe = Get-ChildItem C:\CamogStaged -Filter *.exe -Recurse |
+              Sort-Object Length -Descending | Select-Object -First 1
+            if (-not $mainExe) { throw "No .exe found in the NSIS payload" }
+            Write-Host "Main binary: $($mainExe.FullName) ($($mainExe.Length) bytes)"
+            if ($mainExe.Name -ne 'Camog.exe') { Rename-Item $mainExe.FullName 'Camog.exe' }
+            $appDir = $mainExe.DirectoryName
+          }
+
+          # Wherever the app dir came from, the manifest needs Camog.exe.
+          if (-not (Test-Path (Join-Path $appDir 'Camog.exe'))) {
+            $mainExe = Get-ChildItem $appDir -Filter *.exe |
+              Sort-Object Length -Descending | Select-Object -First 1
+            if (-not $mainExe) { throw "No .exe in $appDir" }
+            Rename-Item $mainExe.FullName 'Camog.exe'
           }
 
           Write-Host "App dir: $appDir"
