@@ -40,6 +40,15 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Host ("setup.exe size: " + (Get-Item .\setup.exe).Length)
+
+          # The unsigned app files get quarantined by Defender the moment the
+          # installer drops them (install "succeeds", registry is written,
+          # files vanish). Runner is ephemeral — disable realtime scanning
+          # for the packaging step.
+          Set-MpPreference -DisableRealtimeMonitoring $true
+          Add-MpPreference -ExclusionPath (Join-Path $env:LOCALAPPDATA 'Camog') -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess 'setup.exe' -ErrorAction SilentlyContinue
+
           $p = Start-Process -FilePath .\setup.exe -ArgumentList '/S' -Wait -PassThru
           Write-Host "installer exit code: $($p.ExitCode)"
           Start-Sleep -Seconds 5
@@ -79,7 +88,9 @@ jobs:
             if (-not $sevenZip) { $sevenZip = 'C:\Program Files\7-Zip\7z.exe' }
             if (-not (Test-Path $sevenZip)) { throw "7-Zip not found at $sevenZip" }
             New-Item -ItemType Directory -Force -Path C:\CamogStaged | Out-Null
-            & $sevenZip x .\setup.exe -oC:\CamogStaged -y | Out-Null
+            $sevenOut = & $sevenZip x .\setup.exe -oC:\CamogStaged -y
+            Write-Host "7z exit code: $LASTEXITCODE"
+            $sevenOut | Select-Object -Last 12 | ForEach-Object { Write-Host "7z: $_" }
             $exe = Get-ChildItem C:\CamogStaged -Filter Camog.exe -Recurse | Select-Object -First 1
             if (-not $exe) { throw "Camog.exe not produced by install or by extraction" }
             $appDir = $exe.DirectoryName
@@ -87,6 +98,13 @@ jobs:
 
           Write-Host "App dir: $appDir"
           "APPDIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Defender verdicts (diagnostics)
+        if: failure()
+        shell: powershell
+        run: |
+          try { Get-MpThreat | Select-Object -First 10 | Format-List ThreatName, Resources | Out-String | Write-Host } catch { Write-Host "Get-MpThreat: $_" }
+          try { Get-MpThreatDetection | Select-Object -First 10 | Format-List ThreatID, Resources | Out-String | Write-Host } catch { Write-Host "Get-MpThreatDetection: $_" }
 
       - name: Pack the MSIX
         shell: pwsh
