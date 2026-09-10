@@ -39,8 +39,9 @@ interface ReportPhoto {
   path: string;
   capturedAt: Date;
   bodyPart: string;
-  /** Raw enum key so the body-map diagram can highlight the right region. */
-  bodyPartKey: BodyPart;
+  /** Raw enum key so the body-map diagram can highlight the right region;
+      null = photo saved without one (no diagram, label reads Unspecified). */
+  bodyPartKey: BodyPart | null;
   laterality: Laterality | null;
   /** Saved pinpoint X on either diagram; the space says which one it lives on. */
   pin: Pinpoint | null;
@@ -133,7 +134,7 @@ function ReportView() {
               url,
               path,
               capturedAt: r.capturedAt,
-              bodyPart: BodyPartLabels[r.bodyPart] ?? r.bodyPart,
+              bodyPart: r.bodyPart ? (BodyPartLabels[r.bodyPart] ?? r.bodyPart) : 'Unspecified',
               bodyPartKey: r.bodyPart,
               laterality: r.laterality,
               pin:
@@ -443,7 +444,7 @@ function ReportView() {
                         className="block h-24 w-[60px]"
                       />
                     </span>
-                    {photo.pin?.space === 'part' && hasPartDetail(photo.bodyPartKey) && (
+                    {photo.bodyPartKey && photo.pin?.space === 'part' && hasPartDetail(photo.bodyPartKey) && (
                       <span
                         className="shrink-0 rounded-sm border border-zinc-200 bg-white p-1"
                         title={`Exact spot — ${bodyPartSurfaceLabel(photo.bodyPartKey, photo.laterality, photo.pin.view)}`}

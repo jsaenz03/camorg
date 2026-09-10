@@ -18,7 +18,7 @@ export interface PhotoSummary {
   id: string;
   patientId: string;
   patientName: string;
-  bodyPart: BodyPart;
+  bodyPart: BodyPart | null;
   capturedAt: Date;
   isDeleted: boolean;
 }
@@ -28,7 +28,7 @@ export interface PhotoReviewSummary {
   id: string;
   patientId: string;
   patientName: string;
-  bodyPart: BodyPart;
+  bodyPart: BodyPart | null;
   laterality: Laterality | null;
   subpart: string | null;
   reviewDueAt: Date;
@@ -74,7 +74,7 @@ function rowToPhoto(row: Record<string, unknown>): PhotoRecord {
     originalFileName: (row.original_file_name as string) || '',
     mimeType: row.mime_type as string,
     fileSizeBytes: row.file_size_bytes as number,
-    bodyPart: row.body_part as BodyPart,
+    bodyPart: (row.body_part as BodyPart | null) ?? null,
     laterality: (row.laterality as Laterality | null) ?? null,
     subpart: (row.subpart as string | null) ?? null,
     clinicalNotes: (row.clinical_notes as string | null) ?? null,
@@ -189,7 +189,7 @@ export class PhotoService implements IPhotoService {
           validated.originalFileName ?? '', // provenance for imports; '' for captures
           validated.mimeType,
           storedBlob.size,
-          validated.bodyPart,
+          validated.bodyPart ?? null,
           validated.laterality ?? null,
           validated.subpart ?? null,
           validated.clinicalNotes ?? null,
@@ -212,11 +212,11 @@ export class PhotoService implements IPhotoService {
         entityType: 'photo',
         entityId: id,
         patientId: validated.patientId,
-        detail: `${validated.bodyPart}${validated.subpart ? ` · ${validated.subpart}` : ''}${lesionGroup ? ` · series: ${lesionGroup}` : ''}`,
+        detail: `${validated.bodyPart ?? 'Unspecified'}${validated.subpart ? ` · ${validated.subpart}` : ''}${lesionGroup ? ` · series: ${lesionGroup}` : ''}`,
       });
 
-      // Record subpart usage if provided.
-      if (validated.subpart) {
+      // Record subpart usage if provided (it belongs to a body part).
+      if (validated.subpart && validated.bodyPart) {
         await subpartService.recordUsage(validated.bodyPart, validated.subpart);
       }
 
@@ -231,7 +231,7 @@ export class PhotoService implements IPhotoService {
         mimeType: validated.mimeType,
         fileSizeBytes: storedBlob.size,
         attachmentCount: 0, // brand new — documents attach after the save
-        bodyPart: validated.bodyPart,
+        bodyPart: validated.bodyPart ?? null,
         laterality: validated.laterality ?? null,
         subpart: validated.subpart || null,
         clinicalNotes: validated.clinicalNotes || null,
@@ -362,13 +362,16 @@ export class PhotoService implements IPhotoService {
     const photo = rowToPhoto(rows[0]);
     await accessService.assertCanManagePatient(photo.patientId);
 
-    const updatedBodyPart = validated.bodyPart ?? photo.bodyPart;
+    // Explicit undefined = untouched (an absent key); null = cleared. The
+    // link flow writes an inherited part onto a photo saved without one.
+    const updatedBodyPart = validated.bodyPart !== undefined ? validated.bodyPart : photo.bodyPart;
     const bodyPartChanged = updatedBodyPart !== photo.bodyPart;
     // A side only makes sense on paired regions — moving the photo to a
     // central part (or leaving it on one) never keeps a stale laterality.
-    const updatedLaterality = BILATERAL_BODY_PARTS.has(updatedBodyPart)
-      ? validated.laterality !== undefined ? validated.laterality : photo.laterality
-      : null;
+    const updatedLaterality =
+      updatedBodyPart && BILATERAL_BODY_PARTS.has(updatedBodyPart)
+        ? validated.laterality !== undefined ? validated.laterality : photo.laterality
+        : null;
     const updatedSubpart =
       validated.subpart !== undefined ? validated.subpart : photo.subpart;
     const updatedNotes =
@@ -413,7 +416,7 @@ export class PhotoService implements IPhotoService {
     );
 
     const auditParts = [
-      `${updatedBodyPart}${updatedLaterality ? ` (${updatedLaterality})` : ''}`,
+      `${updatedBodyPart ?? 'Unspecified'}${updatedLaterality ? ` (${updatedLaterality})` : ''}`,
       ...(updatedSubpart ? [updatedSubpart] : []),
       ...(updatedLesionGroup ? [`series: ${updatedLesionGroup}`] : []),
     ];
@@ -436,8 +439,8 @@ export class PhotoService implements IPhotoService {
       });
     }
 
-    // Record subpart usage if changed and provided.
-    if (validated.subpart && validated.subpart !== photo.subpart) {
+    // Record subpart usage if changed and provided (it belongs to a body part).
+    if (validated.subpart && updatedBodyPart && validated.subpart !== photo.subpart) {
       await subpartService.recordUsage(updatedBodyPart, validated.subpart);
     }
 
@@ -530,7 +533,7 @@ export class PhotoService implements IPhotoService {
       id: row.id as string,
       patientId: row.patient_id as string,
       patientName: (row.patient_name as string) ?? 'Unknown patient',
-      bodyPart: row.body_part as BodyPart,
+      bodyPart: (row.body_part as BodyPart | null) ?? null,
       laterality: (row.laterality as Laterality | null) ?? null,
       subpart: (row.subpart as string | null) ?? null,
       reviewDueAt: new Date(row.review_due_at as number),
@@ -858,7 +861,7 @@ export class PhotoService implements IPhotoService {
       id: row.id as string,
       patientId: row.patient_id as string,
       patientName: (row.patient_name as string) ?? 'Unknown patient',
-      bodyPart: row.body_part as BodyPart,
+      bodyPart: (row.body_part as BodyPart | null) ?? null,
       capturedAt: new Date(row.captured_at as number),
       isDeleted: Boolean(row.is_deleted),
     }));

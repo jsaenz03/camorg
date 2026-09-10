@@ -4,15 +4,16 @@
  * Per-photo attachments: pathology reports, referral letters — any document
  * the clinician wants filed against this specific photo. Uploads copy the
  * picked file into {photosDir}/results (resultFileService); clicking a file
- * opens it in an in-app preview (no copy written to disk), and "Save a copy"
- * is there for formats the viewer can't render or when the clinician wants
- * the file outside Camog. Remove is a two-step soft delete. Deleted photos
- * show their files read-only.
+ * opens it in the in-app viewer (ResultFileViewer — PDF/image/text with
+ * zoom, rotate and page controls; no copy written to disk), and "Save a
+ * copy" is there for formats the viewer can't render or when the clinician
+ * wants the file outside Camog. Remove is a two-step soft delete. Deleted
+ * photos show their files read-only.
  */
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import {
   Download,
@@ -24,20 +25,11 @@ import {
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import type { ResultFileRecord } from '@/types/result-file';
-import {
-  RESULT_FILE_DIALOG_FILTER,
-  resultFilePreviewKind,
-} from '@/types/result-file';
+import { RESULT_FILE_DIALOG_FILTER } from '@/types/result-file';
 import { resultFileService } from '@/lib/services/result-file-service';
+import { ResultFileViewer } from '@/components/photo/result-file-viewer';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { toast } from 'sonner';
 
 function formatBytes(bytes: number): string {
@@ -48,13 +40,6 @@ function formatBytes(bytes: number): string {
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
-}
-
-/** Blob URL from raw bytes: the webviews' PDF viewers render blob: frames
- *  reliably where base64 data: URLs come up blank, and this skips building
- *  a 4/3-size base64 string for a multi-MB PDF. */
-function bytesToBlobUrl(bytes: Uint8Array<ArrayBuffer>, mime: string): string {
-  return URL.createObjectURL(new Blob([bytes], { type: mime }));
 }
 
 export function ResultFilesSection({
@@ -70,38 +55,8 @@ export function ResultFilesSection({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
 
-  // In-app preview state: the file being viewed + its loaded content.
-  // ('none' preview kinds never reach state — the dialog shows its fallback
-  // panel off resultFilePreviewKind while preview is still null.)
+  // The file open in the in-app viewer, if any.
   const [viewing, setViewing] = useState<ResultFileRecord | null>(null);
-  const [preview, setPreview] = useState<
-    { kind: 'pdf' | 'image'; url: string } | { kind: 'text'; text: string } | null
-  >(null);
-  // The preview's blob URL, so it can be revoked when replaced or closed.
-  const objectUrlRef = useRef<string | null>(null);
-  // Bumped on every view/close: a readFileBytes that lands after its caller
-  // was superseded must not write stale content into the dialog.
-  const viewSeqRef = useRef(0);
-
-  // Unmount (photo dialog closed) must release the previewed file's bytes —
-  // an unreleased blob URL pins them for the life of the webview.
-  useEffect(
-    () => () => {
-      viewSeqRef.current++;
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
-    },
-    [],
-  );
-
-  function revokeObjectUrl() {
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-    }
-  }
 
   useEffect(() => {
     let mounted = true;
@@ -184,6 +139,7 @@ export function ResultFilesSection({
     try {
       await resultFileService.delete(file.id);
       toast.success('Result file removed');
+      setViewing((current) => (current?.id === file.id ? null : current));
       await refresh();
     } catch (err) {
       toast.error(errorText(err));
@@ -191,38 +147,6 @@ export function ResultFilesSection({
       setBusyId(null);
       setConfirmRemoveId(null);
     }
-  }
-
-  /** Read the file in place and stage content for the preview dialog. */
-  async function handleView(file: ResultFileRecord) {
-    const seq = ++viewSeqRef.current;
-    revokeObjectUrl();
-    setViewing(file);
-    setPreview(null);
-    const kind = resultFilePreviewKind(file.originalName);
-    if (kind === 'none') return; // fallback panel shows immediately
-    try {
-      const { bytes, mimeType } = await resultFileService.readFileBytes(file.id);
-      if (seq !== viewSeqRef.current) return; // superseded by a close or newer view
-      if (kind === 'text') {
-        setPreview({ kind: 'text', text: new TextDecoder().decode(bytes) });
-      } else {
-        const url = bytesToBlobUrl(bytes, mimeType);
-        objectUrlRef.current = url;
-        setPreview({ kind, url });
-      }
-    } catch (err) {
-      if (seq !== viewSeqRef.current) return;
-      toast.error(errorText(err));
-      setViewing(null);
-    }
-  }
-
-  function closePreview() {
-    viewSeqRef.current++;
-    setViewing(null);
-    setPreview(null);
-    revokeObjectUrl();
   }
 
   return (
@@ -270,7 +194,7 @@ export function ResultFilesSection({
                     type="button"
                     className="block w-full truncate text-left text-sm underline-offset-2 hover:underline"
                     title={`Preview ${file.originalName}`}
-                    onClick={() => void handleView(file)}
+                    onClick={() => setViewing(file)}
                   >
                     {file.originalName}
                   </button>
@@ -320,79 +244,14 @@ export function ResultFilesSection({
         </p>
       )}
 
-      {/* In-app preview: renders straight from the stored bytes — nothing is
+      {/* In-app viewer: renders straight from the stored bytes — nothing is
           written to disk, so no duplicate files pile up in Downloads. */}
-      <Dialog open={viewing !== null} onOpenChange={(o) => !o && closePreview()}>
-        <DialogContent className="flex h-[90dvh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
-          <DialogHeader className="shrink-0 border-b px-4 py-3 sm:px-6">
-            <DialogTitle className="truncate pr-8 text-base" title={viewing?.originalName}>
-              {viewing?.originalName}
-            </DialogTitle>
-            <DialogDescription className="sr-only">
-              Preview of an attached result file
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="relative min-h-0 flex-1">
-            {preview === null ? (
-              viewing && resultFilePreviewKind(viewing.originalName) !== 'none' ? (
-                <div className="flex h-full items-center justify-center">
-                  <Loader2 className="size-8 animate-spin text-muted-foreground" />
-                </div>
-              ) : (
-                <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-                  <FileText className="size-10 text-muted-foreground" />
-                  <p className="text-sm font-medium">
-                    No in-app preview for this file type
-                  </p>
-                  <p className="max-w-sm text-xs text-muted-foreground">
-                    PDFs, images and text files preview here. For this format,
-                    save a copy and open it with your usual app.
-                  </p>
-                </div>
-              )
-            ) : preview.kind === 'text' ? (
-              <pre className="absolute inset-0 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs sm:p-6">
-                {preview.text}
-              </pre>
-            ) : preview.kind === 'image' ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/95 p-4">
-                {/* eslint-disable-next-line @next/next/no-img-element -- local file bytes as data URL */}
-                <img
-                  src={preview.url}
-                  alt={`Preview of ${viewing?.originalName}`}
-                  className="max-h-full max-w-full object-contain"
-                />
-              </div>
-            ) : (
-              <iframe
-                src={preview.url}
-                title={`Preview of ${viewing?.originalName}`}
-                className="absolute inset-0 h-full w-full border-0 bg-white"
-              />
-            )}
-          </div>
-
-          <div className="flex shrink-0 items-center justify-between gap-2 border-t px-4 py-3 sm:px-6">
-            <p className="truncate text-xs text-muted-foreground">
-              {viewing &&
-                `${formatBytes(viewing.fileSizeBytes)} · attached ${format(viewing.createdAt, 'd MMM yyyy')}`}
-            </p>
-            {viewing && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busyId === viewing.id}
-                onClick={() => void handleSaveCopy(viewing)}
-              >
-                <Download className="size-4" />
-                Save a copy…
-              </Button>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ResultFileViewer
+        file={viewing}
+        onClose={() => setViewing(null)}
+        onSaveCopy={(file) => void handleSaveCopy(file)}
+        isSavingCopy={viewing !== null && busyId === viewing.id}
+      />
     </div>
   );
 }

@@ -10,8 +10,11 @@
  * with its sibling EditPatientDialog's identical `${id}:${updatedAt}` key —
  * duplicate sibling keys corrupted reconciliation and orphaned the open
  * Radix dialog. This spec fails if the dialog ever stays in the DOM.
+ *
+ * The second test pins keyboard confirmation: the dialog is a real form with
+ * the confirm button autofocused, so Enter accepts (no mouse needed).
  */
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 declare global {
   interface Window {
@@ -29,7 +32,8 @@ const PATIENT_ROW = {
   review_due_at: null, last_reviewed_at: null, owner_name: 'Dr X',
 };
 
-test('recording consent from the timeline banner closes the dialog and clears the banner', async ({ page }) => {
+/** Fake Tauri IPC (canned SQL rows) + session, then open the consent dialog. */
+async function openConsentDialog(page: Page): Promise<void> {
   await page.addInitScript(({ patientRow }) => {
     sessionStorage.setItem('camog.session', JSON.stringify({ clinicianId: 'c1', expiresAt: Date.now() + 3600000 }));
     const state: { patient: Record<string, unknown>; audit: unknown[] } = { patient: patientRow, audit: [] };
@@ -89,11 +93,30 @@ test('recording consent from the timeline banner closes the dialog and clears th
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('Record photo consent');
+}
 
+test('recording consent from the timeline banner closes the dialog and clears the banner', async ({ page }) => {
+  await openConsentDialog(page);
+
+  const dialog = page.locator('[role="dialog"]');
   await dialog.getByRole('button', { name: /Record consent/ }).click();
 
   // The fix this spec pins: the dialog must fully leave the DOM, the body
   // scroll-lock must release, and the banner must not reappear.
+  await expect(dialog).toHaveCount(0, { timeout: 10000 });
+  await expect(page.locator('body')).not.toHaveCSS('pointer-events', 'none');
+  await expect(page.getByText('No photo consent on record')).toHaveCount(0);
+});
+
+test('pressing Enter accepts the consent dialog', async ({ page }) => {
+  await openConsentDialog(page);
+
+  // The confirm button is autofocused, so Enter straight after opening —
+  // the keyboard path a clinician takes — records the consent.
+  const dialog = page.locator('[role="dialog"]');
+  await expect(dialog.locator('button[type="submit"]')).toBeFocused();
+  await page.keyboard.press('Enter');
+
   await expect(dialog).toHaveCount(0, { timeout: 10000 });
   await expect(page.locator('body')).not.toHaveCSS('pointer-events', 'none');
   await expect(page.getByText('No photo consent on record')).toHaveCount(0);

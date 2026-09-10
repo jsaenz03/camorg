@@ -17,8 +17,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Camera, Check, Images, Pencil, Users, ArrowRight, Smartphone } from 'lucide-react';
 import type { Patient } from '@/types/patient';
-import type { BodyPart } from '@/types/body-part';
-import { BodyPartLabels } from '@/types/body-part';
+import { bodyPartDisplayLabel } from '@/types/body-part';
 import { patientService } from '@/lib/services/patient-service';
 import { photoService, type PhotoSummary } from '@/lib/services/photo-service';
 import { authService } from '@/lib/services/auth-service';
@@ -532,14 +531,14 @@ function RecentPhotoTile({
     <button
       type="button"
       onClick={onClick}
-      aria-label={`Photo of ${BodyPartLabels[photo.bodyPart as BodyPart]} for ${photo.patientName}, ${formatRelativeTime(photo.capturedAt)}`}
+      aria-label={`Photo of ${bodyPartDisplayLabel(photo.bodyPart, photo.laterality)} for ${photo.patientName}, ${formatRelativeTime(photo.capturedAt)}`}
       className="group relative flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-px"
     >
       <div className="relative aspect-square w-full bg-muted">
         {url ? (
           <img
             src={url}
-            alt={`Photo of ${BodyPartLabels[photo.bodyPart as BodyPart]}`}
+            alt={`Photo of ${bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}`}
             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
             loading="lazy"
           />
@@ -550,10 +549,10 @@ function RecentPhotoTile({
             tiles, so the overlay reads on every photo surface. */}
         <span
           className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-white p-1 shadow-sm ring-1 ring-black/10"
-          title={`${BodyPartLabels[photo.bodyPart as BodyPart]}${photo.laterality ? ` (${photo.laterality})` : ''}`}
+          title={bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}
         >
           <BodyMapBadge
-            bodyPart={photo.bodyPart as BodyPart}
+            bodyPart={photo.bodyPart}
             laterality={photo.laterality}
             className="block h-9 w-[22.5px]"
           />
@@ -563,7 +562,7 @@ function RecentPhotoTile({
         <div className="min-w-0">
           <p className="truncate text-xs font-medium">{photo.patientName}</p>
           <p className="truncate text-xs text-muted-foreground">
-            {BodyPartLabels[photo.bodyPart as BodyPart]}
+            {bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}
           </p>
         </div>
         <span className="shrink-0 text-xs text-muted-foreground">

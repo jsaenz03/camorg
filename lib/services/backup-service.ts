@@ -12,18 +12,31 @@
  * the app produces and is designed to be copied elsewhere, so its key must
  * travel with it — a passphrase, not the machine-local photo key.
  *
- * Restore is deliberately manual (quit app → replace camog.db) with one
- * extra step: "prepare a restore copy" decrypts a backup to a chosen path.
- * Swapping the live DB under an open connection pool risks corruption, and
- * doing it Rust-side at startup needs a pre-launch flag. Instructions ship
- * in the UI.
+ * Restore is one click (restoreDatabase): decrypt + validate the chosen
+ * backup, stage it as camog.restore in the app config dir, and relaunch. The
+ * Rust shell swaps it in at startup (src-tauri/src/db_restore.rs) before any
+ * connection can open — swapping under the live pool risks corruption — and
+ * keeps the replaced database as camog.pre-restore.db, so a restore can be
+ * undone by hand. "Prepare a restore copy" remains for by-hand restores on
+ * any machine; the instructions stay in the UI for the app-won't-start case.
+ *
+ * A locked-out admin recovers without losing data via
+ * restoreForPasscodeRecovery, offered on the sign-in screen's "Forgot
+ * passcode?": the same stage-and-restart flow plus a passcode reset for every
+ * admin inside the staged backup — restoring a backup alone would bring back
+ * the very passcode hashes nobody remembers. It trusts the backup passphrase,
+ * which already unlocks the data anywhere (see prepareRestoreCopy), so the
+ * passphrase doubles as the practice's recovery credential.
  */
 
 import { getDB, getPhotosDir } from '@/lib/db/database';
-import { join } from '@tauri-apps/api/path';
+import { appConfigDir, join } from '@tauri-apps/api/path';
+import { invoke } from '@tauri-apps/api/core';
+import Database from '@tauri-apps/plugin-sql';
 import { readDir, readFile, writeFile, rename, remove } from '@tauri-apps/plugin-fs';
 import { auditService } from '@/lib/services/audit-service';
 import { accessService } from '@/lib/services/access-service';
+import { hashPasscode, randomToken } from '@/lib/utils/crypto';
 import {
   encryptBackupBytes,
   decryptBackupBytes,
@@ -32,6 +45,15 @@ import { ValidationError } from '@/lib/validators/errors';
 
 /** Backups kept before the oldest is pruned (one per createBackup call). */
 const KEEP_BACKUPS = 10;
+
+/**
+ * Newest schema this app can open (highest migration version in
+ * src-tauri/src/lib.rs). A backup from a newer schema is refused below —
+ * restoring it would leave a database the running app fails to open on
+ * every launch. scripts/self-check-db-restore.mjs pins this to the Rust
+ * migration list so the two can't drift.
+ */
+export const LATEST_MIGRATION_VERSION = 21;
 
 /** Passphrase floor/ceiling: short fails PBKDF2's job; long is a DoS bound. */
 export const MIN_PASSPHRASE_LENGTH = 8;
@@ -48,6 +70,14 @@ export interface BackupResult {
 export interface BackupInfo {
   filename: string;
   createdAt: Date;
+}
+
+/** What restoreForPasscodeRecovery hands the sign-in screen before the restart. */
+export interface PasscodeRecoveryResult {
+  /** One-time sign-in passcode set on every administrator in the restored backup. */
+  tempPasscode: string;
+  /** Usernames that passcode opens (restored, active, approved admins). */
+  adminUsernames: string[];
 }
 
 function assertValidPassphrase(passphrase: unknown): string {
@@ -175,6 +205,214 @@ class BackupService {
       entityType: 'database',
       detail: `prepared a restore copy of ${filename}`,
     });
+  }
+
+  /**
+   * The shared front half of both restore paths: decrypt the chosen backup,
+   * stage it atomically as camog.restore in the app config dir, and validate
+   * it. Returns the staged path and the still-open validation connection —
+   * callers must close it (the passcode-recovery path keeps writing to the
+   * staged database first). Any failure here removes the staged file, so an
+   * unattended launch can never swap in a bad database.
+   */
+  private async stageValidatedBackup(
+    filename: string,
+    passphrase: string,
+  ): Promise<{ staged: string; check: Database }> {
+    const dir = await getPhotosDir();
+    const raw = new Uint8Array(await readFile(await join(dir, filename)));
+    const plain = await decryptBackupBytes(raw, passphrase);
+
+    // Stage atomically: a crash mid-write must never leave a truncated file
+    // under the name boot swaps in (Rust re-checks the header anyway).
+    // appConfigDir, not appDataDir: the sql plugin opens sqlite: paths in
+    // the config dir, and staging must sit exactly where the validation
+    // below and the Rust boot swap both look.
+    const staged = await join(await appConfigDir(), 'camog.restore');
+    await writeFile(`${staged}.tmp`, plain);
+    await rename(`${staged}.tmp`, staged);
+
+    // Validate before committing to a restart: a corrupt or foreign file
+    // must fail here, with the app still running, not at the next boot.
+    // Opens the staged path directly — migrations are registered for
+    // sqlite:camog.db only, so this never migrates the staged file.
+    const check = await Database.load('sqlite:camog.restore');
+    try {
+      const integrity = await check.select<{ quick_check: string }[]>(
+        'PRAGMA quick_check',
+      );
+      if (integrity[0]?.quick_check !== 'ok') {
+        throw new Error(
+          `That backup failed its integrity check: ${integrity[0]?.quick_check ?? 'no result'}.`,
+        );
+      }
+      let version: number;
+      try {
+        const rows = await check.select<{ v: number | null }[]>(
+          'SELECT MAX(version) AS v FROM _sqlx_migrations',
+        );
+        version = Number(rows[0]?.v ?? 0);
+      } catch {
+        throw new ValidationError('That file is not a Camog database backup.');
+      }
+      if (version < 1) {
+        throw new ValidationError('That file is not a Camog database backup.');
+      }
+      if (version > LATEST_MIGRATION_VERSION) {
+        throw new Error(
+          `That backup is from a newer Camog (schema ${version} of ${LATEST_MIGRATION_VERSION}). Update Camog first, then restore it.`,
+        );
+      }
+    } catch (err) {
+      await check.close().catch(() => {});
+      await remove(staged).catch(() => {});
+      throw err;
+    }
+    return { staged, check };
+  }
+
+  /**
+   * One-click restore: decrypt + validate the chosen backup, stage it as
+   * camog.restore in the app config dir (the base tauri-plugin-sql resolves
+   * sqlite: paths against — same as the data dir on Windows/macOS, distinct
+   * on Linux), then relaunch — the Rust shell swaps
+   * it in at startup and keeps the replaced database as camog.pre-restore.db
+   * (src-tauri/src/db_restore.rs). A wrong passphrase throws before
+   * anything is written; a failed integrity/schema check removes the staged
+   * file, so an unattended launch can never swap in a bad database. (Crash
+   * window: dying between staging and validation leaves a decrypted,
+   * header-valid file that boot swaps after only a magic-header check —
+   * recoverable via the pre-restore copy.) Admin-only, like backup
+   * creation. On success the app exits — the returned promise never
+   * resolves.
+   */
+  async restoreDatabase(filename: string, passphrase: string): Promise<void> {
+    await accessService.requireAdmin();
+    if (typeof filename !== 'string' || !BACKUP_NAME.test(filename)) {
+      throw new ValidationError('Pick a Camog backup file.');
+    }
+    if (typeof passphrase !== 'string' || passphrase.length > MAX_PASSPHRASE_LENGTH) {
+      throw new ValidationError('Enter the backup passphrase.');
+    }
+
+    const { check } = await this.stageValidatedBackup(filename, passphrase);
+    await check.close().catch(() => {});
+
+    // Awaited, not fire-and-forget: the restart below exits the process, and
+    // the entry must land (in the database being replaced — i.e. the future
+    // camog.pre-restore copy) before that happens.
+    await auditService.record('backup.restore', {
+      entityType: 'database',
+      detail: `restored ${filename}; previous database kept as camog.pre-restore.db`,
+    });
+
+    try {
+      await invoke('restart_for_restore');
+    } catch {
+      // The stage is on disk — the swap happens at the next launch anyway.
+      throw new Error(
+        'Restore staged, but the restart failed — quit and reopen Camog to finish it.',
+      );
+    }
+  }
+
+  /**
+   * The locked-out-admin path from the sign-in screen's "Forgot passcode?":
+   * stage and validate a backup exactly like restoreDatabase, then reset
+   * every active admin's passcode inside the staged database to one
+   * temporary passcode (must-change on first sign-in, sessions killed) —
+   * restoring the backup alone would bring back the very passcode hashes
+   * nobody remembers. Deliberately NOT admin-gated: nobody can sign in, and
+   * the backup passphrase already unlocks the data anywhere (see
+   * prepareRestoreCopy), so it — not a login — is the credential this flow
+   * trusts.
+   *
+   * Does NOT restart: the temporary passcode must be shown (once) before the
+   * process exits. Call restartForRestore after the user acknowledges it;
+   * the staged file applies at the next launch either way, and a lost
+   * temporary passcode is recoverable by running this again — the backup
+   * file is untouched by a restore.
+   */
+  async restoreForPasscodeRecovery(
+    filename: string,
+    passphrase: string,
+  ): Promise<PasscodeRecoveryResult> {
+    if (typeof filename !== 'string' || !BACKUP_NAME.test(filename)) {
+      throw new ValidationError('Pick a Camog backup file.');
+    }
+    if (typeof passphrase !== 'string' || passphrase.length > MAX_PASSPHRASE_LENGTH) {
+      throw new ValidationError('Enter the backup passphrase.');
+    }
+
+    const { staged, check } = await this.stageValidatedBackup(filename, passphrase);
+
+    // randomToken's alphabet has no I/O/0/1; regenerate in the rare case the
+    // draw missed letters or digits entirely (mirrors the admin-side reset).
+    let tempPasscode = randomToken(10);
+    while (!/[A-Z]/.test(tempPasscode) || !/[0-9]/.test(tempPasscode)) {
+      tempPasscode = randomToken(10);
+    }
+
+    let result: PasscodeRecoveryResult;
+    try {
+      const admins = await check.select<{ username: string }[]>(
+        "SELECT username FROM clinicians WHERE role = 'admin' AND is_active = 1 AND is_pending = 0",
+      );
+      if (!admins.length) {
+        throw new ValidationError(
+          'That backup has no administrator account to sign back in with.',
+        );
+      }
+      const passcodeHash = await hashPasscode(tempPasscode);
+      await check.execute(
+        `UPDATE clinicians
+            SET passcode_hash = $1,
+                must_change_passcode = 1,
+                passcode_changed_at = $2,
+                session_expires_at = NULL
+          WHERE role = 'admin' AND is_active = 1 AND is_pending = 0`,
+        [passcodeHash, Date.now()],
+      );
+      // Pre-auth there is no clinician to attribute an audit row to, and the
+      // live audit log ends up inside the replaced database — the durable
+      // trace is this diagnostics entry outside the database, like resetApp's.
+      await invoke('record_web_diagnostic', {
+        level: 'info',
+        source: 'db-restore',
+        message: `Backup ${filename} staged for restore from the sign-in screen (forgotten passcode); administrator passcodes reset to a temporary one`,
+      }).catch((err: unknown) => {
+        console.warn('[backup] recovery restore diagnostic failed:', err);
+      });
+      result = {
+        tempPasscode,
+        adminUsernames: admins.map((a) => a.username),
+      };
+    } catch (err) {
+      // Close before remove: Windows refuses to delete a file an open SQLite
+      // connection holds, and a surviving staged file would boot-swap the
+      // backup in with its still-forgotten passcodes.
+      await check.close().catch(() => {});
+      await remove(staged).catch(() => {});
+      throw err;
+    }
+    await check.close().catch(() => {});
+    return result;
+  }
+
+  /**
+   * Relaunch so a staged restore (either restore path) is applied at boot.
+   * Split out of restoreDatabase because the passcode-recovery flow must
+   * show the temporary passcode before the process exits. On success the app
+   * exits — the returned promise never resolves.
+   */
+  async restartForRestore(): Promise<void> {
+    try {
+      await invoke('restart_for_restore');
+    } catch (err) {
+      // Both a real failure and the dev build's deliberate refusal land here
+      // with a message that already tells the user what to do next.
+      throw err instanceof Error ? err : new Error(String(err));
+    }
   }
 
   /** Remove the oldest camog-backup-*.db files beyond KEEP_BACKUPS. */

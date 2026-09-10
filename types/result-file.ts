@@ -103,14 +103,21 @@ export const RESULT_FILE_DIALOG_FILTER = {
 /** What the in-app viewer can show without converting or saving a copy. */
 export type ResultFilePreviewKind = 'pdf' | 'image' | 'text' | 'none';
 
-/** Browsers render PDFs and a few image/text types natively; the rest
- *  (RTF, Word, Excel, TIFF, HEIC…) fall back to "save a copy". */
+/** Browsers render PDFs, images and text natively (the viewer adds zoom,
+ *  rotate and page controls on top); Office formats fall back to "save a
+ *  copy". TIFF/HEIC decode on some webviews only (macOS WKWebView does,
+ *  Windows WebView2 doesn't) — the viewer attempts the image and swaps to
+ *  the fallback panel when the decode fails. RTF previews as stripped text. */
 const PREVIEW_KIND_BY_EXT: Partial<Record<string, ResultFilePreviewKind>> = {
   pdf: 'pdf',
   jpg: 'image',
   jpeg: 'image',
   png: 'image',
+  tif: 'image',
+  tiff: 'image',
+  heic: 'image',
   txt: 'text',
+  rtf: 'text',
   md: 'text',
   csv: 'text',
   xml: 'text',

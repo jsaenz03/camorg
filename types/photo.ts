@@ -18,7 +18,8 @@ export interface PhotoRecord {
   fileSizeBytes: number; // Compressed file size
 
   // Clinical Metadata
-  bodyPart: BodyPart; // Enumerated anatomical region
+  bodyPart: BodyPart | null; // Anatomical region; null = saved without one
+  // (filled in by linking the photo into a lesion series)
   laterality: Laterality | null; // Patient's left/right side (bilateral regions only)
   subpart: string | null; // Custom anatomical detail (optional)
   clinicalNotes: string | null; // Free-text clinical observations (optional)

@@ -65,9 +65,11 @@ const photoMetadataFormSchema = z.object({
       (v) => !v.trim() || parseDobInput(v) !== null,
       'Enter a valid date, e.g. 4/2/85 or 04/02/1985',
     ),
+  /** Optional: a photo saved without one inherits the body part of the
+      photo it is linked into a series with. */
   bodyPart: z.nativeEnum(BodyPart, {
     message: 'Please select a body part',
-  }),
+  }).optional(),
   /** Patient's side for bilateral regions; unset for central ones. */
   laterality: z.enum(['left', 'right']).optional(),
   subpart: z
@@ -171,7 +173,12 @@ export function PhotoMetadataForm({
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
+      <form onSubmit={form.handleSubmit(handleSubmit)} className="flex min-h-0 flex-1 flex-col">
+        {/* Fields scroll on their own; the action bar below stays pinned
+            (same pattern as the photo detail dialog), so Save stays
+            reachable mid-scroll in the capture dialog. In an unconstrained
+            container the region simply grows — no scrollbar appears. */}
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto">
         {/* Patient Name */}
         <FormField
           control={form.control}
@@ -230,9 +237,7 @@ export function PhotoMetadataForm({
           name="bodyPart"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>
-                Body part <span className="text-destructive">*</span>
-              </FormLabel>
+              <FormLabel>Body part</FormLabel>
               <div className="flex gap-2">
                 <Select
                   onValueChange={(v) => {
@@ -275,6 +280,10 @@ export function PhotoMetadataForm({
                   disabled={isSubmitting}
                 />
               </div>
+              <FormDescription>
+                Optional — a photo saved without one takes the body part of the
+                photo it is linked into a series with.
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -373,9 +382,10 @@ export function PhotoMetadataForm({
             </FormItem>
           )}
         />
+        </div>
 
         {/* Actions */}
-        <div className="flex gap-3 justify-end">
+        <div className="flex shrink-0 justify-end gap-3 border-t pt-4">
           {onCancel && (
             <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
               Cancel

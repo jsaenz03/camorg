@@ -17,6 +17,8 @@ const eslintConfig = [
       ".next/**",
       "out/**",
       "build/**",
+      // Generated pdf.js worker + fonts (scripts/sync-pdfjs-assets.mjs).
+      "public/pdfjs/**",
       "src-tauri/target/**",
       "playwright-report/**",
       "test-results/**",

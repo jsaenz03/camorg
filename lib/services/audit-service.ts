@@ -99,7 +99,7 @@ class AuditService {
       let photoLabel: string | null = null;
       if (ctx.entityType === 'photo' && ctx.entityId) {
         const rows = await db.select<{
-          body_part: string;
+          body_part: string | null;
           laterality: string | null;
           captured_at: number;
         }[]>('SELECT body_part, laterality, captured_at FROM photos WHERE id = $1', [
@@ -108,7 +108,7 @@ class AuditService {
         if (rows[0]) {
           photoLabel = photoAuditLabel(
             bodyPartDisplayLabel(
-              rows[0].body_part as BodyPart,
+              rows[0].body_part as BodyPart | null,
               (rows[0].laterality ?? null) as Laterality | null,
             ),
             rows[0].captured_at,
@@ -135,7 +135,12 @@ class AuditService {
         ],
       );
     } catch (err) {
-      console.error(`[audit] failed to record "${action}":`, err);
+      // Invoke rejections can be bare strings, occasionally empty — render
+      // whatever arrives so a failed audit write stays diagnosable.
+      console.error(
+        `[audit] failed to record "${action}":`,
+        err instanceof Error ? err.message : (JSON.stringify(err) ?? String(err)),
+      );
     }
   }
 

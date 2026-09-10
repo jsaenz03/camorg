@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.7.2"
+version = "0.7.3"
 description = "Camog — Clinical Photo Documentation"
 authors = ["Camog"]
 license = ""
@@ -41,6 +41,7 @@ aes-gcm = "0.10"
 keyring = "2"
 krilla = "0.8"
 skrifa = "0.42"
+if-addrs = "0.15.0"
 
 [dev-dependencies]
 flate2 = "1"

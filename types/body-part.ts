@@ -64,11 +64,14 @@ export const BILATERAL_BODY_PARTS: ReadonlySet<BodyPart> = new Set([
   BodyPart.FOOT,
 ]);
 
-/** "Left hand", "Face" — laterality prefixed when present. */
+/** "Left hand", "Face" — laterality prefixed when present. A photo saved
+    without a body part reads as "Unspecified" (it inherits one when linked
+    into a lesion series). */
 export function bodyPartDisplayLabel(
-  bodyPart: BodyPart,
+  bodyPart: BodyPart | null,
   laterality: Laterality | null = null,
 ): string {
+  if (!bodyPart) return 'Unspecified';
   const label = BodyPartLabels[bodyPart] ?? bodyPart;
   return laterality ? `${LateralityLabels[laterality]} ${label}` : label;
 }

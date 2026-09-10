@@ -23,9 +23,11 @@ export const photoRecordCreateSchema = z.object({
   mimeType: z.enum(['image/jpeg', 'image/png', 'image/heic', 'image/webp'], {
     message: 'Invalid image format. Supported: JPEG, PNG, HEIC, WebP',
   }),
+  // Body part is optional at save time: a photo captured without one gets it
+  // from the photo it is later linked to (resolveLinkInheritance).
   bodyPart: z.nativeEnum(BodyPart, {
     message: 'Please select a body part',
-  }),
+  }).nullish(),
   laterality: lateralitySchema.optional(),
   subpart: z.string().max(100, 'Subpart must be 100 characters or less').optional().nullable(),
   clinicalNotes: z.string().max(2000, 'Clinical notes must be 2000 characters or less').optional().nullable(),
@@ -45,7 +47,7 @@ export const photoRecordCreateSchema = z.object({
 export const photoRecordUpdateSchema = z.object({
   bodyPart: z.nativeEnum(BodyPart, {
     message: 'Invalid body part',
-  }).optional(),
+  }).nullish(),
   laterality: lateralitySchema.optional(),
   subpart: z.string().max(100, 'Subpart must be 100 characters or less').optional().nullable(),
   clinicalNotes: z.string().max(2000, 'Clinical notes must be 2000 characters or less').optional().nullable(),

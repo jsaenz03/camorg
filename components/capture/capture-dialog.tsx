@@ -35,6 +35,9 @@ import type {
 } from '@/specs/001-role-you-are/contracts/camera-service';
 import { remotePhotoToCapturedPhoto } from '@/lib/services/camera-service';
 import { reviewSeriesName } from '@/lib/utils/lesion-group';
+import { resolveLinkInheritance, type LinkInheritance } from '@/lib/utils/photo-link';
+import { confirmDialog } from '@/lib/utils/confirm';
+import type { BodyPart } from '@/types/body-part';
 import { bodyPartDisplayLabel } from '@/types/body-part';
 import {
   listPendingPhotos,
@@ -91,9 +94,11 @@ export function CaptureDialog({ open, onOpenChange, patientId, patientName, pati
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Width tiers override the default sm:max-w-lg; the layout inside keys
-          off the dialog's own width via @container, not the viewport. */}
-      <DialogContent className="max-h-[95dvh] overflow-y-auto p-4 sm:max-w-3xl sm:p-6 md:max-w-4xl lg:max-w-5xl">
-        <DialogHeader className="pr-8">
+          off the dialog's own width via @container, not the viewport. Bounded
+          flex column (the photo detail dialog's pattern): header and pinned
+          action bar stay put, the panes scroll in between. */}
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden p-4 sm:max-w-3xl sm:p-6 md:max-w-4xl lg:max-w-5xl">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle>
             {patientName ? `Capture photo — ${patientName}` : 'Capture photo'}
           </DialogTitle>
@@ -416,7 +421,7 @@ function CaptureFlow({
     if (activePendingId === id) return;
     if (
       capturedPhoto &&
-      !window.confirm('Replace the photo currently being reviewed? It hasn’t been saved.')
+      !(await confirmDialog('Replace the photo currently being reviewed? It hasn’t been saved.'))
     ) {
       return;
     }
@@ -443,7 +448,7 @@ function CaptureFlow({
 
   /** Delete a staged photo. If it is the one under review, clear the form too. */
   const handleDeletePending = async (id: string) => {
-    if (!window.confirm('Delete this photo? It hasn’t been saved.')) return;
+    if (!(await confirmDialog('Delete this photo? It hasn’t been saved.'))) return;
     await deletePendingPhoto(id).catch(() => {});
     setPending((p) => p.filter((e) => e.id !== id));
     if (activePendingId === id) {
@@ -458,9 +463,9 @@ function CaptureFlow({
   /** Delete every staged phone photo; clears the form if one is under review. */
   const handleDeleteAllPending = async () => {
     if (
-      !window.confirm(
+      !(await confirmDialog(
         `Delete all ${pending.length === 1 ? 'photo' : `${pending.length} photos`} waiting from your phone? They haven’t been saved.`,
-      )
+      ))
     ) {
       return;
     }
@@ -512,11 +517,11 @@ function CaptureFlow({
         const duplicate = await patientService.isDuplicateName(formData.patientName);
         if (
           duplicate &&
-          !window.confirm(
+          !(await confirmDialog(
             `A patient with this exact name already exists: “${formData.patientName.trim()}”.\n\n` +
               'Attach the photo to their record by choosing their name from search instead.\n\n' +
               'Create a separate patient anyway?',
-          )
+          ))
         ) {
           return; // keep the photo + form so the user can fix the name
         }
@@ -537,6 +542,9 @@ function CaptureFlow({
       // after the phone marked a photo reviewed.
       let linkGroup: string | null = null;
       let needsOriginalLink: string | null = null;
+      // Location the saved photo inherits when the form left the body part
+      // unset (same rule as drag-to-link: the series' anchor is the source).
+      let inherited: LinkInheritance<BodyPart> | null = null;
       const followUpPhotoId = pendingLink?.linkPhotoId ?? linkPhotoId;
       if (followUpPhotoId) {
         const original = await photoService.getPhotoById(followUpPhotoId).catch(() => null);
@@ -549,22 +557,28 @@ function CaptureFlow({
             capturedAt: original.capturedAt,
           });
           if (!original.lesionGroup) needsOriginalLink = original.id;
+          inherited = resolveLinkInheritance(
+            { bodyPart: formData.bodyPart ?? null, laterality: formData.laterality ?? null },
+            original,
+          );
         }
       }
 
       // 3. Create photo record (honour an optional capture-date override).
+      // An unset location falls back to the original's whole location —
+      // part, side, subpart text and the pinpoint X (the mother's spot).
       await photoService.createPhoto({
         patientId,
         imageBlob: capturedPhoto.blob,
         mimeType: capturedPhoto.blob.type as 'image/jpeg' | 'image/png' | 'image/heic' | 'image/webp',
-        bodyPart: formData.bodyPart,
-        laterality: formData.laterality ?? null,
-        subpart: formData.subpart || null,
+        bodyPart: formData.bodyPart ?? inherited?.bodyPart ?? null,
+        laterality: formData.laterality ?? inherited?.laterality ?? null,
+        subpart: formData.subpart || inherited?.subpart || null,
         clinicalNotes: formData.clinicalNotes || null,
-        pinX: formData.pinX ?? null,
-        pinY: formData.pinY ?? null,
-        pinSpace: formData.pinSpace ?? null,
-        pinView: formData.pinView ?? null,
+        pinX: formData.pinX ?? inherited?.pinX ?? null,
+        pinY: formData.pinY ?? inherited?.pinY ?? null,
+        pinSpace: formData.pinSpace ?? inherited?.pinSpace ?? null,
+        pinView: formData.pinView ?? inherited?.pinView ?? null,
         capturedAt: formData.capturedAt ?? capturedPhoto.capturedAt,
         lesionGroup: linkGroup,
       });
@@ -660,7 +674,7 @@ function CaptureFlow({
    * photo has no other copy until it is saved)
    */
   const handleCancel = async () => {
-    if (!window.confirm('Discard this photo? It hasn’t been saved.')) return;
+    if (!(await confirmDialog('Discard this photo? It hasn’t been saved.'))) return;
     await discardCaptured();
     toast.info('Photo discarded');
   };
@@ -670,7 +684,7 @@ function CaptureFlow({
    * same reason as cancel)
    */
   const handleRetake = async () => {
-    if (!window.confirm('Retake? The current photo will be discarded.')) return;
+    if (!(await confirmDialog('Retake? The current photo will be discarded.'))) return;
     await discardCaptured();
   };
 
@@ -708,7 +722,7 @@ function CaptureFlow({
   const resolvedPrefill = {
     patientName: resolved.patientName,
     patientDob: resolved.patientDob,
-    bodyPart: resolved.location?.bodyPart,
+    bodyPart: resolved.location?.bodyPart ?? undefined,
     laterality: resolved.location?.laterality,
     subpart: resolved.location?.subpart ?? '',
     pinX: resolved.location?.pinX,
@@ -718,9 +732,9 @@ function CaptureFlow({
   };
 
   return (
-    <div className="@container space-y-6">
+    <div className="@container flex min-h-0 flex-1 flex-col gap-6">
       {pending.length > 0 && (
-        <Card>
+        <Card className="shrink-0">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Smartphone className="size-5" />
@@ -787,10 +801,13 @@ function CaptureFlow({
       )}
 
       {/* Two panes once the dialog itself is wide enough (@3xl = 48rem of
-          container width) — independent of the window size. */}
-      <div className="grid gap-6 @3xl:grid-cols-2">
-        {/* Left: Camera or Captured Photo */}
-        <div>
+          container width) — independent of the window size. Below @3xl the
+          camera row sizes to its content and the form takes the remaining
+          height, scrolling internally with its action bar pinned. */}
+      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-6 @3xl:grid-cols-2 @3xl:grid-rows-1">
+        {/* Left: Camera or Captured Photo (scrolls only if its card outgrows
+            the space, e.g. a very short window). */}
+        <div className="min-h-0 overflow-y-auto">
           {!capturedPhoto ? (
             <CameraCapture onPhotoCaptured={handlePhotoCaptured} />
           ) : (
@@ -829,10 +846,12 @@ function CaptureFlow({
           )}
         </div>
 
-        {/* Right: Metadata Form */}
-        <div>
-          <Card>
-            <CardHeader>
+        {/* Right: Metadata Form — the card fills the column so the form's
+            own scroll region and pinned action bar (see PhotoMetadataForm)
+            do the work; Save never scrolls out of reach. */}
+        <div className="flex min-h-0 flex-col">
+          <Card className="flex min-h-0 flex-1 flex-col">
+            <CardHeader className="shrink-0">
               <CardTitle>Photo metadata</CardTitle>
               <CardDescription>
                 {capturedPhoto
@@ -840,7 +859,7 @@ function CaptureFlow({
                   : 'Capture a photo to continue'}
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex min-h-0 flex-1 flex-col">
               {capturedPhoto ? (
                 <PhotoMetadataForm
                   // The key remounts the form when a late-resolving prefill
@@ -859,9 +878,11 @@ function CaptureFlow({
                   defaultValues={resolvedPrefill}
                 />
               ) : (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Camera className="mx-auto mb-4 size-12 opacity-40" />
-                  <p>Capture a photo to enable metadata entry</p>
+                <div className="flex flex-1 items-center justify-center py-12 text-center text-muted-foreground">
+                  <div>
+                    <Camera className="mx-auto mb-4 size-12 opacity-40" />
+                    <p>Capture a photo to enable metadata entry</p>
+                  </div>
                 </div>
               )}
             </CardContent>

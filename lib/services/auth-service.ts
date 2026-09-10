@@ -625,6 +625,14 @@ export class AuthService implements IAuthService {
     );
     await this.startSession(clinicianRow.id, timeoutMs, validated.rememberMe ?? false);
 
+    // A staged recovery restore ("Forgot passcode?" → restore from backup →
+    // Restart later) is moot once real credentials work again — and leaving
+    // it in place would roll the database back to the backup at the next
+    // launch, silently discarding everything saved in between. (After a
+    // restart that applied it, the staged file is already consumed, so this
+    // is a no-op for the recovery flow itself.)
+    await this.removeStagedRestore().catch(() => {});
+
     const { auditService } = await import('@/lib/services/audit-service');
     void auditService.record('auth.login', {
       entityType: 'clinician',
@@ -778,6 +786,10 @@ export class AuthService implements IAuthService {
     });
     writeSession(null);
     clearRememberedLogin();
+    // A staged one-click restore (Settings, or the sign-in screen's
+    // recovery-by-restore) must not resurrect the data this reset is about
+    // to delete — the boot swap would apply it at the next launch.
+    await this.removeStagedRestore().catch(() => {});
     // Photos and backups are patient data too — deleting only the DB rows
     // left the JPEGs on disk as unreferenced PHI. Best-effort (a dead storage
     // dir must not block the row wipe); failures are logged.
@@ -803,6 +815,23 @@ export class AuthService implements IAuthService {
         WHERE id = 'app'`,
       [Date.now()],
     );
+  }
+
+  /**
+   * Best-effort removal of a staged one-click restore (camog.restore and its
+   * sqlite siblings) from the app config dir. Two callers: the factory reset
+   * (a surviving stage would resurrect the wiped data at the next boot) and
+   * a successful login (real credentials working again makes a pending
+   * recovery restore moot). Outside Tauri (web export) appConfigDir rejects
+   * and the caller's catch swallows it.
+   */
+  private async removeStagedRestore(): Promise<void> {
+    const { appConfigDir, join } = await import('@tauri-apps/api/path');
+    const { remove } = await import('@tauri-apps/plugin-fs');
+    const base = await appConfigDir();
+    for (const suffix of ['', '-wal', '-shm', '.tmp']) {
+      await remove(await join(base, `camog.restore${suffix}`)).catch(() => {});
+    }
   }
 
   /**

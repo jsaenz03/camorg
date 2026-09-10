@@ -100,7 +100,7 @@ export interface CompanionPatient {
 export interface CompanionPhoto {
   id: string;                      // Full image: /img/<id>.jpg, thumb: /img/<id>.thumb.jpg
   patientId: string;
-  bodyPart: string;
+  bodyPart: string | null;          // Raw enum key; null = saved without one
   bodyPartLabel: string;           // Human label resolved webview-side ("Left hand")
   laterality: 'left' | 'right' | null;  // Patient's own side, for the body diagram
   subpart: string | null;

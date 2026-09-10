@@ -100,7 +100,6 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
     phase === 'setup' &&
     importable.length > 0 &&
     patientId !== '' &&
-    bodyPart !== '' &&
     (dateMode === 'file' || customDate !== '');
 
   async function pickFiles() {
@@ -159,7 +158,7 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
   }
 
   async function runImport() {
-    if (patientId === '' || bodyPart === '') return;
+    if (patientId === '') return;
     setPhase('importing');
     setImported(0);
     setBatchTotal(importable.length);
@@ -169,7 +168,7 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
 
     const options: ImportOptions = {
       patientId,
-      bodyPart: bodyPart as BodyPart,
+      bodyPart: bodyPart === '' ? null : bodyPart,
       dateMode,
       customDateMs: dateMode === 'custom' && customDate ? new Date(`${customDate}T00:00:00`).getTime() : null,
     };
@@ -197,7 +196,7 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
           patientId,
           imageBlob: file,
           mimeType: candidate.mimeType,
-          bodyPart: bodyPart as BodyPart,
+          bodyPart: bodyPart === '' ? null : bodyPart,
           capturedAt: new Date(captureDateFor(candidate, options)),
           originalFileName: candidate.name,
         });
@@ -328,8 +327,9 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              The body part applies to every imported photo — re-tag individual
-              photos afterwards from their detail view.
+              Optional — when set, it applies to every imported photo. Photos
+              without one read as Unspecified until you tag them, or link them
+              into a series and they take the other photo&rsquo;s location.
             </p>
 
             <div className="grid gap-3 sm:grid-cols-2">

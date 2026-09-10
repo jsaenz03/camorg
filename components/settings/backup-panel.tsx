@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * Admin: one-click passphrase-encrypted database backup + manual restore.
- * See lib/services/backup-service.ts for the VACUUM INTO approach and
- * lib/utils/backup-crypto.ts for the encryption format.
+ * Admin: one-click passphrase-encrypted database backup + one-click staged
+ * restore (restart applies the swap — see lib/services/backup-service.ts and
+ * src-tauri/src/db_restore.rs) with a manual prepare-a-copy fallback.
  */
 
 import { useEffect, useState } from 'react';
@@ -11,12 +11,14 @@ import {
   Database,
   FileDown,
   Loader2,
+  RotateCcw,
   ShieldCheck,
   TriangleAlert,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { backupService, MIN_PASSPHRASE_LENGTH } from '@/lib/services/backup-service';
+import { confirmDialog } from '@/lib/utils/confirm';
 import type { BackupInfo } from '@/lib/services/backup-service';
 import { Button } from '@/components/ui/button';
 import {
@@ -50,6 +52,7 @@ export function BackupPanel() {
   const [selectedBackup, setSelectedBackup] = useState<string>('');
   const [restorePassphrase, setRestorePassphrase] = useState('');
   const [isPreparing, setIsPreparing] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   useEffect(() => {
     refreshBackups();
@@ -125,6 +128,25 @@ export function BackupPanel() {
     }
   }
 
+  async function handleRestore() {
+    if (!selectedBackup || isRestoring) return;
+    const when = backups
+      .find((b) => b.filename === selectedBackup)
+      ?.createdAt.toLocaleString();
+    const ok = await confirmDialog(
+      `Restore the backup from ${when ?? 'the selected date'}? Camog will close and restart into the restored database — everything saved since that backup is replaced. The current database is kept as camog.pre-restore.db in the app data folder, so the restore can be undone by hand.`,
+    );
+    if (!ok) return;
+    setIsRestoring(true);
+    try {
+      await backupService.restoreDatabase(selectedBackup, restorePassphrase);
+      // On success the app restarts; execution never reaches here.
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Restore failed. Please try again.');
+      setIsRestoring(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -189,20 +211,22 @@ export function BackupPanel() {
 
         <div className="rounded-md border bg-muted/40 p-3 text-sm">
           <p className="font-medium">To restore a backup</p>
-          <ol className="mt-1 list-decimal space-y-1 pl-5 text-muted-foreground">
-            <li>
-              Pick the backup above and press <em>Prepare a restore copy</em>, entering its
-              passphrase — you get a decrypted copy you can open on any machine.
-            </li>
-            <li>Quit Camog completely.</li>
-            <li>
-              In the app data folder
-              (<code className="rounded bg-muted px-1">…/com.camog.app</code> on Windows,
-              {' '}<code className="rounded bg-muted px-1">~/Library/Application Support/com.camog.app</code> on macOS),
-              replace <code className="rounded bg-muted px-1">camog.db</code> with the restore copy.
-            </li>
-            <li>Rename the copy to <code className="rounded bg-muted px-1">camog.db</code> and start Camog.</li>
-          </ol>
+          <p className="mt-1 text-muted-foreground">
+            Pick the backup below, enter its passphrase, and press{' '}
+            <em>Restore</em> — Camog restarts straight into the restored
+            database. The database you replaced is kept as{' '}
+            <code className="rounded bg-muted px-1">camog.pre-restore.db</code> in
+            the app data folder; to undo, quit Camog and swap it back over{' '}
+            <code className="rounded bg-muted px-1">camog.db</code>.
+          </p>
+          <p className="mt-2 text-muted-foreground">
+            Need a copy you can open on any machine, or restoring by hand
+            (e.g. Camog won’t start)? Press <em>Prepare a restore copy</em>,
+            quit Camog, and in the app data folder
+            (<code className="rounded bg-muted px-1">…/com.camog.app</code> on Windows,
+            {' '}<code className="rounded bg-muted px-1">~/Library/Application Support/com.camog.app</code> on macOS)
+            replace <code className="rounded bg-muted px-1">camog.db</code> with it.
+          </p>
           <p className="mt-2 text-muted-foreground">
             Photos are restored by pointing Settings → Storage at the folder that holds them.
           </p>
@@ -234,9 +258,17 @@ export function BackupPanel() {
               />
             </div>
             <Button
+              variant="destructive"
+              onClick={handleRestore}
+              disabled={!selectedBackup || isRestoring || isPreparing}
+            >
+              {isRestoring ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+              Restore
+            </Button>
+            <Button
               variant="outline"
               onClick={handleRestoreCopy}
-              disabled={!selectedBackup || isPreparing}
+              disabled={!selectedBackup || isPreparing || isRestoring}
             >
               {isPreparing ? <Loader2 className="size-4 animate-spin" /> : <FileDown className="size-4" />}
               Prepare a restore copy

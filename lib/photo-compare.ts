@@ -28,7 +28,8 @@ export function defaultComparePicks(
 
 /** Structural minimum the filters need from a photo record. */
 export interface FilterablePhoto {
-  bodyPart: string;
+  /** Null = saved without one; only surfaces under the "all" filter. */
+  bodyPart: string | null;
   lesionGroup: string | null;
 }
 
@@ -45,7 +46,7 @@ export function comparePartOptions(
 ): string[] {
   const parts = new Set<string>();
   for (const p of photos) {
-    if (series === 'all' || p.lesionGroup === series) parts.add(p.bodyPart);
+    if (p.bodyPart && (series === 'all' || p.lesionGroup === series)) parts.add(p.bodyPart);
   }
   return [...parts];
 }

@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import type { Patient } from '@/types/patient';
 import { consentStatus } from '@/types/patient';
 import { photoService } from '@/lib/services/photo-service';
+import { confirmDialog } from '@/lib/utils/confirm';
 import { RecordConsentDialog } from '@/components/patient/record-consent-dialog';
 import { PhotoMetadataForm, type PhotoMetadataFormValues } from '@/components/photo/photo-metadata-form';
 import { Button } from '@/components/ui/button';
@@ -166,14 +167,14 @@ export function PhotoUpload({ patient, onSaved }: PhotoUploadProps) {
    * button confirms only when a batch would be lost. The source files stay on
    * disk either way — the lost work is the entered metadata.
    */
-  const handleCancel = (accidental = false) => {
+  const handleCancel = async (accidental = false) => {
     const remaining = queue.length - index;
     if (remaining <= 0) return;
     const message =
       remaining > 1
         ? `Discard ${remaining} photos still waiting to be added?`
         : 'Discard this photo?';
-    if ((accidental || remaining > 1) && !window.confirm(message)) {
+    if ((accidental || remaining > 1) && !(await confirmDialog(message))) {
       return;
     }
     setQueue([]);

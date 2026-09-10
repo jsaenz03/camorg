@@ -35,6 +35,7 @@ export type AuditAction =
   | 'result_file.delete'
   | 'backup.create'
   | 'backup.restore_copy'
+  | 'backup.restore'
   | 'audit.export'
   | 'storage.photos_dir'
   | 'storage.source_cleanup'
@@ -99,6 +100,7 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'result_file.delete': 'Removed a result file',
   'backup.create': 'Created backup',
   'backup.restore_copy': 'Prepared a backup restore copy',
+  'backup.restore': 'Restored a database backup',
   'audit.export': 'Downloaded the audit log',
   'storage.photos_dir': 'Changed the photo storage location',
   'storage.source_cleanup': 'Deleted copied files from the old photo folder',

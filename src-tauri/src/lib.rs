@@ -3,6 +3,7 @@
 // scope grants and the phone-camera tether server.
 
 mod diagnostics;
+mod db_restore;
 mod licence_activation;
 mod licence_device;
 mod photo_crypto;
@@ -140,6 +141,12 @@ pub fn run() {
       sql: include_str!("../migrations/020_licence_activation.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 21,
+      description: "photos: body part optional (inherited when linked into a series)",
+      sql: include_str!("../migrations/021_photo_body_part_optional.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory
@@ -199,6 +206,22 @@ pub fn run() {
     }))
     .setup(|app| {
       diagnostics::install_panic_hook();
+      // Apply a staged database restore (Settings → Backup & restore) at
+      // startup. The config window already exists by setup(), but the sql
+      // pool only opens when the webview's JS first calls Database.load —
+      // which cannot beat these few statements — so nothing holds camog.db
+      // open during the swap. app_config_dir, not app_data_dir:
+      // tauri-plugin-sql resolves sqlite: paths against the config dir
+      // (identical to the data dir on Windows/macOS, distinct on Linux),
+      // and the swap must target the database the plugin actually opens.
+      // Applied before anything can open camog.db; the outcome is only
+      // recorded once the log target below exists — diagnostics logged
+      // before plugin installation never reach the file.
+      let restore_outcome = app
+        .path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| db_restore::apply_pending_restore(&dir));
       // Logs in every build (release support was blind before): stdout for
       // dev, a rotating file in the OS log dir, webview console.
       app.handle().plugin(
@@ -214,6 +237,16 @@ pub fn run() {
           ])
           .build(),
       )?;
+      match restore_outcome {
+        Some(Ok(Some(()))) => diagnostics::record(
+          diagnostics::Level::Info,
+          "db-restore",
+          "Database restored from a staged backup; the previous database was kept as camog.pre-restore.db",
+          None,
+        ),
+        Some(Ok(None)) | None => {}
+        Some(Err(msg)) => diagnostics::record(diagnostics::Level::Error, "db-restore", &msg, None),
+      }
       // The photo key file lives beside the database; point the crypto
       // module at it before any command can need the key.
       if let Ok(dir) = app.path().app_data_dir() {
@@ -244,6 +277,7 @@ pub fn run() {
     .plugin(tauri_plugin_fs::init())
     .invoke_handler(tauri::generate_handler![
       grant_directory_access,
+      db_restore::restart_for_restore,
       licence_device::device_id,
       licence_device::device_id_fresh,
       licence_device::device_id_adopt,

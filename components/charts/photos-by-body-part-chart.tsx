@@ -43,6 +43,8 @@ export function PhotosByBodyPartChart({ photos }: PhotosByBodyPartChartProps) {
   const { data, config, total } = useMemo(() => {
     const counts = new Map<string, number>();
     for (const photo of photos) {
+      // Photos saved without a body part belong to no bucket here.
+      if (!photo.bodyPart) continue;
       counts.set(photo.bodyPart, (counts.get(photo.bodyPart) ?? 0) + 1);
     }
     const entries = Array.from(counts.entries())

@@ -103,6 +103,15 @@ export function RecordConsentDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
+        {/* One form so Enter — from the focused confirm button or the expiry
+            field — records the consent instead of doing nothing. */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleSave();
+          }}
+          className="grid gap-4"
+        >
         <DialogHeader>
           <DialogTitle>
             {isRenewal ? 'Record new consent' : 'Record photo consent'}
@@ -147,10 +156,10 @@ export function RecordConsentDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>
             Not now
           </Button>
-          <Button onClick={handleSave} disabled={isSaving}>
+          <Button type="submit" autoFocus disabled={isSaving}>
             {isSaving ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
@@ -164,6 +173,7 @@ export function RecordConsentDialog({
             )}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

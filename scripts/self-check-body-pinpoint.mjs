@@ -141,11 +141,15 @@ assert.match(reportRs, /pub pin_view: Option<String>/, 'report.rs does not recei
 assert.match(reportRs, /fn draw_pin_x/, 'report.rs does not draw the pinpoint X');
 assert.match(reportRs, /part: "hand"/, 'report.rs body map lacks hand regions');
 assert.match(reportRs, /part: "foot"/, 'report.rs body map lacks foot regions');
-for (const file of ['components/capture/capture-dialog.tsx', 'components/photo/photo-upload.tsx']) {
+// The capture save falls back to the follow-up original's pin (link
+// inheritance); the upload path has no original, so it passes form values only.
+for (const [file, needles] of [
+  ['components/capture/capture-dialog.tsx', ['pinX: formData.pinX ?? inherited?.pinX ?? null', 'pinY: formData.pinY ?? inherited?.pinY ?? null', 'pinSpace: formData.pinSpace ?? inherited?.pinSpace ?? null', 'pinView: formData.pinView ?? inherited?.pinView ?? null']],
+  ['components/photo/photo-upload.tsx', ['pinX: values.pinX ?? null', 'pinY: values.pinY ?? null', 'pinSpace: values.pinSpace ?? null', 'pinView: values.pinView ?? null']],
+]) {
   const src = read(file);
-  for (const needle of ['pinX: values.pinX ?? null', 'pinY: values.pinY ?? null', 'pinSpace: values.pinSpace ?? null', 'pinView: values.pinView ?? null']) {
-    const wanted = file.includes('capture') ? needle.replace('values.', 'formData.') : needle;
-    assert.ok(src.includes(wanted), `${file} does not pass ${wanted.split(':')[0]} to createPhoto`);
+  for (const needle of needles) {
+    assert.ok(src.includes(needle), `${file} does not pass ${needle.split(':')[0]} to createPhoto`);
   }
 }
 const form = read('components/photo/photo-metadata-form.tsx');

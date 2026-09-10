@@ -20,9 +20,13 @@ import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { Link2, Link2Off, Loader2 } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
-import { BodyPartLabels } from '@/types/body-part';
+import { bodyPartDisplayLabel } from '@/types/body-part';
 import { normalizeLesionGroup, reviewSeriesName } from '@/lib/utils/lesion-group';
-import { resolveUnlinkScope, type PhotoLinkPlan } from '@/lib/utils/photo-link';
+import {
+  resolveLinkInheritancePair,
+  resolveUnlinkScope,
+  type PhotoLinkPlan,
+} from '@/lib/utils/photo-link';
 import { photoService } from '@/lib/services/photo-service';
 import {
   Dialog,
@@ -62,7 +66,7 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
     setSeriesInput(
       plan.seriesName ??
         reviewSeriesName({
-          bodyPartLabel: BodyPartLabels[source.bodyPart],
+          bodyPartLabel: bodyPartDisplayLabel(source.bodyPart, source.laterality),
           subpart: source.subpart,
           capturedAt: source.capturedAt,
         }),
@@ -118,6 +122,19 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
   // Dragging between two different series only moves the dragged photo.
   const movingBetweenSeries =
     !!source.lesionGroup && !!target.lesionGroup && source.lesionGroup !== target.lesionGroup;
+  // Whichever photo lacks a body part takes the other's — the drop goes
+  // either way (a part-less snap filed under the photo that has one, or that
+  // photo dropped onto the part-less one).
+  const inheritances = unlinking ? null : resolveLinkInheritancePair(source, target);
+  const inherited = inheritances?.source ?? inheritances?.target ?? null;
+  // "Left hand — knuckle" for the hint and toast.
+  const inheritedLabel = inherited
+    ? `${bodyPartDisplayLabel(inherited.bodyPart, inherited.laterality)}${inherited.subpart ? ` — ${inherited.subpart}` : ''}`
+    : null;
+  // Ids captured while source/target are known non-null — handleConfirm's
+  // closure doesn't keep that narrowing.
+  const sourceId = source.id;
+  const targetId = target.id;
 
   async function handleConfirm() {
     if (!plan || !plan.ok) return;
@@ -126,9 +143,19 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
       setIsSaving(true);
       try {
         for (const id of plan.photoIds) {
-          await photoService.updatePhoto(id, { lesionGroup: normalised });
+          await photoService.updatePhoto(id, {
+            lesionGroup: normalised,
+            // Each patch belongs to its own photo; a photo that already has
+            // a body part is never touched.
+            ...(id === sourceId && inheritances?.source ? inheritances.source : {}),
+            ...(id === targetId && inheritances?.target ? inheritances.target : {}),
+          });
         }
-        toast.success(`Linked in series “${normalised}”`);
+        toast.success(
+          `Linked in series “${normalised}”${
+            inheritedLabel ? ` — location set to ${inheritedLabel}` : ''
+          }`,
+        );
         onOpenChange(false);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to link photos');
@@ -161,6 +188,15 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
+        {/* One form so Enter — in the series input or on the confirm button —
+            confirms the drop instead of doing nothing. */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleConfirm();
+          }}
+          className="grid gap-4"
+        >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {unlinking ? (
@@ -232,6 +268,7 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
               onChange={(e) => setSeriesInput(e.target.value)}
               maxLength={100}
               disabled={isSaving}
+              autoFocus
             />
             {existingGroups.filter((g) => g !== seriesInput.trim()).length > 0 && (
               <div className="flex flex-wrap gap-1.5">
@@ -259,6 +296,13 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
                   ? 'Neither photo is in a series yet — this creates one.'
                   : 'One photo joins an existing series.'}
             </p>
+            {inherited && inheritedLabel && (
+              <p className="text-xs text-muted-foreground">
+                {inheritances?.source ? 'The dragged photo' : 'The photo you dropped onto'} has no
+                body part — it takes {inheritedLabel}
+                {inherited.pinX != null ? ', marked spot included,' : ''} from the other photo.
+              </p>
+            )}
           </div>
         )}
 
@@ -271,7 +315,7 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
           >
             Cancel
           </Button>
-          <Button type="button" onClick={handleConfirm} disabled={isSaving || confirmDisabled}>
+          <Button type="submit" disabled={isSaving || confirmDisabled}>
             {isSaving ? (
               <Loader2 className="size-4 animate-spin" />
             ) : unlinking ? (
@@ -282,6 +326,7 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
             {unlinking ? 'Remove from series' : 'Link photos'}
           </Button>
         </div>
+        </form>
       </DialogContent>
     </Dialog>
   );

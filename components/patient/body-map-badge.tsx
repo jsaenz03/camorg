@@ -24,7 +24,8 @@ import {
 import { BILATERAL_BODY_PARTS, BodyPart, type BodyView, type Laterality, type Pinpoint } from '@/types/body-part';
 
 interface BodyMapBadgeProps {
-  bodyPart: BodyPart;
+  /** Null = photo saved without one: no region highlighted. */
+  bodyPart: BodyPart | null;
   laterality?: Laterality | null;
   /** Saved X mark; rendered only when it belongs to this body-view diagram. */
   pin?: Pinpoint | null;
@@ -32,10 +33,12 @@ interface BodyMapBadgeProps {
   style?: CSSProperties;
 }
 
-function Shape({ def, view, bodyPart, laterality }: { def: RegionDef; view: 'front' | 'back'; bodyPart: BodyPart; laterality?: Laterality | null }) {
+function Shape({ def, view, bodyPart, laterality }: { def: RegionDef; view: 'front' | 'back'; bodyPart: BodyPart | null; laterality?: Laterality | null }) {
   const key = regionId(def.part, def.kind, def.props);
   const side = patientSideOf(key, view);
   const hit =
+    // No body part (null) highlights nothing.
+    bodyPart != null &&
     (def.part === bodyPart ||
       // TORSO is the general trunk label: stand-in highlight over the trunk.
       (bodyPart === BodyPart.TORSO &&

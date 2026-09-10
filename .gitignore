@@ -73,3 +73,9 @@ guide/
 .wrangler
 .dev.vars*
 !.dev.vars.example
+
+# pdf.js worker + standard fonts, synced from pdfjs-dist by scripts/sync-pdfjs-assets.mjs
+public/pdfjs/
+
+# local Windows bundle test output
+/dist/

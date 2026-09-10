@@ -89,7 +89,9 @@ export interface ImportCandidate {
 /** Options the dialog collects before the loop runs. */
 export interface ImportOptions {
   patientId: string;
-  bodyPart: BodyPart;
+  /** Optional — photos imported without one read as Unspecified (and
+      inherit a body part when linked into a series). */
+  bodyPart: BodyPart | null;
   /** 'file' uses each file's modified time; 'custom' uses one date for all. */
   dateMode: 'file' | 'custom';
   customDateMs: number | null;

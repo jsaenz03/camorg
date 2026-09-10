@@ -37,7 +37,6 @@ import {
 import {
   BILATERAL_BODY_PARTS,
   bodyPartDisplayLabel,
-  type BodyPart,
 } from '@/types/body-part';
 import {
   escalatePatientReview,
@@ -71,8 +70,8 @@ class CompanionService {
         id: ph.id,
         patientId: ph.patientId,
         bodyPart: ph.bodyPart,
-        bodyPartLabel: bodyPartDisplayLabel(ph.bodyPart as BodyPart, ph.laterality),
-        laterality: BILATERAL_BODY_PARTS.has(ph.bodyPart as BodyPart) ? ph.laterality : null,
+        bodyPartLabel: bodyPartDisplayLabel(ph.bodyPart, ph.laterality),
+        laterality: ph.bodyPart && BILATERAL_BODY_PARTS.has(ph.bodyPart) ? ph.laterality : null,
         subpart: ph.subpart,
         notes: ph.clinicalNotes,
         // Lesion series link (the phone's compare surface filters and badges

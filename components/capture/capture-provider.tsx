@@ -23,7 +23,8 @@ import type { BodyPart, BodyView, Laterality, PinpointSpace } from '@/types/body
 
 /** Location metadata a review follow-up inherits from its original photo. */
 export interface CapturePrefill {
-  bodyPart: BodyPart;
+  /** Null = the original was saved without one; the form starts blank. */
+  bodyPart: BodyPart | null;
   laterality?: Laterality;
   subpart?: string;
   pinX?: number;

@@ -203,16 +203,24 @@ else; no telemetry, no patient data ever leaves the machine.
   photos stay viewable (records retention), but capturing, editing, and
   deletion are disabled until a key is activated (banner → Activate).
 
-**Forgot the admin passcode?** The sign-in screen's "Forgot passcode?" is the
-recovery path: typing the confirmation phrase factory-resets the app — the
-database (patients, photos, accounts, audit trail) and any `camog-backup-*.db`
-copies in the photos folder are deleted, and the app returns to first-run
-setup. Move backups you care about off the machine first. The wipe is
-deliberately available to whoever is at the computer: a machine-local app
-cannot distinguish its owner from a passer-by, so the protection is the
-confirmation phrase plus the physical presence it implies, not a second
-secret. Copying the app data folder to a new computer (or restoring an
-external backup) is the no-data-loss alternative.
+**Forgot the admin passcode?** The sign-in screen's "Forgot passcode?" offers
+the no-data-loss path first: when an encrypted backup exists in the photos
+folder, *Restore from a backup* restarts Camog into that backup with every
+administrator passcode reset to a temporary one (shown once, changed at first
+sign-in). The backup passphrase is the recovery credential — it already
+unlocks the backup on any machine, so nothing new must be remembered or
+administered. Because the photos-folder backup is also the passcode-recovery
+path, keep the newest one on the device: copying backups off-machine is
+disk-failure safety, not preparation for a reset. Without a usable backup
+the only way in is the factory reset: typing the confirmation phrase deletes
+the database (patients, photos, accounts, audit trail) and any
+`camog-backup-*.db` copies in the photos folder, and the app returns to
+first-run setup. The wipe is deliberately available to whoever is at
+the computer: a machine-local app cannot distinguish its owner from a
+passer-by, so the protection is the confirmation phrase plus the physical
+presence it implies, not a second secret. Copying the app data folder to a
+new computer (or restoring an external backup) remains the alternative when
+Camog won't start at all.
 
 Issuing keys (vendor side; the private key lives in `.keys/`, gitignored):
 

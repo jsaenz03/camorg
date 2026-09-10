@@ -324,7 +324,9 @@ export function PhotoDetailDialog({
   }
 
   async function handleSave() {
-    if (!photo || !bodyPart) return;
+    // bodyPart may be null: the photo was saved without one and the picker
+    // was left untouched — that edits fine (it inherits one when linked).
+    if (!photo) return;
     setIsSaving(true);
     try {
       await photoService.updatePhoto(photo.id, {
@@ -433,9 +435,22 @@ export function PhotoDetailDialog({
 
           {/* Metadata form in a wrapper column: an inner scroll region with
               the action bar as a pinned sibling below it. On mobile the image
-              row stays visible while the form scrolls under the bar. */}
-          <div className="flex min-h-0 flex-col border-t md:border-l md:border-t-0">
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
+              row stays visible while the form scrolls under the bar. The
+              column is a real form: Enter in the series/subpart/review-date
+              fields saves (the pinned Save button submits it via form=;
+              textareas keep Enter for newlines). Every button inside is
+              type="button" — only Save submits. */}
+          <form
+            id="photo-detail-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleSave();
+            }}
+            className="flex min-h-0 min-w-0 flex-col border-t md:border-l md:border-t-0"
+          >
+            {/* min-w-0 lets long file names truncate instead of inflating this
+                grid column's min-content width and squeezing the photo pane. */}
+            <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
             {/* Body map: where on the patient this photo was taken. Editable
                 in place — the picker updates the body part, side and pinpoint
                 locally; Save commits them. The highlight follows the side
@@ -729,8 +744,8 @@ export function PhotoDetailDialog({
                 </Button>
               )}
               <Button
-                type="button"
-                onClick={handleSave}
+                type="submit"
+                form="photo-detail-form"
                 disabled={isSaving || isDeleting}
               >
                 {isSaving ? (
@@ -742,8 +757,8 @@ export function PhotoDetailDialog({
               </Button>
             </div>
           </div>
+          </form>
         </div>
-      </div>
       </DialogContent>
     </Dialog>
   );

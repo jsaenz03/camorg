@@ -10,6 +10,7 @@ import { Copy, KeyRound, Loader2, ShieldCheck, UserCircle } from 'lucide-react';
 
 import type { Clinician, ClinicianRole } from '@/types/clinician';
 import { authService } from '@/lib/services/auth-service';
+import { confirmDialog } from '@/lib/utils/confirm';
 
 import {
   Card,
@@ -70,9 +71,9 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
 
   async function resetPasscode(u: Clinician) {
     if (
-      !window.confirm(
+      !(await confirmDialog(
         `Reset ${u.displayName}'s passcode? You'll get a temporary passcode to share with them; they must choose a new one at next sign in.`,
-      )
+      ))
     ) {
       return;
     }

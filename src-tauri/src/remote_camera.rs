@@ -662,14 +662,39 @@ fn lan_ip() -> IpAddr {
 /// source. Without Tailscale the probe just echoes the ordinary LAN address,
 /// which the CGNAT filter then discards — nothing is configured or pinned
 /// per user, every machine discovers its own address at runtime.
-/// ponytail: route-probe detection; a Tailscale mode installing only
-/// per-peer /32 routes (no 100.64/10 route) would hide the address — scan
-/// interfaces with getifaddrs/GetAdaptersAddresses if that ever shows up.
+///
+/// Windows proved the route probe insufficient: some Tailscale/VPN setups
+/// leave no usable /10 route in the table (per-peer /32 routes, security
+/// software filtering the probe), so the QR never appeared. Fallback: ask
+/// the interfaces directly — the tunnel adapter's own 100.x address is
+/// present whenever Tailscale is up, whatever the routing table says.
 fn tailscale_ip() -> Option<IpAddr> {
-  route_source_ip("100.64.1.1:53").filter(|ip| match ip {
-    IpAddr::V4(v4) => is_cgnat(*v4),
-    _ => false,
-  })
+  route_source_ip("100.64.1.1:53")
+    .filter(|ip| matches!(*ip, IpAddr::V4(v4) if is_cgnat(v4)))
+    .or_else(cgnat_address_on_interfaces)
+}
+
+/// Any interface address inside the CGNAT range, if one exists.
+fn cgnat_address_on_interfaces() -> Option<IpAddr> {
+  let addresses: Vec<IpAddr> = if_addrs::get_if_addrs()
+    .ok()?
+    .into_iter()
+    .map(|iface| match iface.addr {
+      if_addrs::IfAddr::V4(v4) => IpAddr::V4(v4.ip),
+      if_addrs::IfAddr::V6(v6) => IpAddr::V6(v6.ip),
+    })
+    .collect();
+  cgnat_address_among(&addresses)
+}
+
+fn cgnat_address_among(addrs: &[IpAddr]) -> Option<IpAddr> {
+  addrs
+    .iter()
+    .copied()
+    .find_map(|ip| match ip {
+      IpAddr::V4(v4) if is_cgnat(v4) => Some(IpAddr::V4(v4)),
+      _ => None,
+    })
 }
 
 /// Tailscale draws every tailnet address from the CGNAT range 100.64.0.0/10.
@@ -1310,11 +1335,34 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   });
   *STAGED_REPORT.lock().unwrap() = None;
 
-  // No token in diagnostics — the pairing URL is a secret.
+  // No token in diagnostics — the pairing URL is a secret. The discovered
+  // addresses (scheme + host + port only) are the support surface: a link
+  // missing its `tailscale …` entry means the CGNAT route probe found no
+  // tunnel on this machine, while its presence puts a scan failure on the
+  // network path (firewall rule, tailnet ACL, phone not connected).
+  let discovered = {
+    let joined = urls
+      .iter()
+      .map(|u| {
+        let kind = match u.kind {
+          LinkKind::Lan => "lan",
+          LinkKind::Tailscale => "tailscale",
+        };
+        let base = u.url.split("/t/").next().unwrap_or("");
+        format!("{kind} {base}")
+      })
+      .collect::<Vec<_>>()
+      .join(", ");
+    if joined.is_empty() {
+      "no pairing address detected".to_string()
+    } else {
+      joined
+    }
+  };
   crate::diagnostics::record(
     crate::diagnostics::Level::Info,
     "phone-camera",
-    &format!("Phone camera link started on port {port}"),
+    &format!("Phone camera link started on port {port} ({discovered})"),
     None,
   );
 
@@ -1473,6 +1521,7 @@ include!("remote_camera_page.rs");
 mod tests {
   use super::{
     capture_id_from_headers, is_safe_filename, staged_report_for, refilled, try_claim_awaiting_report,
+    cgnat_address_among,
     SessionStore, StagedReport, POST_BURST, STAGED_REPORT_TTL_MS, AWAITING_REPORT_TTL_MS,
     LINK_HTML, PAGE_HTML,
   };
@@ -2565,5 +2614,32 @@ mod tests {
     // stage_remote_report consumes the slot; the next request claims cleanly.
     slot = None;
     assert!(try_claim_awaiting_report(&mut slot, phone_a, 5_000));
+  }
+
+  // The CGNAT window is Tailscale's 100.64.0.0/10, edges included; the
+  // interface-scan fallback picks the tunnel address out of a mixed list
+  // and reports none when only ordinary addresses exist.
+  #[test]
+  fn cgnat_detection_boundaries_and_scan() {
+    use super::is_cgnat;
+    use std::net::{IpAddr, Ipv4Addr};
+    assert!(is_cgnat(Ipv4Addr::new(100, 64, 0, 0)));
+    assert!(is_cgnat(Ipv4Addr::new(100, 127, 255, 255)));
+    assert!(!is_cgnat(Ipv4Addr::new(100, 63, 255, 255)));
+    assert!(!is_cgnat(Ipv4Addr::new(100, 128, 0, 0)));
+    assert!(!is_cgnat(Ipv4Addr::new(101, 64, 0, 0)));
+
+    let mixed = [
+      IpAddr::V4(Ipv4Addr::LOCALHOST),
+      IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+      IpAddr::V4(Ipv4Addr::new(100, 101, 1, 20)),
+      IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+    ];
+    assert_eq!(
+      cgnat_address_among(&mixed),
+      Some(IpAddr::V4(Ipv4Addr::new(100, 101, 1, 20)))
+    );
+    let plain = [IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5))];
+    assert_eq!(cgnat_address_among(&plain), None);
   }
 }

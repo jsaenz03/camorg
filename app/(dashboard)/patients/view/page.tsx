@@ -33,6 +33,7 @@ import { usePhotos } from '@/lib/hooks/use-photos';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useBranding } from '@/components/branding-boot';
 import { patientService } from '@/lib/services/patient-service';
+import { confirmDialog } from '@/lib/utils/confirm';
 import { notifyAttentionChanged } from '@/lib/services/notification-service';
 import { formatDateOfBirth, parseDobInput } from '@/lib/utils/date-formatting';
 import { DobInput } from '@/components/patient/dob-input';
@@ -498,9 +499,9 @@ function EditPatientDialog({
       if (
         values.name.trim().toLowerCase() !== patient.normalizedName &&
         (await patientService.isDuplicateName(values.name, patient.id)) &&
-        !window.confirm(
+        !(await confirmDialog(
           `Another patient is already named “${values.name.trim()}”.\n\nSave this patient with the same name anyway?`,
-        )
+        ))
       ) {
         return;
       }

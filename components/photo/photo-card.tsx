@@ -20,7 +20,7 @@ import { createPortal } from 'react-dom';
 import { AlarmClock, Link2, Loader2, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
 import type { PhotoRecord } from '@/types/photo';
-import { BodyPartLabels } from '@/types/body-part';
+import { bodyPartDisplayLabel } from '@/types/body-part';
 import { Badge } from '@/components/ui/badge';
 import { BodyMapBadge } from '@/components/patient/body-map-badge';
 import { useBranding } from '@/components/branding-boot';
@@ -294,7 +294,7 @@ export function PhotoCard({
         ref={registerDropTarget}
         onPointerDown={handlePointerDown}
         onClick={handleCardClick}
-        aria-label={`Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? `, ${photo.subpart}` : ''}, captured ${formatCaptureDate(photo.capturedAt)}`}
+        aria-label={`Photo of ${bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}${photo.subpart ? `, ${photo.subpart}` : ''}, captured ${formatCaptureDate(photo.capturedAt)}`}
         className={cn(
           'group relative flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all',
           'hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
@@ -322,7 +322,7 @@ export function PhotoCard({
           {thumbnailUrl && !isLoading && !error && (
             <img
               src={thumbnailUrl}
-              alt={`Photo of ${BodyPartLabels[photo.bodyPart]}${photo.subpart ? ` — ${photo.subpart}` : ''}`}
+              alt={`Photo of ${bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}${photo.subpart ? ` — ${photo.subpart}` : ''}`}
               // Absolutely positioned: a static h-full img gives WebKit an
               // unresolvable height during flex layout, so the uncropped image
               // inflated this container (min-height:auto), pushing the caption
@@ -391,7 +391,7 @@ export function PhotoCard({
               legible next to the photo rather than a speck in the corner. */}
           <span
             className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-white p-1 shadow-md ring-1 ring-black/10"
-            title={`${BodyPartLabels[photo.bodyPart]}${photo.laterality ? ` (${photo.laterality})` : ''}`}
+            title={bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}
           >
             <BodyMapBadge
               bodyPart={photo.bodyPart}
@@ -429,7 +429,7 @@ export function PhotoCard({
         {/* Persistent caption */}
         <div className="flex items-center justify-between gap-2 p-3">
           <Badge variant="secondary" className="shrink-0">
-            {BodyPartLabels[photo.bodyPart]}
+            {bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}
           </Badge>
           <span className="truncate text-xs text-muted-foreground" title={formatCaptureDate(photo.capturedAt)}>
             {formatRelativeTime(photo.capturedAt)}
