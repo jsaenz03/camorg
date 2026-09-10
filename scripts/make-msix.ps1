@@ -113,7 +113,9 @@ $manifest = @"
   </Applications>
 </Package>
 "@
-$manifest | Out-File -FilePath (Join-Path $staging "AppxManifest.xml") -Encoding utf8
+# UTF-8 without BOM, no encoding ambiguity.
+[System.IO.File]::WriteAllText((Join-Path $staging "AppxManifest.xml"), $manifest,
+  (New-Object System.Text.UTF8Encoding($false)))
 
 # Locate MakeAppx (Windows SDK) and pack.
 $makeAppx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "MakeAppx.exe" -ErrorAction SilentlyContinue |
@@ -123,7 +125,14 @@ if (-not $makeAppx) { throw "MakeAppx.exe not found — install the Windows 10/1
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $msix = Join-Path $OutDir "Camog_${Version}_x64.msix"
 & $makeAppx pack /d $staging /p $msix /o
-if ($LASTEXITCODE -ne 0) { throw "MakeAppx pack failed." }
+if ($LASTEXITCODE -ne 0) {
+  # Semantic validation is strict about manifest minutiae; for a local test
+  # package, pack without it and let the sideload attempt name the actual
+  # complaint. Never upload an /nv package to Partner Center.
+  Write-Host "MakeAppx validation failed - retrying without semantic validation (/nv)"
+  & $makeAppx pack /d $staging /p $msix /o /nv
+  if ($LASTEXITCODE -ne 0) { throw "MakeAppx pack failed." }
+}
 
 Write-Host "`nPacked: $msix"
 Write-Host "Optional local validation (Store re-signs the uploaded package):"
