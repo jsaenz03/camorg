@@ -112,6 +112,15 @@ jobs:
             Rename-Item $mainExe.FullName 'Camog.exe'
           }
 
+          # Strip NSIS installer machinery — the extracted payload carries
+          # $PLUGINSDIR, $TEMP and uninstall.exe alongside the single
+          # self-contained app binary, and none of it belongs in a package.
+          Get-ChildItem $appDir -Force |
+            Where-Object { $_.Name -in '$PLUGINSDIR', '$TEMP', 'uninstall.exe' } |
+            Remove-Item -Recurse -Force
+          Write-Host "Payload after cleanup:"
+          Get-ChildItem $appDir -Recurse -File | ForEach-Object { Write-Host ("  " + $_.Name + "  " + $_.Length) }
+
           Write-Host "App dir: $appDir"
           "APPDIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
