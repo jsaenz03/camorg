@@ -44,8 +44,8 @@ jobs:
           Write-Host "installer exit code: $($p.ExitCode)"
           Start-Sleep -Seconds 5
 
-          # The NSIS uninstall key records wherever the installer actually
-          # put the app (per-user/per-machine, template defaults, /D, ...).
+          # 1) The NSIS uninstall key records wherever the installer put the
+          # app (InstallLocation is written wrapped in literal quotes).
           $keys = @(
             'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
             'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
@@ -54,26 +54,38 @@ jobs:
           $entry = Get-ItemProperty $keys -ErrorAction SilentlyContinue |
             Where-Object { $_.DisplayName -like '*Camog*' } |
             Select-Object -First 1
-          if ($entry) {
-            Write-Host "Registry entry: $($entry.DisplayName) $($entry.DisplayVersion) @ $($entry.InstallLocation)"
+          if ($entry -and $entry.InstallLocation) {
+            $loc = $entry.InstallLocation.Trim('"')
+            Write-Host "Registry: $($entry.DisplayName) @ $loc (Camog.exe present: $(Test-Path (Join-Path $loc 'Camog.exe')))"
+            if (Test-Path (Join-Path $loc 'Camog.exe')) { $appDir = $loc }
           }
 
-          $candidates = @(
-            if ($entry) { $entry.InstallLocation.Trim('"') },
-            (Join-Path $env:LOCALAPPDATA 'Programs\Camog'),
-            (Join-Path $env:LOCALAPPDATA 'Camog'),
-            (Join-Path $env:ProgramFiles 'Camog')
-          ) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'Camog.exe')) }
-
-          if (-not $candidates) {
-            Write-Host "Searching for Camog.exe..."
-            Get-ChildItem C:\Users\runneradmin, 'C:\Program Files', 'C:\Program Files (x86)', 'C:\ProgramData' `
-              -Filter Camog.exe -Recurse -Depth 4 -ErrorAction SilentlyContinue |
-              Select-Object -First 5 -ExpandProperty FullName
-            throw "Camog.exe not found after silent install"
+          # 2) Known template locations.
+          if (-not $appDir) {
+            foreach ($d in @(
+              (Join-Path $env:LOCALAPPDATA 'Programs\Camog'),
+              (Join-Path $env:LOCALAPPDATA 'Camog'),
+              (Join-Path $env:ProgramFiles 'Camog')
+            )) {
+              if (Test-Path (Join-Path $d 'Camog.exe')) { $appDir = $d; break }
+            }
           }
-          $appDir = $candidates | Select-Object -First 1
-          Write-Host "Installed to $appDir"
+
+          # 3) Fallback: bypass the installer entirely — extract the NSIS
+          # payload with 7-Zip (preinstalled on the runner images).
+          if (-not $appDir) {
+            Write-Host "Silent install produced no files - extracting the setup payload instead"
+            $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
+            if (-not $sevenZip) { $sevenZip = 'C:\Program Files\7-Zip\7z.exe' }
+            if (-not (Test-Path $sevenZip)) { throw "7-Zip not found at $sevenZip" }
+            New-Item -ItemType Directory -Force -Path C:\CamogStaged | Out-Null
+            & $sevenZip x .\setup.exe -oC:\CamogStaged -y | Out-Null
+            $exe = Get-ChildItem C:\CamogStaged -Filter Camog.exe -Recurse | Select-Object -First 1
+            if (-not $exe) { throw "Camog.exe not produced by install or by extraction" }
+            $appDir = $exe.DirectoryName
+          }
+
+          Write-Host "App dir: $appDir"
           "APPDIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Pack the MSIX
