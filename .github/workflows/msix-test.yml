@@ -36,22 +36,42 @@ jobs:
         run: Invoke-WebRequest -Uri "${{ github.event.inputs.setup_asset }}" -OutFile setup.exe
 
       - name: Install the app silently, then find it
-        shell: pwsh
+        shell: powershell
         run: |
-          Start-Process -FilePath .\setup.exe -ArgumentList '/S' -Wait
+          $ErrorActionPreference = 'Stop'
+          Write-Host ("setup.exe size: " + (Get-Item .\setup.exe).Length)
+          $p = Start-Process -FilePath .\setup.exe -ArgumentList '/S' -Wait -PassThru
+          Write-Host "installer exit code: $($p.ExitCode)"
           Start-Sleep -Seconds 5
-          $candidates = @(
-            (Join-Path $env:LOCALAPPDATA 'Programs\Camog'),
-            (Join-Path $env:ProgramFiles 'Camog'),
-            (Join-Path ${env:ProgramFiles(x86)} 'Camog')
+
+          # The NSIS uninstall key records wherever the installer actually
+          # put the app (per-user/per-machine, template defaults, /D, ...).
+          $keys = @(
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
           )
-          $appDir = $candidates | Where-Object { Test-Path (Join-Path $_ 'Camog.exe') } | Select-Object -First 1
-          if (-not $appDir) {
-            Write-Host "Installed-file search:"
-            Get-ChildItem "$env:LOCALAPPDATA\Programs", $env:ProgramFiles -Directory -ErrorAction SilentlyContinue |
-              Select-Object -ExpandProperty FullName
-            throw "Camog.exe not found in any standard install location after silent install"
+          $entry = Get-ItemProperty $keys -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like '*Camog*' } |
+            Select-Object -First 1
+          if ($entry) {
+            Write-Host "Registry entry: $($entry.DisplayName) $($entry.DisplayVersion) @ $($entry.InstallLocation)"
           }
+
+          $candidates = @(
+            $entry.InstallLocation,
+            (Join-Path $env:LOCALAPPDATA 'Programs\Camog'),
+            (Join-Path $env:ProgramFiles 'Camog')
+          ) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'Camog.exe')) }
+
+          if (-not $candidates) {
+            Write-Host "Searching for Camog.exe..."
+            Get-ChildItem C:\Users\runneradmin, 'C:\Program Files', 'C:\Program Files (x86)', 'C:\ProgramData' `
+              -Filter Camog.exe -Recurse -Depth 4 -ErrorAction SilentlyContinue |
+              Select-Object -First 5 -ExpandProperty FullName
+            throw "Camog.exe not found after silent install"
+          }
+          $appDir = $candidates | Select-Object -First 1
           Write-Host "Installed to $appDir"
           "APPDIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
