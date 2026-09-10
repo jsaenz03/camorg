@@ -133,6 +133,17 @@ jobs:
             -OutDir .\msix `
             -NoWebView2Dependency
 
+      - name: Print generated manifest (on failure)
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path .\msix\staging\AppxManifest.xml) {
+            Get-Content .\msix\staging\AppxManifest.xml | ForEach-Object { Write-Host "MANIFEST: $_" }
+          } else {
+            Write-Host "no staging manifest found"
+            Get-ChildItem .\msix -Recurse -ErrorAction SilentlyContinue | Select-Object -First 20 -ExpandProperty FullName
+          }
+
       - name: Self-sign for sideloading
         shell: powershell
         run: |
