@@ -1,15 +1,21 @@
-name: MSIX test package
+name: MSIX package (test or store)
 
-# Produces a SIGNED-BUT-SELF-SIGNED .msix for local testing only — NOT for
-# Store upload. It installs the release's NSIS setup silently on a GitHub
-# Windows runner, wraps the installed app with scripts/make-msix.ps1
-# (-NoWebView2Dependency, so a sideloaded install doesn't demand the WebView2
-# framework package; Windows 11's evergreen runtime serves the app itself),
-# signs it with a throwaway self-signed certificate, and uploads the .msix +
-# the .cer to import before installing.
+# Produces an .msix from the release's NSIS setup, on a GitHub Windows
+# runner — no Windows machine needed.
 #
-# The tile logos inside are the script's generated placeholders — replace
-# them with real brand tiles before any real (Partner Center) submission.
+# Two modes:
+#   - TEST (default; no identity inputs): sideload package with a test
+#     identity, self-signed with a throwaway certificate, WebView2 package
+#     dependency omitted (a sideload can't resolve it; the app's own loader
+#     uses the evergreen runtime). For trying the packaging on a machine —
+#     never for Partner Center upload.
+#   - STORE (set identity_name + publisher): the upload package, carrying
+#     the real Partner Center identity and the WebView2 package dependency
+#     (the Store resolves it and re-signs the package — no local signing).
+#
+# Identity values come from Partner Center: App management → App identity
+# ("Package/Identity" → Name and Publisher). See MSSTORE_GUIDE.md step 2.
+# Tile logos are the real brand tiles from src-tauri/assets/msix.
 
 on:
   workflow_dispatch:
@@ -20,6 +26,12 @@ on:
       msix_version:
         description: "MSIX version (x.y.z.0)"
         default: "0.7.3.0"
+      identity_name:
+        description: "Partner Center Package/Identity Name (leave empty for a test package)"
+        default: ""
+      publisher:
+        description: "Partner Center Package/Identity Publisher, CN=... (with identity_name above)"
+        default: ""
 
 permissions:
   contents: read
@@ -28,7 +40,7 @@ jobs:
   pack:
     runs-on: windows-latest
     steps:
-      - name: Checkout (for scripts/make-msix.ps1)
+      - name: Checkout (for scripts/make-msix.ps1 and the brand tiles)
         uses: actions/checkout@v4
 
       - name: Download the NSIS setup
@@ -121,26 +133,25 @@ jobs:
           Write-Host "Payload after cleanup:"
           Get-ChildItem $appDir -Recurse -File | ForEach-Object { Write-Host ("  " + $_.Name + "  " + $_.Length) }
 
-          Write-Host "App dir: $appDir"
           "APPDIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Defender verdicts (diagnostics)
-        if: failure()
-        shell: powershell
-        run: |
-          try { Get-MpThreat | Select-Object -First 10 | Format-List ThreatName, Resources | Out-String | Write-Host } catch { Write-Host "Get-MpThreat: $_" }
-          try { Get-MpThreatDetection | Select-Object -First 10 | Format-List ThreatID, Resources | Out-String | Write-Host } catch { Write-Host "Get-MpThreatDetection: $_" }
 
       - name: Pack the MSIX
         shell: pwsh
+        env:
+          IDENTITY_NAME: ${{ github.event.inputs.identity_name }}
+          PUBLISHER: ${{ github.event.inputs.publisher }}
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make-msix.ps1 `
-            -AppDir "$env:APPDIR" `
-            -Version "${{ github.event.inputs.msix_version }}" `
-            -IdentityName "CamogDesktopTest" `
-            -Publisher "CN=Camog Test" `
-            -OutDir .\msix `
-            -NoWebView2Dependency
+          $testMode = -not $env:IDENTITY_NAME
+          $packArgs = @(
+            '-AppDir', "$env:APPDIR",
+            '-Version', '${{ github.event.inputs.msix_version }}',
+            '-IdentityName', $(if ($testMode) { 'CamogDesktopTest' } else { $env:IDENTITY_NAME }),
+            '-Publisher', $(if ($testMode) { 'CN=Camog Test' } else { $env:PUBLISHER }),
+            '-OutDir', '.\msix',
+            '-AssetsDir', 'src-tauri\assets\msix'
+          )
+          if ($testMode) { $packArgs += '-NoWebView2Dependency' }
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make-msix.ps1 @packArgs
 
       - name: Print generated manifest (on failure)
         if: failure()
@@ -153,7 +164,8 @@ jobs:
             Get-ChildItem .\msix -Recurse -ErrorAction SilentlyContinue | Select-Object -First 20 -ExpandProperty FullName
           }
 
-      - name: Self-sign for sideloading
+      - name: Self-sign for sideloading (test mode only)
+        if: github.event.inputs.identity_name == ''
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -169,7 +181,8 @@ jobs:
           $msix = Get-ChildItem .\msix\*.msix | Select-Object -First 1 -ExpandProperty FullName
           & $signtool sign /fd SHA256 /f .\camog-test.pfx /p "camog-test" "$msix"
 
-      - name: Install instructions for the tester
+      - name: Install instructions for the tester (test mode only)
+        if: github.event.inputs.identity_name == ''
         shell: pwsh
         run: |
           @'
@@ -199,10 +212,10 @@ jobs:
           - Uninstall from the Start menu removes it cleanly.
           '@ | Out-File -FilePath .\INSTALL-test-msix.txt -Encoding utf8
 
-      - name: Upload the test package
+      - name: Upload the package
         uses: actions/upload-artifact@v4
         with:
-          name: camog-test-msix
+          name: ${{ github.event.inputs.identity_name == '' && 'camog-test-msix' || 'camog-store-msix' }}
           path: |
             msix/*.msix
             camog-test.cer

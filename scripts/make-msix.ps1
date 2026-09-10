@@ -27,6 +27,10 @@ param(
   [string]$Executable = "Camog.exe",
   [string]$DisplayName = "Camog",
   [string]$OutDir = ".\msix",
+  # Directory holding the real brand tiles (Square44x44Logo.png and
+  # Square150x150Logo.png — see src-tauri/assets/msix). When absent or
+  # incomplete, generated placeholders are drawn instead.
+  [string]$AssetsDir = "",
   # Sideloading a test package fails unless the machine has Microsoft's
   # WebView2 framework package (the Store resolves the dependency
   # automatically; a direct install does not). Skip it for local test
@@ -53,16 +57,27 @@ Copy-Item -Path (Join-Path $AppDir "*") -Destination $staging -Recurse -Force
 # available — these placeholders pass packaging validation.
 $assets = Join-Path $staging "assets"
 New-Item -ItemType Directory -Force -Path $assets | Out-Null
-Add-Type -AssemblyName System.Drawing
-foreach ($size in 44, 150) {
-  $bmp = New-Object System.Drawing.Bitmap($size, $size)
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.Clear([System.Drawing.Color]::FromArgb(28, 100, 242))
-  $font = New-Object System.Drawing.Font("Segoe UI", [float]($size * 0.45))
-  $g.DrawString("C", $font, [System.Drawing.Brushes]::White, [float]($size * 0.28), [float]($size * 0.12))
-  $g.Dispose()
-  $bmp.Save((Join-Path $assets "Square${size}x${size}Logo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-  $bmp.Dispose()
+$tile44 = Join-Path $assets "Square44x44Logo.png"
+$tile150 = Join-Path $assets "Square150x150Logo.png"
+if ($AssetsDir -and
+    (Test-Path (Join-Path $AssetsDir "Square44x44Logo.png")) -and
+    (Test-Path (Join-Path $AssetsDir "Square150x150Logo.png"))) {
+  Copy-Item (Join-Path $AssetsDir "Square44x44Logo.png") $tile44
+  Copy-Item (Join-Path $AssetsDir "Square150x150Logo.png") $tile150
+} else {
+  # Generated placeholders — packaging-validation stand-ins for the real
+  # brand tiles in src-tauri/assets/msix.
+  Add-Type -AssemblyName System.Drawing
+  foreach ($size in 44, 150) {
+    $bmp = New-Object System.Drawing.Bitmap($size, $size)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.Clear([System.Drawing.Color]::FromArgb(28, 100, 242))
+    $font = New-Object System.Drawing.Font("Segoe UI", [float]($size * 0.45))
+    $g.DrawString("C", $font, [System.Drawing.Brushes]::White, [float]($size * 0.28), [float]($size * 0.12))
+    $g.Dispose()
+    $bmp.Save((Join-Path $assets "Square${size}x${size}Logo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose()
+  }
 }
 
 # AppxManifest — Win32 full-trust app. The WebView2 package dependency is
