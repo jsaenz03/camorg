@@ -147,6 +147,7 @@ jobs:
             '-Version', '${{ github.event.inputs.msix_version }}',
             '-IdentityName', $(if ($testMode) { 'CamogDesktopTest' } else { $env:IDENTITY_NAME }),
             '-Publisher', $(if ($testMode) { 'CN=Camog Test' } else { $env:PUBLISHER }),
+            '-PublisherDisplayName', $(if ($testMode) { 'ClinicIQ Solutions' } else { 'cliniciq' }),
             '-OutDir', '.\msix',
             '-AssetsDir', 'src-tauri\assets\msix'
           )

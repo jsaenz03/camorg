@@ -26,6 +26,8 @@ param(
   [Parameter(Mandatory = $true)][string]$Publisher,        # Partner Center publisher (CN=...)
   [string]$Executable = "Camog.exe",
   [string]$DisplayName = "Camog",
+  # Partner Center's Package/Properties/PublisherDisplayName (App identity page).
+  [string]$PublisherDisplayName = "ClinicIQ Solutions",
   [string]$OutDir = ".\msix",
   # Directory holding the real brand tiles (Square44x44Logo.png and
   # Square150x150Logo.png — see src-tauri/assets/msix). When absent or
@@ -102,7 +104,7 @@ $manifest = @"
   <Identity Name="$IdentityName" Version="$Version" Publisher="$Publisher" />
   <Properties>
     <DisplayName>$DisplayName</DisplayName>
-    <PublisherDisplayName>ClinicIQ Solutions</PublisherDisplayName>
+    <PublisherDisplayName>$PublisherDisplayName</PublisherDisplayName>
     <Logo>assets\Square44x44Logo.png</Logo>
   </Properties>
   <Dependencies>
