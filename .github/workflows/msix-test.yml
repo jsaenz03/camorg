@@ -142,16 +142,22 @@ jobs:
           PUBLISHER: ${{ github.event.inputs.publisher }}
         run: |
           $testMode = -not $env:IDENTITY_NAME
+          # DisplayName must match the product's reserved name for Store
+          # upload; the WebView2 package dependency is always omitted —
+          # Partner Center cannot resolve Microsoft's framework package, so
+          # the app relies on the Evergreen runtime (preinstalled on
+          # Windows 11, near-universal on updated Windows 10).
           $packArgs = @(
             '-AppDir', "$env:APPDIR",
             '-Version', '${{ github.event.inputs.msix_version }}',
             '-IdentityName', $(if ($testMode) { 'CamogDesktopTest' } else { $env:IDENTITY_NAME }),
             '-Publisher', $(if ($testMode) { 'CN=Camog Test' } else { $env:PUBLISHER }),
             '-PublisherDisplayName', $(if ($testMode) { 'ClinicIQ Solutions' } else { 'cliniciq' }),
+            '-DisplayName', $(if ($testMode) { 'Camog' } else { 'Camog-AU' }),
             '-OutDir', '.\msix',
-            '-AssetsDir', 'src-tauri\assets\msix'
+            '-AssetsDir', 'src-tauri\assets\msix',
+            '-NoWebView2Dependency'
           )
-          if ($testMode) { $packArgs += '-NoWebView2Dependency' }
           powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make-msix.ps1 @packArgs
 
       - name: Print generated manifest (on failure)
