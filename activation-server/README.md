@@ -6,9 +6,10 @@ connection the product ever makes. Design: `specs/003-licence-activation/spec.md
 
 ```
 POST /v1/activate  { key, deviceId } → 200 { token }        (the app)
+POST /v1/validate  { key, deviceId } → 200 { valid, exp, renewal? }   (the app, at most daily)
 GET  /v1/seats?fp=…                               (admin)   list seats
 DELETE /v1/seats { fp, deviceId | all }           (admin)   free a seat
-POST /webhooks/stripe                             (Stripe)  purchase → key by email
+POST /webhooks/stripe                             (Stripe)  purchase/renewal → key by email
 GET  /v1/licences?session=…|?fp=…|?               (admin)   issued keys (resend/support)
 GET  /                                            (public)  landing page
 GET  /buy                                         (public)  pricing + Stripe checkout links
@@ -83,11 +84,17 @@ Secrets and identifiers never live in the repo; they are set once, below.
 
 ## Automated sales fulfilment (Stripe → licence key by email)
 
-Design: `specs/004-licence-purchase/spec.md`. A buyer pays through a Stripe
-Payment Link on `/buy`; the `checkout.session.completed` webhook makes the
-worker sign a 12-month licence key (the vendor private key lives server-side
-as a secret), record it in the D1 `licences` table, and email it to the buyer
-via Resend. The app only links to `/buy` — checkout never touches the app.
+Design: `specs/004-licence-purchase/spec.md` (one-off purchases) and
+`specs/005-licence-auto-renew/spec.md` (subscriptions). A buyer pays through
+a Stripe Payment Link on `/buy`; the `checkout.session.completed` webhook
+makes the worker sign a 12-month licence key (the vendor private key lives
+server-side as a secret), record it in the D1 `licences` table, and email it
+to the buyer via Resend. For subscription purchases the worker also handles
+each annual `invoice.paid` renewal: it mints a successor key chained to the
+previous one (`renews_fp`), emails it, and hands it to activated devices
+through the `renewal` field of `/v1/validate` — the app installs it silently
+when its auto-renew setting is on. The app only links to `/buy` — checkout
+never touches the app.
 
 One-time setup:
 
@@ -99,10 +106,17 @@ One-time setup:
    `https://buy.stripe.com/...` URLs over the `STRIPE_PAYMENT_LINK`
    placeholders in `public/buy.html`. Current prices (AUD):
    Solo A$179/yr · Practice A$399/yr · Clinic A$799/yr.
+   For auto-renew (specs/005), create subscription-mode Payment Links with
+   the same metadata and pricing (product billed yearly) and paste them
+   over the `STRIPE_SUBSCRIPTION_LINK` placeholders in `public/buy.html` —
+   until then those "subscribe" links point at `#` and must not ship. The
+   origin checkout fulfils exactly like a one-off purchase; renewals need
+   nothing further.
 2. **Stripe webhook**: in the Stripe dashboard add an endpoint
    `https://camog-license.cliniciq.com.au/webhooks/stripe` subscribed to
-   `checkout.session.completed` (and `checkout.session.async_payment_succeeded`
-   if any async payment method is enabled). Copy the signing secret:
+   `checkout.session.completed`, `invoice.paid` (renewals), and
+   `checkout.session.async_payment_succeeded`
+   if any async payment method is enabled. Copy the signing secret:
    ```
    npx wrangler secret put STRIPE_WEBHOOK_SECRET     # whsec_…
    ```
@@ -120,9 +134,13 @@ One-time setup:
    ```
    Verify the `licences@cliniciq.com.au` sender/domain in Resend first.
 5. **Database**: apply the schema again (`IF NOT EXISTS`, safe on existing
-   data):
+   data). On a database created before auto-renew (specs/005), also add the
+   two `licences` columns — `IF NOT EXISTS` does not widen an existing
+   table:
    ```
    npx wrangler d1 execute camog-licence --remote --file=./schema.sql
+   npx wrangler d1 execute camog-licence --remote --command "ALTER TABLE licences ADD COLUMN subscription_id TEXT"
+   npx wrangler d1 execute camog-licence --remote --command "ALTER TABLE licences ADD COLUMN renews_fp TEXT"
    ```
 6. **Deploy + smoke test**:
    ```
@@ -145,6 +163,10 @@ Support fallbacks:
 - **Failed delivery**: `emailed_at` NULL with a key present means Resend
   failed; Stripe retries the webhook for ~3 days, or deliver manually as
   above.
+- **Renewal chains** (specs/005): rows with `renews_fp` set are
+  auto-renewal keys (`session_id` is then the Stripe invoice id, so
+  `GET /v1/licences?session=<invoice id>` fetches one directly); follow
+  `renews_fp` from any key the buyer quotes to reach the current one.
 
 ## Seat moves (support requests)
 

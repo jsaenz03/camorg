@@ -120,21 +120,27 @@ export type PatientUpdate = z.infer<typeof patientUpdateSchema>;
 /**
  * Clinician validation schemas
  */
-export const clinicianRegisterSchema = z.object({
-  username: z
-    .string()
-    .min(3, 'Username must be at least 3 characters')
-    .max(50, 'Username must be 50 characters or less')
-    .trim()
-    .toLowerCase(),
-  passcode: passcodeRules,
-  displayName: z
-    .string()
-    .min(1, 'Display name is required')
-    .max(100, 'Display name must be 100 characters or less')
-    .trim(),
-  inviteToken: z.string().trim().optional(),
-});
+export const clinicianRegisterSchema = z
+  .object({
+    username: z
+      .string()
+      .min(3, 'Username must be at least 3 characters')
+      .max(50, 'Username must be 50 characters or less')
+      .trim()
+      .toLowerCase(),
+    passcode: passcodeRules,
+    confirmPasscode: z.string().min(1, 'Please confirm your passcode'),
+    displayName: z
+      .string()
+      .min(1, 'Display name is required')
+      .max(100, 'Display name must be 100 characters or less')
+      .trim(),
+    inviteToken: z.string().trim().optional(),
+  })
+  .refine((d) => d.passcode === d.confirmPasscode, {
+    message: 'Passcodes do not match',
+    path: ['confirmPasscode'],
+  });
 
 export const clinicianLoginSchema = z.object({
   username: z
@@ -179,21 +185,27 @@ export const invitationCreateSchema = z.object({
   ttlDays: z.number().int().min(1).max(90),
 });
 
-export const invitationAcceptSchema = z.object({
-  token: z.string().min(1, 'Invite code is required').trim(),
-  username: z
-    .string()
-    .min(3, 'Username must be at least 3 characters')
-    .max(50, 'Username must be 50 characters or less')
-    .trim()
-    .toLowerCase(),
-  displayName: z
-    .string()
-    .min(1, 'Display name is required')
-    .max(100, 'Display name must be 100 characters or less')
-    .trim(),
-  passcode: passcodeRules,
-});
+export const invitationAcceptSchema = z
+  .object({
+    token: z.string().min(1, 'Invite code is required').trim(),
+    username: z
+      .string()
+      .min(3, 'Username must be at least 3 characters')
+      .max(50, 'Username must be 50 characters or less')
+      .trim()
+      .toLowerCase(),
+    displayName: z
+      .string()
+      .min(1, 'Display name is required')
+      .max(100, 'Display name must be 100 characters or less')
+      .trim(),
+    passcode: passcodeRules,
+    confirmPasscode: z.string().min(1, 'Please confirm your passcode'),
+  })
+  .refine((d) => d.passcode === d.confirmPasscode, {
+    message: 'Passcodes do not match',
+    path: ['confirmPasscode'],
+  });
 
 /** Brand colour: `#rgb` / `#rrggbb` hex, normalised to lowercase `#rrggbb`. */
 export const hexColourSchema = z
@@ -252,3 +264,32 @@ export type InvitationCreate = z.infer<typeof invitationCreateSchema>;
 export type InvitationAccept = z.infer<typeof invitationAcceptSchema>;
 export type SettingsUpdate = z.infer<typeof settingsUpdateSchema>;
 export type SetUserRole = z.infer<typeof setUserRoleSchema>;
+
+/**
+ * Note template validation schemas (per-clinician quick-text for notes)
+ */
+const noteShortcutSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,15}$/,
+    'Use 2–16 letters, numbers, hyphens or underscores — no spaces',
+  )
+  .optional()
+  .nullable()
+  .or(z.literal(''));
+
+export const noteTemplateCreateSchema = z.object({
+  title: z.string().trim().min(1, 'Title is required').max(60, 'Title must be 60 characters or less'),
+  body: z
+    .string()
+    .trim()
+    .min(1, 'Template text is required')
+    .max(1000, 'Template text must be 1000 characters or less'),
+  shortcut: noteShortcutSchema,
+});
+
+export const noteTemplateUpdateSchema = noteTemplateCreateSchema.partial();
+
+export type NoteTemplateCreateInput = z.infer<typeof noteTemplateCreateSchema>;
+export type NoteTemplateUpdateInput = z.infer<typeof noteTemplateUpdateSchema>;

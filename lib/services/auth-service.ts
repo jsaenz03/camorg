@@ -89,6 +89,7 @@ function parsePreferences(json: string): Clinician['preferences'] {
       defaultBodyPart: parsed.defaultBodyPart ?? null,
       autoCompressPhotos: parsed.autoCompressPhotos ?? false,
       showDeletedPhotos: parsed.showDeletedPhotos ?? false,
+      showSubpartSuggestions: parsed.showSubpartSuggestions ?? true,
       autoLogoutTimeoutMs: sanitiseAutoLogoutTimeout(parsed.autoLogoutTimeoutMs),
       navLayout:
         parsed.navLayout === 'right' || parsed.navLayout === 'top'
@@ -104,6 +105,7 @@ function parsePreferences(json: string): Clinician['preferences'] {
       defaultBodyPart: null,
       autoCompressPhotos: false,
       showDeletedPhotos: false,
+      showSubpartSuggestions: true,
       autoLogoutTimeoutMs: null,
       navLayout: 'left',
       dashboardWidgets: null,

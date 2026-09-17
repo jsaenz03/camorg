@@ -109,6 +109,7 @@ function SignupInner() {
           username: inv.username,
           displayName: inv.displayName,
           passcode: '',
+          confirmPasscode: '',
         });
       })
       .catch((err) => {
@@ -125,6 +126,7 @@ function SignupInner() {
       username: invitation?.username ?? '',
       displayName: invitation?.displayName ?? '',
       passcode: '',
+      confirmPasscode: '',
     },
   });
 
@@ -143,7 +145,7 @@ function SignupInner() {
   // ----- shared form: first-run setup (admin) and open signup (pending) -----
   const registerForm = useForm<ClinicianRegister>({
     resolver: zodResolver(clinicianRegisterSchema),
-    defaultValues: { username: '', displayName: '', passcode: '' },
+    defaultValues: { username: '', displayName: '', passcode: '', confirmPasscode: '' },
   });
 
   async function onSetupFirstAdmin(values: ClinicianRegister) {
@@ -272,6 +274,19 @@ function SignupInner() {
                   </FormItem>
                 )}
               />
+              <FormField
+                control={acceptForm.control}
+                name="confirmPasscode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Confirm passcode</FormLabel>
+                    <FormControl>
+                      <PasswordInput autoComplete="new-password" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <Button
                 type="submit"
                 className="w-full"
@@ -371,6 +386,19 @@ function SignupInner() {
                     <FormDescription>
                       At least 8 characters with a letter and a number.
                     </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="confirmPasscode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Confirm passcode</FormLabel>
+                    <FormControl>
+                      <PasswordInput autoComplete="new-password" {...field} />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -534,6 +562,19 @@ function SignupInner() {
                     <FormDescription>
                       At least 8 characters with a letter and a number.
                     </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={registerForm.control}
+                name="confirmPasscode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Confirm passcode</FormLabel>
+                    <FormControl>
+                      <PasswordInput autoComplete="new-password" {...field} />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

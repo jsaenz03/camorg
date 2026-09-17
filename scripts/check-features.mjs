@@ -405,6 +405,49 @@ for (const needle of ['companion-photo-review-request', 'companion-report-reques
   check(`companion provider: ${needle}`, providerSrc.includes(needle));
 }
 
+// 15. Documentation helpers (migration 024): per-clinician note templates.
+//     The table carries owner + shortcut with a per-clinician unique index,
+//     the Rust shell registers the migration, and both clinician text
+//     surfaces (capture/upload form, photo detail dialog) use the shared
+//     notes field and subpart suggestions.
+const noteTemplatesMigration = read('src-tauri/migrations/024_note_templates.sql');
+for (const needle of [
+  'CREATE TABLE IF NOT EXISTS note_templates',
+  'clinician_id TEXT NOT NULL',
+  'shortcut TEXT',
+  'WHERE shortcut IS NOT NULL',
+]) {
+  check(`migration 024: ${needle}`, noteTemplatesMigration.includes(needle));
+}
+check(
+  'lib.rs registers migration 024',
+  /version:\s*24[\s\S]*?024_note_templates\.sql/.test(libRs),
+);
+const notesFieldSrc = read('components/photo/clinical-notes-field.tsx');
+check(
+  'clinical-notes field wires expansion + tokens + picker',
+  notesFieldSrc.includes('expandShortcutAtCaret') &&
+    notesFieldSrc.includes('resolveNoteTokens') &&
+    notesFieldSrc.includes('noteTemplateService'),
+);
+check(
+  'note-template-service scopes lists per clinician',
+  read('lib/services/note-template-service.ts').includes('clinician_id = $1'),
+);
+check(
+  'capture form uses the shared notes field + subpart suggestions',
+  read('components/photo/photo-metadata-form.tsx').includes('ClinicalNotesField') &&
+    read('components/photo/photo-metadata-form.tsx').includes('SubpartInput'),
+);
+check(
+  'edit-photo dialog uses the shared notes field + subpart suggestions',
+  photoDialogSrc.includes('ClinicalNotesField') && photoDialogSrc.includes('SubpartInput'),
+);
+check(
+  'settings page offers per-clinician template management',
+  read('app/(dashboard)/settings/page.tsx').includes('NoteTemplatesPanel'),
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

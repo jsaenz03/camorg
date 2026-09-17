@@ -40,6 +40,9 @@ export type AuditAction =
   | 'storage.photos_dir'
   | 'storage.source_cleanup'
   | 'licence.activation'
+  | 'licence.revocation'
+  | 'licence.renewal'
+  | 'licence.auto-renew'
   | 'companion.start'
   | 'companion.stop'
   | 'companion.new_code';
@@ -105,6 +108,9 @@ export const AuditActionLabels: Record<AuditAction, string> = {
   'storage.photos_dir': 'Changed the photo storage location',
   'storage.source_cleanup': 'Deleted copied files from the old photo folder',
   'licence.activation': 'Activated a licence',
+  'licence.revocation': 'Licence seat revoked by server',
+  'licence.renewal': 'Licence renewed (automatic)',
+  'licence.auto-renew': 'Changed licence auto-renew',
   'companion.start': 'Opened phone link session',
   'companion.stop': 'Closed phone link session',
   'companion.new_code': 'Generated a new phone link code',

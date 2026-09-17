@@ -33,6 +33,8 @@ export interface Clinician {
     defaultBodyPart: BodyPart | null;
     autoCompressPhotos: boolean;
     showDeletedPhotos: boolean;
+    /** Subpart suggestion chips while typing (per-clinician opt-out). */
+    showSubpartSuggestions: boolean;
     /** Personal auto-logout: null = organisation default, 0 = never. */
     autoLogoutTimeoutMs: number | null;
     /** Navigation chrome: sidebar pinned left/right, or tabs along the top. */

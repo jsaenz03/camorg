@@ -22,10 +22,10 @@ on:
     inputs:
       setup_asset:
         description: "Release asset URL of the NSIS setup (x64-setup.exe)"
-        default: "https://github.com/jsaenz03/camorg/releases/download/v0.7.3/Camog_0.7.3_x64-setup.exe"
+        default: "https://github.com/jsaenz03/camorg/releases/download/v0.8.0/Camog_0.8.0_x64-setup.exe"
       msix_version:
         description: "MSIX version (x.y.z.0)"
-        default: "0.7.3.0"
+        default: "0.8.0.0"
       identity_name:
         description: "Partner Center Package/Identity Name (leave empty for a test package)"
         default: ""
@@ -209,7 +209,7 @@ jobs:
           Things worth checking (the reason this package exists):
           - App launches and renders (WebView2 under package identity).
           - Sign-in works; licence activation succeeds and Settings shows
-            the version 0.7.3.
+            the version 0.8.0.
           - Licence device identity: does C:\ProgramData still hold the
             machine identity where the licence system expects it?
           - Phone link opens; expect the generic Windows firewall prompt

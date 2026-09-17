@@ -147,6 +147,30 @@ pub fn run() {
       sql: include_str!("../migrations/021_photo_body_part_optional.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 22,
+      description: "licence: last definitive seat re-validation timestamp",
+      sql: include_str!("../migrations/022_licence_validated.sql"),
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 23,
+      description: "licence: auto-renew toggle (specs/005), default on",
+      sql: include_str!("../migrations/023_licence_auto_renew.sql"),
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 24,
+      description: "note templates: per-clinician quick-text phrases + shortcuts",
+      sql: include_str!("../migrations/024_note_templates.sql"),
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 25,
+      description: "note templates: replace v1 starters (dupe-prone seeds, overlapping content)",
+      sql: include_str!("../migrations/025_note_template_starters_v2.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory
@@ -282,6 +306,7 @@ pub fn run() {
       licence_device::device_id_fresh,
       licence_device::device_id_adopt,
       licence_activation::activate_licence,
+      licence_activation::validate_licence,
       photo_crypto::photo_encrypt_bytes,
       photo_crypto::photo_decrypt_bytes,
       report::generate_case_report,

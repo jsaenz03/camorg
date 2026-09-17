@@ -5,3 +5,4 @@ export * from './body-part';
 export * from './clinician';
 export * from './invitation';
 export * from './subpart';
+export * from './note-template';

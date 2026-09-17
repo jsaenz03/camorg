@@ -12,12 +12,15 @@
  * the viewport link: anchored (the default) a drag or scroll on either photo
  * moves both together; unanchored each pane pans and zooms freely — and
  * re-anchoring makes the next gesture move them together from wherever they
- * were left, so independently framed lesions stay framed.
+ * were left, so independently framed lesions stay framed. Overlay mode
+ * stacks both photos behind an opacity fade and a draggable reveal divider;
+ * unanchored, a Move toggle picks which layer the gestures shift.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import {
+  ChevronsLeftRight,
   Columns2,
   Images,
   Layers,
@@ -131,6 +134,11 @@ export function PhotoCompareView({
   const [pickSheet, setPickSheet] = useState<CompareSide | null>(null);
   const [mode, setMode] = useState<Mode>('side');
   const [opacity, setOpacity] = useState(50);
+  // Overlay reveal divider: % of the pane width the top layer is clipped
+  // from the left (the divider sits on the reveal edge).
+  const [wipe, setWipe] = useState(50);
+  // Overlay mode, unanchored: which layer pan/zoom gestures move.
+  const [overlaySide, setOverlaySide] = useState<CompareSide>('left');
 
   // Viewport link: anchored panes move together, free panes move alone.
   const [anchored, setAnchored] = useState(true);
@@ -292,6 +300,32 @@ export function PhotoCompareView({
     setDragging(false);
   }, [applyPendingPan]);
 
+  // Overlay reveal divider: dragging the handle slides the wipe. The strip
+  // captures the pointer and stops propagation so the pane's pan gesture
+  // never starts; the wipe tracks the pointer's x within the pane.
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const wipePointerRef = useRef<number | null>(null);
+  const onWipeDown = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    wipePointerRef.current = e.pointerId;
+  }, []);
+  const onWipeMove = useCallback((e: React.PointerEvent) => {
+    if (wipePointerRef.current !== e.pointerId) return;
+    const rect = overlayRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return;
+    const pct = ((e.clientX - rect.left) / rect.width) * 100;
+    setWipe(Math.min(100, Math.max(0, pct)));
+  }, []);
+  const onWipeUp = useCallback((e: React.PointerEvent) => {
+    if (wipePointerRef.current === e.pointerId) wipePointerRef.current = null;
+  }, []);
+  const onWipeKey = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    setWipe((w) => Math.min(100, Math.max(0, w + (e.key === 'ArrowLeft' ? -2 : 2))));
+  }, []);
+
   // React registers wheel listeners passively, so preventDefault inside
   // onWheel is a no-op — the view scrolls while zooming and the console
   // complains per tick. Attach native non-passive listeners per pane
@@ -372,15 +406,19 @@ export function PhotoCompareView({
     );
   };
 
-  /** Overlay mode: both photos stacked, the later one's opacity is dialled.
-      Each layer keeps its own pane transform, so unanchored framing survives
-      the fade. */
+  /** Overlay mode: both photos stacked, the later one dialled by opacity
+      and clipped by a draggable reveal divider. Each layer keeps its own
+      pane transform, so unanchored framing survives the fade; the clip sits
+      on a pane-sized wrapper so the divider edge matches what is revealed
+      regardless of each photo's aspect ratio. Unanchored, gestures move
+      whichever layer the Move toggle picks. */
   const overlayPane = (
     <div
+      ref={overlayRef}
       className="relative flex h-full items-center justify-center overflow-hidden rounded-lg border bg-black"
       style={{ cursor: dragging ? 'grabbing' : 'grab', touchAction: 'none' }}
-      data-compare-pane="left"
-      onPointerDown={(e) => onPointerDown(e, 'left')}
+      data-compare-pane={overlaySide}
+      onPointerDown={(e) => onPointerDown(e, overlaySide)}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
@@ -393,21 +431,55 @@ export function PhotoCompareView({
       ).map(
         ([side, url, tf], i) =>
           url && (
-            <img
+            <div
               key={side}
-              src={url}
-              alt=""
-              aria-hidden
-              draggable={false}
-              className={cn(
-                'absolute max-h-full max-w-full select-none object-contain',
-                !dragging && 'transition-transform duration-75',
-              )}
-              style={{ ...tfStyle(tf), opacity: i === 0 ? 1 : opacity / 100 }}
-            />
+              className="absolute inset-0 flex items-center justify-center"
+              style={{
+                opacity: i === 0 ? 1 : opacity / 100,
+                clipPath: i === 0 ? undefined : `inset(0 0 0 ${wipe}%)`,
+              }}
+            >
+              <img
+                src={url}
+                alt=""
+                aria-hidden
+                draggable={false}
+                className={cn(
+                  'max-h-full max-w-full select-none object-contain',
+                  !dragging && 'transition-transform duration-75',
+                )}
+                style={tfStyle(tf)}
+              />
+            </div>
           ),
       )}
       {!leftUrl && !rightUrl && <Loader2 className="size-8 animate-spin text-white/50" aria-label="Loading photos" />}
+      {leftUrl && rightUrl && (
+        <div
+          role="slider"
+          aria-label="Overlay reveal"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(wipe)}
+          aria-valuetext={`${Math.round(wipe)}%`}
+          tabIndex={0}
+          className="absolute inset-y-0 z-10 w-7 -translate-x-1/2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          style={{ left: `${wipe}%`, cursor: 'ew-resize', touchAction: 'none' }}
+          onPointerDown={onWipeDown}
+          onPointerMove={onWipeMove}
+          onPointerUp={onWipeUp}
+          onPointerCancel={onWipeUp}
+          onKeyDown={onWipeKey}
+        >
+          <span aria-hidden className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded bg-white/80" />
+          <span
+            aria-hidden
+            className="absolute left-1/2 top-1/2 flex size-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/70 bg-black/60 text-white shadow"
+          >
+            <ChevronsLeftRight className="size-4" />
+          </span>
+        </div>
+      )}
       <span className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-xs text-white">
         {left && right
           ? `${format(left.capturedAt, 'd MMM yy')} → ${format(right.capturedAt, 'd MMM yy')} (${opacity}%)`
@@ -519,6 +591,31 @@ export function PhotoCompareView({
             {anchored ? 'Linked' : 'Free'}
           </Button>
         </div>
+        {mode === 'overlay' && !anchored && (
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">Move</Label>
+            <div className="flex rounded-lg border p-1" role="group" aria-label="Overlay layer moved by pan and zoom">
+              {(['left', 'right'] as const).map((s) => (
+                <Button
+                  key={s}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-pressed={overlaySide === s}
+                  className={cn('gap-1.5', overlaySide === s && 'bg-accent')}
+                  onClick={() => {
+                    setOverlaySide(s);
+                    // The zoom buttons follow the last-touched pane; picking
+                    // a layer counts as touching it.
+                    setActiveSide(s);
+                  }}
+                >
+                  {s === 'left' ? 'Left' : 'Right'}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="ml-auto flex items-center gap-1">
           <Button
             type="button"

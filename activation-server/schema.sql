@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS activations (
 -- idempotent). tier/seats are NULL when the Payment Link metadata was
 -- missing or malformed — key_text stays NULL and support fulfils by hand.
 -- emailed_at NULL means the key exists but delivery hasn't succeeded yet.
+-- Auto-renew (specs/005-licence-auto-renew): subscription_id links a
+-- renewal chain to its Stripe subscription (NULL for one-off purchases);
+-- renews_fp names the predecessor key's fingerprint on renewal rows
+-- (session_id then holds the invoice id). /v1/validate walks that link to
+-- hand a seat-holding device its successor key.
 CREATE TABLE IF NOT EXISTS licences (
   session_id TEXT PRIMARY KEY,
   email TEXT,
@@ -27,5 +32,7 @@ CREATE TABLE IF NOT EXISTS licences (
   key_fp TEXT,
   expires_at INTEGER,
   issued_at INTEGER,
-  emailed_at INTEGER
+  emailed_at INTEGER,
+  subscription_id TEXT,
+  renews_fp TEXT
 );

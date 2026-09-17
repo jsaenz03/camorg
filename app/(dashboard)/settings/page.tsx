@@ -29,6 +29,7 @@ import { BackupPanel } from '@/components/settings/backup-panel';
 import { AuditLogPanel } from '@/components/settings/audit-log-panel';
 import { LicencePanel } from '@/components/settings/licence-panel';
 import { DiagnosticsPanel } from '@/components/settings/diagnostics-panel';
+import { NoteTemplatesPanel } from '@/components/settings/note-templates-panel';
 import { PageHeader } from '@/components/page-header';
 
 import {
@@ -114,6 +115,7 @@ function SettingsContent() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="templates">Templates</TabsTrigger>
           {isAdmin && <TabsTrigger value="users">Users</TabsTrigger>}
           {isAdmin && <TabsTrigger value="access">Access</TabsTrigger>}
           {isAdmin && <TabsTrigger value="invitations">Invitations</TabsTrigger>}
@@ -127,6 +129,10 @@ function SettingsContent() {
         <TabsContent value="profile" className="mt-6 space-y-4">
           <ProfileCard clinician={clinician} onchanged={refresh} />
           <ChangePasscodeForm onchanged={refresh} />
+        </TabsContent>
+
+        <TabsContent value="templates" className="mt-6">
+          <NoteTemplatesPanel />
         </TabsContent>
 
         {isAdmin && (
@@ -310,6 +316,13 @@ function ProfileCard({
           description="Display soft-deleted records in timelines."
           checked={clinician.preferences.showDeletedPhotos}
           onCheckedChange={(v) => updatePrefs({ showDeletedPhotos: v })}
+        />
+
+        <PreferenceRow
+          title="Subpart suggestions"
+          description="While typing a subpart, suggest ones you have used before on that body part."
+          checked={clinician.preferences.showSubpartSuggestions}
+          onCheckedChange={(v) => updatePrefs({ showSubpartSuggestions: v })}
         />
 
         <PreferenceRow

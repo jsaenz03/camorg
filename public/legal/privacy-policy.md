@@ -13,7 +13,7 @@
 ## 2. At a glance
 
 - Camog is a **local-first desktop application**. Patient records and photographs are stored in a database and image folder **on your own computer** (or a folder your organisation's administrator chooses).
-- Apart from the **one-time licence activation check**, the Software **sends no information to us**. It has no telemetry, no analytics, no advertising tools, no crash reporting and no cloud backend. Its only outbound internet connection is the one-time licence activation check, which never includes patient information (see clauses 4.1 and 5).
+- Apart from the **licence checks** — activation, plus an automatic seat re-check (normally at most once a day) against the same licence service — the Software **sends no information to us**. It has no telemetry, no analytics, no advertising tools, no crash reporting and no cloud backend. Its only outbound internet connection is that licence check, which never includes patient information (see clauses 4.1 and 5).
 - We never see, receive, host, back up or access your patients' information through the Software.
 - If your administrator points the storage folder at a **cloud-synced folder** (OneDrive, Dropbox, iCloud or similar), your information may leave your computer through *that provider's* service — that is your organisation's choice and is not controlled by us or the Software (see clause 10).
 - The **phone link** feature runs a small web server on your own computer so a paired phone on your network can send photos to it and — while the signed-in clinician has library sharing switched on — view the same patients and photographs that clinician can already see on the computer. Traffic between the phone and the computer is **unencrypted** (plain HTTP). Access is controlled by a random pairing code that is exchanged once for a per-device session cookie; unauthenticated requests are rate-limited and the link ends itself after 30 minutes of inactivity (see clause 8.3).
@@ -33,7 +33,7 @@ This policy has two parts:
 
 ## 4. What we collect and hold
 
-**4.1 Through the Software: almost nothing.** In normal operation the Software collects no information for us. It has no telemetry, analytics, crash reporting, advertising integrations, or automatic update checks, and its web view is blocked from connecting to the internet. We do not receive your organisation's data, your users' account data, your patients' photographs, or any usage statistics. **The one exception is licence activation** (Terms of Service clause 3.2): when a licence key is activated, the Software sends the key and a random device identifier to our activation service. The key records the licensed practice's name and licence term; the device identifier is a random value unrelated to the device's serial number, user account or location.
+**4.1 Through the Software: almost nothing.** In normal operation the Software collects no information for us. It has no telemetry, analytics, crash reporting, advertising integrations, or automatic update checks, and its web view is blocked from connecting to the internet. We do not receive your organisation's data, your users' account data, your patients' photographs, or any usage statistics. **The one exception is the licence checks** (Terms of Service clause 3.2): when a licence key is activated, and in an automatic seat re-check afterwards (normally at most once a day), the Software sends the key and a random device identifier to our activation service. The re-check transmits exactly what activation does — nothing more — and exists so that seat moves and licence expiries take effect; it writes nothing new on our side. The key records the licensed practice's name and licence term; the device identifier is a random value unrelated to the device's serial number, user account or location.
 
 **4.2 If you contact us** (for example, by emailing support), we hold the personal information you choose to give us, such as your name, email address, phone number, organisation name and the contents of your message (which may include information about patients if you include it — **please de-identify patient details before sending us anything**).
 
@@ -83,7 +83,7 @@ The Software does **not** collect: address, phone number, email address, Medicar
 
 **8.1 Use.** All processing happens on your organisation's device. The Software uses patient information for: clinical documentation and monitoring of conditions over time (for example wound or lesion progression using the photo compare feature); practice administration and access control; accountability through the audit log; and backup.
 
-**8.2 Disclosure by the Software: none.** The Software does not disclose patient information to us or to any third party. Its only outbound connection is the licence activation check (Terms of Service clause 3.2), which contains no patient information.
+**8.2 Disclosure by the Software: none.** The Software does not disclose patient information to us or to any third party. Its only outbound connection is the licence check (Terms of Service clause 3.2) — activation, plus the automatic seat re-check — which contains no patient information.
 
 **8.3 Disclosures your organisation controls.** Your organisation is responsible for ensuring each of the following has a lawful basis (generally, the primary purpose of providing health care, or consent):
 

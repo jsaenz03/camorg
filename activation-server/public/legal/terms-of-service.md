@@ -19,7 +19,7 @@
 The following points are summaries only and do not replace the full clauses that follow:
 
 - Camog is a **clinical documentation tool only** — it is not a diagnostic device and does not provide medical advice (clause 6).
-- **Your patient data stays on your devices.** The Software has no telemetry, analytics or crash reporting; its only connection to us is the one-time licence activation check, which never includes patient information (clause 7).
+- **Your patient data stays on your devices.** The Software has no telemetry, analytics or crash reporting; its only connection to us is the licence check — activation, plus an automatic seat re-check normally at most once a day — which never includes patient information (clause 7).
 - **You are responsible for your privacy compliance** under the *Privacy Act 1988* (Cth), state and territory health records laws, and for obtaining patient consent to clinical photography (clause 7).
 - Our liability is limited as far as the law allows, but **your rights under the Australian Consumer Law are not excluded** (clauses 11–12).
 
@@ -27,7 +27,7 @@ The following points are summaries only and do not replace the full clauses that
 
 3.1 Subject to these Terms, we grant you a **non-exclusive, non-transferable, non-sublicensable, revocable** licence to install and run the Software on computers you own or control, up to the number of devices your licence key covers (its **seats**), for your internal clinical documentation and practice administration purposes.
 
-3.2 The Software is supplied under a licence key. A new installation operates as a full-featured **14-day trial**, after which the installation becomes **read-only** (existing records remain viewable) until a licence key issued by us is activated. Activating a licence key requires a **one-time internet connection** to our licence activation service, which verifies the key and records the devices it is activated on — that check transmits only the licence key and a random device identifier, never any patient information or practice records. After activation the Software works offline for the licence term. The key's seats bind to the devices it is activated on; to move a seat to a replacement computer, contact us (clause 18) — as always, for current licence terms and any applicable fees.
+3.2 The Software is supplied under a licence key. A new installation operates as a full-featured **14-day trial**, after which the installation becomes **read-only** (existing records remain viewable) until a licence key issued by us is activated. Activating a licence key requires an **internet connection** to our licence activation service, which verifies the key and records the devices it is activated on — that check transmits only the licence key and a random device identifier, never any patient information or practice records. After activation the Software works offline; its only further contact with the activation service is an automatic **seat re-check** (normally at most once a day), which transmits the same two items so that seat changes on our side (such as a seat move) and licence expiries take effect on the devices they apply to. A re-check that cannot reach the activation service changes nothing — the Software remains fully usable offline. The key's seats bind to the devices it is activated on; to move a seat to a replacement computer, contact us (clause 18) — as always, for current licence terms and any applicable fees.
 
 3.3 The Software incorporates third-party open-source components, principally the Tauri, React and Next.js frameworks and their dependencies. Those components are licensed to you under their own licence terms, and nothing in these Terms limits any rights those licences give you. A list of the main components and their licences is available on request (clause 18).
 
@@ -67,7 +67,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 
 ## 7. Patient information and privacy
 
-7.1 The Software stores all patient information **locally on your computer** (a local database and image files on your device's storage, or a folder your administrator selects). The Software **does not transmit any patient information to us or to any third party**. It contains no telemetry, no analytics and no crash reporting. Its only outbound internet connection is the licence activation check described in clause 3.2, which transmits the licence key and a random device identifier and never any patient information.
+7.1 The Software stores all patient information **locally on your computer** (a local database and image files on your device's storage, or a folder your administrator selects). The Software **does not transmit any patient information to us or to any third party**. It contains no telemetry, no analytics and no crash reporting. Its only outbound internet connection is the licence check described in clause 3.2 — activation, plus the automatic seat re-check (normally at most once a day) — which transmits only the licence key and a random device identifier and never any patient information.
 
 7.2 As a health service provider, you are bound by the *Privacy Act 1988* (Cth) and the Australian Privacy Principles (health service providers cannot rely on the small business exemption). In New South Wales, Victoria and the Australian Capital Territory, private health service providers must also comply with state or territory health records legislation. **You, not we, are the operator of the patient records held in the Software.**
 
@@ -75,7 +75,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 
 7.4 If your administrator configures the Software's storage or backup folder to be a **cloud-synced folder** (such as OneDrive, Dropbox or iCloud), patient photographs and backups may be transmitted and stored by that provider outside your device. That is your choice and your disclosure; you are responsible for assessing that provider's security, privacy policy and data storage locations against your obligations under the Australian Privacy Principles.
 
-7.5 The only personal information we may ever receive about you or your staff is (a) information you choose to give us if you contact us for support, (b) the activation data described in clause 3.2 — the licence key (which records the licensed practice's name and licence term) and a random device identifier — and (c) the purchase contact details you enter at our website's checkout (your billing email address and practice name), which we process only to deliver and support your licence; payment card details are handled by Stripe and are never received or stored by us. See our Privacy Policy for how all of these are handled.
+7.5 The only personal information we may ever receive about you or your staff is (a) information you choose to give us if you contact us for support, (b) the licence-check data described in clause 3.2 — the licence key (which records the licensed practice's name and licence term) and a random device identifier — and (c) the purchase contact details you enter at our website's checkout (your billing email address and practice name), which we process only to deliver and support your licence; payment card details are handled by Stripe and are never received or stored by us. See our Privacy Policy for how all of these are handled.
 
 ## 8. Acceptable use
 
@@ -88,7 +88,7 @@ You must not use the Software:
 
 ## 9. Updates and availability
 
-9.1 Updates are distributed as installers through the **Microsoft Store** and as direct downloads from our distribution page, **https://camog-license.cliniciq.com.au**. The Software has no automatic updater; you choose whether and when to install updates.
+9.1 Updates are distributed as installers through the **Microsoft Store** and as direct downloads from our distribution page, **https://camog-license.cliniciq.com.au**. The Software itself contains no updater. On the direct-download channel you choose whether and when to install an updated installer; on the **Microsoft Store** channel, Microsoft's Store may download and install updates automatically under its own update settings, and you can also check for updates manually in the Store's library.
 
 9.2 We do not guarantee that updates will be released, or that any release will remain available, for any period. Because the Software runs entirely on your device, we give no uptime, availability or support commitments except as required by the Australian Consumer Law.
 

@@ -19,8 +19,11 @@ import {
   BILATERAL_BODY_PARTS,
 } from '@/types/body-part';
 import { parseDobInput } from '@/lib/utils/date-formatting';
+import { useAuth } from '@/lib/auth/auth-context';
 import { BodyMapPicker } from '@/components/patient/body-map-picker';
 import { DobInput } from '@/components/patient/dob-input';
+import { ClinicalNotesField } from '@/components/photo/clinical-notes-field';
+import { SubpartInput } from '@/components/photo/subpart-suggestions';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -46,7 +49,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 
 /**
  * Form schema for photo metadata
@@ -113,6 +115,7 @@ export function PhotoMetadataForm({
   isSubmitting = false,
   patientLocked = false,
 }: PhotoMetadataFormProps) {
+  const { clinician } = useAuth();
   const form = useForm<PhotoMetadataFormValues>({
     resolver: zodResolver(photoMetadataFormSchema),
     defaultValues: {
@@ -298,14 +301,15 @@ export function PhotoMetadataForm({
           name="subpart"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Subpart</FormLabel>
-              <FormControl>
-                <Input
-                  placeholder="e.g., left anterior, medial aspect"
-                  {...field}
-                  disabled={isSubmitting}
-                />
-              </FormControl>
+              <FormLabel htmlFor="capture-subpart">Subpart</FormLabel>
+              <SubpartInput
+                id="capture-subpart"
+                bodyPart={bodyPartValue ?? null}
+                value={field.value ?? ''}
+                onChange={field.onChange}
+                disabled={isSubmitting}
+                enabled={clinician?.preferences.showSubpartSuggestions ?? true}
+              />
               <FormDescription>
                 Specify the anatomical detail or region within the body part
               </FormDescription>
@@ -320,19 +324,15 @@ export function PhotoMetadataForm({
           name="clinicalNotes"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Clinical notes</FormLabel>
-              <FormControl>
-                <Textarea
-                  placeholder="Enter clinical observations, findings, or context…"
-                  className="resize-none min-h-32"
-                  {...field}
-                  disabled={isSubmitting}
-                />
-              </FormControl>
-              <FormDescription>
-                {field.value?.length || 0}/2000 characters
-              </FormDescription>
-              <FormMessage />
+              <ClinicalNotesField
+                id="clinical-notes"
+                value={field.value ?? ''}
+                onChange={field.onChange}
+                disabled={isSubmitting}
+                patientName={form.watch('patientName')}
+                bodyPartLabel={bodyPartValue ? BodyPartLabels[bodyPartValue] : null}
+                error={<FormMessage />}
+              />
             </FormItem>
           )}
         />

@@ -53,7 +53,7 @@ const KEEP_BACKUPS = 10;
  * every launch. scripts/self-check-db-restore.mjs pins this to the Rust
  * migration list so the two can't drift.
  */
-export const LATEST_MIGRATION_VERSION = 21;
+export const LATEST_MIGRATION_VERSION = 25;
 
 /** Passphrase floor/ceiling: short fails PBKDF2's job; long is a DoS bound. */
 export const MIN_PASSPHRASE_LENGTH = 8;

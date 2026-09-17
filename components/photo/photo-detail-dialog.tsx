@@ -33,6 +33,7 @@ import type { PhotoRecord } from '@/types/photo';
 import { normalizeLesionGroup } from '@/lib/utils/lesion-group';
 import {
   BILATERAL_BODY_PARTS,
+  BodyPartLabels,
   bodyPartDisplayLabel,
   bodyPartSurfaceLabel,
   type BodyPart,
@@ -40,6 +41,8 @@ import {
   type Pinpoint,
 } from '@/types/body-part';
 import { photoService } from '@/lib/services/photo-service';
+import { patientService } from '@/lib/services/patient-service';
+import { useAuth } from '@/lib/auth/auth-context';
 import { formatCaptureDate } from '@/lib/utils/date-formatting';
 import { notifyAttentionChanged } from '@/lib/services/notification-service';
 import { photoReviewStatus } from '@/lib/utils/photo-review';
@@ -47,6 +50,8 @@ import { useBranding } from '@/components/branding-boot';
 import { NotFoundError } from '@/lib/validators/errors';
 import { PhotoViewer } from './photo-viewer';
 import { ResultFilesSection } from './result-files-section';
+import { ClinicalNotesField } from './clinical-notes-field';
+import { SubpartInput } from './subpart-suggestions';
 import { BodyMapBadge } from '@/components/patient/body-map-badge';
 import { BodyMapPicker, PinMarker } from '@/components/patient/body-map-picker';
 import { PartDetailDiagram, hasPartDetail } from '@/components/patient/part-detail-diagram';
@@ -60,7 +65,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 
@@ -115,6 +119,8 @@ export function PhotoDetailDialog({
   const [bodyPart, setBodyPart] = useState<BodyPart | null>(null);
   const [pin, setPin] = useState<Pinpoint | null>(null);
   const [clinicalNotes, setClinicalNotes] = useState('');
+  // Patient's display name, for the {patient} token in note templates.
+  const [patientName, setPatientName] = useState<string | null>(null);
   const [lesionGroupInput, setLesionGroupInput] = useState('');
   const [reviewDueInput, setReviewDueInput] = useState('');
   const [lastReviewedAt, setLastReviewedAt] = useState<Date | null>(null);
@@ -127,6 +133,7 @@ export function PhotoDetailDialog({
   const [isRestoring, setIsRestoring] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { reviewWarningDays } = useBranding();
+  const { clinician } = useAuth();
 
   // Series picker data: other series names on this patient (chips) and the
   // sibling photos of this photo's saved series (thumbnail strip).
@@ -191,6 +198,27 @@ export function PhotoDetailDialog({
       })
       .catch(() => {
         if (mounted) setExistingGroups([]);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [photoPatientId]);
+
+  // Patient display name — the {patient} token in note templates. Best-effort:
+  // a failed lookup just leaves the token literal in the note.
+  useEffect(() => {
+    if (!photoPatientId) {
+      setPatientName(null);
+      return;
+    }
+    let mounted = true;
+    patientService
+      .getPatientById(photoPatientId)
+      .then((patient) => {
+        if (mounted) setPatientName(patient?.name ?? null);
+      })
+      .catch(() => {
+        if (mounted) setPatientName(null);
       });
     return () => {
       mounted = false;
@@ -676,31 +704,24 @@ export function PhotoDetailDialog({
 
             <div className="space-y-2">
               <Label htmlFor="photo-subpart">Subpart</Label>
-              <Input
+              <SubpartInput
                 id="photo-subpart"
+                bodyPart={bodyPart}
                 value={subpart}
-                onChange={(e) => setSubpart(e.target.value)}
-                placeholder="e.g., left anterior, medial aspect"
-                maxLength={100}
+                onChange={setSubpart}
                 disabled={isSaving || isDeleting}
+                enabled={clinician?.preferences.showSubpartSuggestions ?? true}
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="photo-notes">Clinical notes</Label>
-              <Textarea
-                id="photo-notes"
-                value={clinicalNotes}
-                onChange={(e) => setClinicalNotes(e.target.value)}
-                placeholder="Enter clinical observations, findings, or context…"
-                className="min-h-32 resize-none"
-                maxLength={2000}
-                disabled={isSaving || isDeleting}
-              />
-              <p className="text-right text-xs text-muted-foreground">
-                {clinicalNotes.length}/2000
-              </p>
-            </div>
+            <ClinicalNotesField
+              id="photo-notes"
+              value={clinicalNotes}
+              onChange={setClinicalNotes}
+              disabled={isSaving || isDeleting}
+              patientName={patientName}
+              bodyPartLabel={bodyPart ? BodyPartLabels[bodyPart] : null}
+            />
 
           </div>
 

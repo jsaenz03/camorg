@@ -65,6 +65,14 @@ export function LicenceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     refresh();
+    // Seat re-check (specs/003 revocation propagation): at most one server
+    // call a day, fail-open. A definitive revocation clears the stored
+    // token, so this re-read lands read-only and the next guard trip opens
+    // the activation dialog.
+    void licenceService
+      .validateWithServer()
+      .then((changed) => (changed ? refresh() : undefined))
+      .catch(() => {});
   }, [refresh]);
 
   // A service-layer licence guard tripping anywhere opens the dialog.

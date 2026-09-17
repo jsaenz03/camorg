@@ -101,6 +101,30 @@ export function extractOrder(session) {
 
 const emailLocalPart = (email) => (email && email.includes('@') ? email.split('@')[0] : null);
 
+/**
+ * Extracts an auto-renew job from a Stripe `invoice.paid` event
+ * (specs/005-licence-auto-renew). Only a subscription-cycle invoice — the
+ * annual renewal charge of an existing subscription — yields a job: the
+ * origin purchase is fulfilled by the checkout.session.completed path
+ * (billing_reason is 'subscription_create' on that first invoice), and
+ * one-off invoices carry no subscription at all. The subscription id is
+ * read from both current Stripe shapes (invoice.subscription, and the
+ * newer parent.subscription_details.subscription).
+ */
+export function extractRenewal(invoice) {
+  const subscriptionId =
+    typeof invoice?.subscription === 'string'
+      ? invoice.subscription
+      : typeof invoice?.parent?.subscription_details?.subscription === 'string'
+        ? invoice.parent.subscription_details.subscription
+        : null;
+  if (!subscriptionId) return null;
+  if (invoice?.billing_reason !== 'subscription_cycle') return null;
+  const invoiceId = typeof invoice?.id === 'string' ? invoice.id : null;
+  if (!invoiceId) return null;
+  return { invoiceId, subscriptionId };
+}
+
 /** DD/MM/YYYY for emails (AU convention everywhere customer-facing). */
 export function formatDateAU(ms) {
   const d = new Date(ms);

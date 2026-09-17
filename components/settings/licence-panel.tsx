@@ -10,9 +10,11 @@
 import { format } from 'date-fns';
 import { BadgeCheck, ShieldAlert, Timer } from 'lucide-react';
 import { useLicence } from '@/lib/licence/licence-context';
+import { licenceService } from '@/lib/services/licence-service';
 import { BuyLicenceLink } from '@/components/licence/buy-licence-link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import {
   Card,
   CardContent,
@@ -31,7 +33,17 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export function LicencePanel() {
-  const { status, loading, openActivation } = useLicence();
+  const { status, loading, refresh, openActivation } = useLicence();
+
+  // Optimism is safe: the write is a local settings row, and refresh() is
+  // the truth. Failures surface via the toggle snapping back on re-read.
+  const setAutoRenew = async (on: boolean) => {
+    try {
+      await licenceService.setAutoRenew(on);
+    } finally {
+      await refresh();
+    }
+  };
 
   if (loading || !status) {
     return (
@@ -84,6 +96,20 @@ export function LicencePanel() {
               </Row>
               <Row label="Device seats">{licence.seats}</Row>
               <Row label="Expires">{format(licence.expiresAt, 'd/MM/yyyy')}</Row>
+              <div className="flex items-start justify-between gap-4 py-1.5">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">Auto-renew</p>
+                  <p className="text-xs text-muted-foreground">
+                    Installs a renewed licence by itself after each successful payment —
+                    nothing to re-enter. Off means the emailed key is activated by hand.
+                  </p>
+                </div>
+                <Switch
+                  checked={status.autoRenew}
+                  onCheckedChange={(on) => void setAutoRenew(on)}
+                  aria-label="Auto-renew licence"
+                />
+              </div>
             </>
           )}
           <Row label="Device ID">

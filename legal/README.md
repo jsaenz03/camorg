@@ -11,7 +11,8 @@ Wollongong NSW): entity + trading name, ABN, address, support/privacy contacts,
 distribution channels (Microsoft Store + https://camog-license.cliniciq.com.au, ToS cl 9.1/18),
 commercial model (ToS cl 3.1–3.2 — 14-day trial, then a licence key with a device-seat
 count, activated once online against the activation server per
-specs/003-licence-activation), governing law (New South Wales, ToS cl 16).
+specs/003-licence-activation, with an automatic at-most-daily seat re-check),
+governing law (New South Wales, ToS cl 16).
 
 Still to confirm with the lawyer:
 
@@ -26,16 +27,19 @@ Still to confirm with the lawyer:
 ## Also do
 
 - Have a qualified Australian lawyer review both documents when practical — the Microsoft Store release ships them without legal review.
-- Keep the documents accurate to the code (v1.3, with spec 003): the only outbound
-  connection the app ever makes is the **one-time licence activation check**
-  (licence key + random device identifier only — never patient information, no
-  telemetry, no analytics, no cloud backend, no automatic updater, plain-HTTP LAN
-  phone tether); photographs, thumbnails and result files **are** encrypted at rest
-  (AES-256-GCM, key in an owner-only photo-key file in the app data directory),
-  backups are **passphrase-encrypted** (practice-chosen passphrase per backup; not
-  recoverable if lost), while the **database and exported report PDFs are not**
-  encrypted. If any of that changes, update the documents with the release that
-  changes it — and re-sync all three copies (public/legal for the in-app page,
-  activation-server/public/legal for the public Store-listing URLs; CI checks both).
+- Keep the documents accurate to the code (v1.4, with spec 005): the only outbound
+  connection the app ever makes is the **licence check** — one-time activation plus
+  an automatic seat re-check (normally at most once a day; failed attempts are
+  retried on a later launch; fail-open) against the same
+  activation server (licence key + random device identifier only — never patient
+  information, no telemetry, no analytics, no cloud backend, no in-app updater,
+  plain-HTTP LAN phone tether); photographs, thumbnails and result files **are**
+  encrypted at rest (AES-256-GCM, key in an owner-only photo-key file in the app
+  data directory), backups are **passphrase-encrypted** (practice-chosen passphrase
+  per backup; not recoverable if lost), while the **database and exported report
+  PDFs are not** encrypted. If any of that changes, update the documents with the
+  release that changes it — and re-sync all three copies (public/legal for the
+  in-app page, activation-server/public/legal for the public Store-listing URLs;
+  CI checks both).
 - Direct-download installers are unsigned until Apple notarisation; ToS cl 10
   states this. When the app is signed, update cl 10 and MACOS_GUIDE.md in the same release.

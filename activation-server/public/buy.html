@@ -113,6 +113,14 @@
       }
       .btn a:hover { background: var(--primary-hover); }
       .btn a:active { transform: translateY(1px); }
+      .subscribe { margin-top: 0.45rem; text-align: center; }
+      .subscribe a {
+        color: var(--muted-foreground);
+        font-size: 0.85rem;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .subscribe a:hover { color: var(--foreground); }
 
       .includes {
         border: 1px solid var(--border);
@@ -176,6 +184,8 @@
         <div class="btn">
           <!-- STRIPE_PAYMENT_LINK solo (metadata: tier=solo, seats=1) -->
           <a href="https://buy.stripe.com/bJe00l5NPcJP2I5dy36oo00">Buy Solo</a>
+          <!-- STRIPE_SUBSCRIPTION_LINK solo (subscription mode, same metadata: tier=solo, seats=1) — replace the # after creating the link, per ./README.md -->
+          <div class="subscribe"><a href="#">Or subscribe — renews itself yearly</a></div>
         </div>
       </div>
       <div class="tier recommended">
@@ -188,6 +198,8 @@
         <div class="btn">
           <!-- STRIPE_PAYMENT_LINK practice (metadata: tier=practice, seats=3) -->
           <a href="https://buy.stripe.com/dRm9AV5NPcJP5UhgKf6oo01">Buy Practice</a>
+          <!-- STRIPE_SUBSCRIPTION_LINK practice (subscription mode, same metadata: tier=practice, seats=3) — replace the # after creating the link, per ./README.md -->
+          <div class="subscribe"><a href="#">Or subscribe — renews itself yearly</a></div>
         </div>
       </div>
       <div class="tier">
@@ -199,6 +211,8 @@
         <div class="btn">
           <!-- STRIPE_PAYMENT_LINK clinic (metadata: tier=clinic, seats=10) -->
           <a href="https://buy.stripe.com/dRmeVf7VX117dmJ0Lh6oo02">Buy Clinic</a>
+          <!-- STRIPE_SUBSCRIPTION_LINK clinic (subscription mode, same metadata: tier=clinic, seats=10) — replace the # after creating the link, per ./README.md -->
+          <div class="subscribe"><a href="#">Or subscribe — renews itself yearly</a></div>
         </div>
       </div>
     </div>
@@ -232,7 +246,7 @@
     <div class="faq">
       <details>
         <summary>What happens when the licence expires?</summary>
-        <p>Camog becomes read-only: existing records stay viewable, capture and editing pause. Buy again, activate the new key, and everything continues. Your records are never touched.</p>
+        <p>Camog becomes read-only: existing records stay viewable, capture and editing pause. Buy again, activate the new key, and everything continues. Your records are never touched. If you subscribe and leave auto-renew switched on in Settings → Licence, the renewed licence installs itself after each payment — nothing to re-enter.</p>
       </details>
       <details>
         <summary>What counts as a seat, and can I move one?</summary>

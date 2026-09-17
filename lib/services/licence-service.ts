@@ -39,6 +39,8 @@ import type {
 
 const TRIAL_DAYS = 14;
 const MS_PER_DAY = 86_400_000;
+// Seat re-check cadence: one /v1/validate call per day per install at most.
+const VALIDATE_INTERVAL_MS = MS_PER_DAY;
 
 const NETWORK_MESSAGE =
   'Could not reach the licence server. Activating a licence needs a one-time internet connection — check the network and try again.';
@@ -48,6 +50,8 @@ interface LicenceSettingsRow {
   licence_token: string | null;
   trial_started_at: number | null;
   install_id: string | null;
+  licence_validated_at: number | null;
+  licence_auto_renew: number | null;
 }
 
 /**
@@ -95,7 +99,7 @@ export class LicenceService implements ILicenceService {
   async getStatus(): Promise<LicenceStatus> {
     const db = await getDB();
     const rows = await db.select<LicenceSettingsRow[]>(
-      "SELECT licence_key, licence_token, trial_started_at, install_id FROM settings WHERE id = 'app'"
+      "SELECT licence_key, licence_token, trial_started_at, install_id, licence_auto_renew FROM settings WHERE id = 'app'",
     );
     const row = rows[0];
     if (!row) throw new Error('Settings row missing (migration 002 seeds it)');
@@ -151,14 +155,38 @@ export class LicenceService implements ILicenceService {
     }
 
     const now = Date.now();
+    // Migration 023 defaults the column to 1; only an explicit 0 turns the
+    // silent renewal install off.
+    const autoRenew = row.licence_auto_renew !== 0;
     if (licence && licence.expiresAt.getTime() > now && activated) {
-      return { state: 'valid', licence, trialEndsAt: null, installId: deviceId };
+      return { state: 'valid', licence, trialEndsAt: null, installId: deviceId, autoRenew };
     }
     const trialEndsAtMs = trialStartedAt + TRIAL_DAYS * MS_PER_DAY;
     if (!licence && now < trialEndsAtMs) {
-      return { state: 'trial', licence: null, trialEndsAt: new Date(trialEndsAtMs), installId: deviceId };
+      return {
+        state: 'trial',
+        licence: null,
+        trialEndsAt: new Date(trialEndsAtMs),
+        installId: deviceId,
+        autoRenew,
+      };
     }
-    return { state: 'read-only', licence, trialEndsAt: null, installId: deviceId };
+    return { state: 'read-only', licence, trialEndsAt: null, installId: deviceId, autoRenew };
+  }
+
+  /**
+   * Auto-renew toggle (specs/005-licence-auto-renew). A settings-row write,
+   * not a licence-state change: works while read-only, exactly like
+   * activation itself.
+   */
+  async setAutoRenew(on: boolean): Promise<void> {
+    const db = await getDB();
+    await db.execute("UPDATE settings SET licence_auto_renew = $1 WHERE id = 'app'", [on ? 1 : 0]);
+    void auditService.record('licence.auto-renew', {
+      detail: on
+        ? 'auto-renew switched on — renewed licences will install themselves after each successful payment'
+        : 'auto-renew switched off — renewal keys must be activated manually',
+    });
   }
 
   async activate(key: string): Promise<LicenceStatus> {
@@ -245,6 +273,97 @@ export class LicenceService implements ILicenceService {
       detail: `licence key ending ${normalized.slice(-4)} (${licence.seats} device seat${licence.seats === 1 ? '' : 's'})`,
     });
     return this.getStatus();
+  }
+
+  /**
+   * Seat re-check against the licence server (specs/003 revocation
+   * propagation; auto-renew in specs/005-licence-auto-renew). Fail-open
+   * throughout: transport failures and unexpected answers write nothing,
+   * and the next open retries. Only a definitive server verdict — revoked,
+   * or the seat row gone — clears the stored token so the next getStatus()
+   * lands read-only; re-activating the same key then restores the seat
+   * (the support seat-move flow, since the server's activation upsert
+   * un-revokes a known device).
+   *
+   * The same answer can carry a renewal: a successor key the server minted
+   * after a successful subscription payment. With auto-renew on, it is
+   * installed through the ordinary activate() path — signature, token and
+   * device binding all re-verified — so a paid renewal extends the licence
+   * with no user action. An expired stored key with a paid successor
+   * recovers the same way.
+   */
+  async validateWithServer(): Promise<boolean> {
+    try {
+      const db = await getDB();
+      const rows = await db.select<LicenceSettingsRow[]>(
+        "SELECT licence_key, licence_token, licence_validated_at, install_id, licence_auto_renew FROM settings WHERE id = 'app'",
+      );
+      const row = rows[0];
+      // Trial and no-licence installs have nothing to re-check: their state
+      // is purely local (trial clock, key signature).
+      if (!row?.licence_key || !row?.licence_token) return false;
+      if (row.licence_validated_at && Date.now() - row.licence_validated_at < VALIDATE_INTERVAL_MS) {
+        return false;
+      }
+      const deviceId = await resolveDeviceId(row.install_id ?? '');
+      const answer = await invoke<unknown>('validate_licence', { key: row.licence_key, deviceId }).then(
+        (renewal) => ({
+          verdict: null,
+          renewal: typeof renewal === 'string' && renewal.length > 0 ? renewal : null,
+        }),
+        (err) => {
+          const message = typeof err === 'string' ? err : err instanceof Error ? err.message : '';
+          const prefix = message.slice(0, message.indexOf(':'));
+          if (prefix === 'revoked' || prefix === 'not-activated') {
+            return { verdict: 'revoked' as const, renewal: null };
+          }
+          // Definitive but already handled offline: the token's exp IS the
+          // licence expiry, so the next getStatus() is read-only regardless.
+          if (prefix === 'expired') return { verdict: 'expired' as const, renewal: null };
+          return { verdict: 'transient' as const, renewal: null };
+        },
+      );
+      if (answer.verdict === 'revoked') {
+        await db.execute(
+          "UPDATE settings SET licence_token = NULL, licence_validated_at = $1 WHERE id = 'app'",
+          [Date.now()],
+        );
+        // Key tail only — the audit trail must not hold the licence secret.
+        void auditService.record('licence.revocation', {
+          detail: `licence key ending ${row.licence_key.slice(-4)} reported revoked by the licence server`,
+        });
+        return true;
+      }
+      // Definitive answers (a 200 with or without a renewal offer included)
+      // stamp the cadence marker; transient failures don't, so the re-check
+      // retries on the next open.
+      if (answer.verdict !== 'transient') {
+        await db.execute("UPDATE settings SET licence_validated_at = $1 WHERE id = 'app'", [Date.now()]);
+      }
+      // Auto-renew (specs/005): a paid successor key installs itself through
+      // the ordinary activation path. Failure is transient by definition —
+      // the offer stays on the server, tomorrow's re-check tries again.
+      if (answer.renewal && row.licence_auto_renew !== 0) {
+        try {
+          await this.activate(answer.renewal);
+          void auditService.record('licence.renewal', {
+            detail: `licence renewed automatically — key ending ${answer.renewal.slice(-4)} installed`,
+          });
+          return true;
+        } catch (err) {
+          void recordDiagnostic(
+            'warn',
+            'licence',
+            `Auto-renew install failed (retries on the next daily check): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   async isWritable(): Promise<boolean> {

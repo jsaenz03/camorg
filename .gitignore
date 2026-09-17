@@ -62,6 +62,9 @@ test-results/
 # user guide (HTML/PDF + screenshots)
 guide/
 
+# marketing guide videos (243 MB of hyperframes projects; local only)
+/videos/
+
 # installer binaries served by the activation worker (synced per release,
 # never committed — see activation-server/README.md)
 /activation-server/public/download/

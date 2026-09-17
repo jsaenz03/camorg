@@ -45,6 +45,13 @@ export interface LicenceStatus {
    * UUID. Surfaced in Settings → Licence as "Device ID" (support desk).
    */
   installId: string;
+  /**
+   * Auto-renew (specs/005-licence-auto-renew): when on, the daily seat
+   * re-check silently installs a paid successor key — the licence extends
+   * itself after each successful subscription payment. Settings toggle,
+   * default on.
+   */
+  autoRenew: boolean;
 }
 
 export interface ILicenceService {
@@ -93,6 +100,41 @@ export interface ILicenceService {
    *   against lib/licence/activation-public-key.ts before anything persists.
    */
   activate(key: string): Promise<LicenceStatus>;
+
+  /**
+   * Seat re-check against the licence server (specs/003 revocation
+   * propagation). Called on app open; internally debounced to at most one
+   * server call per day and only when a licence key + activation token are
+   * stored.
+   *
+   * @returns Promise resolving to true when the install's state may have
+   *   changed (a definitive revocation was applied, or auto-renew installed
+   *   a paid successor key) and the caller should re-read getStatus()
+   *
+   * Side effects:
+   * - A definitive server verdict "revoked"/"not activated" clears the
+   *   stored activation token (the next getStatus() lands read-only;
+   *   re-activating the same key restores the seat — the support seat-move
+   *   flow) and stamps `licence_validated_at`.
+   * - Any other answer (valid, expired, unreachable, malformed) at most
+   *   stamps `licence_validated_at` — it never changes licence state.
+   *
+   * Security:
+   * - Fail-open by design: an unreachable licence server must not degrade
+   *   an offline clinic; only the server's explicit verdict bites.
+   */
+  validateWithServer(): Promise<boolean>;
+
+  /**
+   * Auto-renew toggle (specs/005-licence-auto-renew). Persists the choice
+   * in the settings row and records it in the audit trail. Works in every
+   * licence state (activation itself also runs while read-only).
+   *
+   * @param on - true: the daily seat re-check auto-installs paid successor
+   *   keys; false: renewal keys are only delivered by email and must be
+   *   activated manually.
+   */
+  setAutoRenew(on: boolean): Promise<void>;
 
   /**
    * Convenience check: can this install capture/edit?

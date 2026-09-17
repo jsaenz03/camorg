@@ -58,8 +58,13 @@ Start the submission and complete every section:
 
 - **Packages**: upload the release `.msi` (Option A) or the `.msix`
   (Option B).
-- **Store listing**: description, screenshots (1600×900 or 3840×2160; capture
-  the dashboard, capture dialog, report, Settings → Licence), keywords.
+- **Store listing**: description, screenshots (1600×900 or 3840×2160;
+  captured on Windows — macOS-styled captures fail policy 10.1.1.3; capture
+  the dashboard, capture dialog, report, Settings → Licence), keywords. The
+  description must disclose the trial (policy 10.8.4): free 14-day trial
+  from first launch with full functionality, then read-only — existing
+  records stay viewable, capture/edit disabled until a licence is
+  activated; no data is deleted.
 - **Web details**: privacy policy URL = `https://camog-license.cliniciq.com.au/legal/privacy-policy.md`
   (this URL is the Store's mandatory field and is why the legal pages live on
   the activation worker). Terms of Use (optional):
@@ -68,18 +73,21 @@ Start the submission and complete every section:
   land around PEGI 12 / ESRB E10+ — no explicit content, no ads, no sharing
   to socials.
 - **Compliance / data collection**: the app collects no patient data. It does
-  transfer two non-personal items at licence activation (licence key + random
-  device ID) — declare "your app transfers data" and link the same privacy
-  policy, per Privacy cl 4.1/4.3. Health-data disclosures: the app **handles
-  health data, all stored locally** under the practice's control; that is the
-  practice's compliance story (Privacy cl 3, 16), not Microsoft's.
+  transfer two non-personal items at licence activation and in the automatic
+  seat re-check (licence key + random device ID) — declare "your app
+  transfers data" and link the same privacy policy, per Privacy cl 4.1/4.3.
+  Health-data disclosures: the app **handles health data, all stored locally**
+  under the practice's control; that is the practice's compliance story
+  (Privacy cl 3, 16), not Microsoft's.
 - **Notes for certification** (free-text to reviewers): "Clinical photo
   documentation for healthcare practices; all patient data is stored locally
-  on the device. The app contacts our licence server once, at activation,
-  transmitting only the licence key and a random device identifier."
+  on the device. The app contacts our licence server at activation and in an
+  automatic licence-seat re-check (normally at most once a day), transmitting
+  only the licence key and a random device identifier."
 - Certification typically takes 1–3 business days; the usual rejections are
-  missing screenshots, incomplete age questionnaire, or a privacy-policy URL
-  that doesn't resolve — all covered above.
+  non-Windows screenshots (10.1.1.3), an undisclosed trial (10.8.4), an
+  incomplete age questionnaire, or a privacy-policy URL that doesn't
+  resolve — all covered above.
 
 ## 5. After approval
 
