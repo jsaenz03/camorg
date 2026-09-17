@@ -113,14 +113,20 @@
       }
       .btn a:hover { background: var(--primary-hover); }
       .btn a:active { transform: translateY(1px); }
-      .subscribe { margin-top: 0.45rem; text-align: center; }
+      .subscribe { margin-top: 0.45rem; }
       .subscribe a {
-        color: var(--muted-foreground);
-        font-size: 0.85rem;
-        text-decoration: underline;
-        text-underline-offset: 2px;
+        display: block;
+        text-align: center;
+        color: var(--primary);
+        border: 1px solid var(--primary);
+        font-weight: 500;
+        font-size: 0.875rem;
+        text-decoration: none;
+        border-radius: calc(var(--radius) - 2px);
+        padding: 0.45rem 1rem;
+        transition: background 150ms ease, color 150ms ease;
       }
-      .subscribe a:hover { color: var(--foreground); }
+      .subscribe a:hover { background: var(--accent); color: var(--accent-foreground); }
 
       .includes {
         border: 1px solid var(--border);
@@ -184,8 +190,8 @@
         <div class="btn">
           <!-- STRIPE_PAYMENT_LINK solo (metadata: tier=solo, seats=1) -->
           <a href="https://buy.stripe.com/bJe00l5NPcJP2I5dy36oo00">Buy Solo</a>
-          <!-- STRIPE_SUBSCRIPTION_LINK solo (subscription mode, same metadata: tier=solo, seats=1) — https://buy.stripe.com/aFadRbb89bFLaax1Pl6oo09 -->
-          <div class="subscribe"><a href="https://buy.stripe.com/aFadRbb89bFLaax1Pl6oo09">Or subscribe — renews itself yearly</a></div>
+          <!-- STRIPE_SUBSCRIPTION_LINK solo (subscription mode, same metadata: tier=solo, seats=1) — https://buy.stripe.com/9B64gBa455hn96t51x6oo0c -->
+          <div class="subscribe"><a href="https://buy.stripe.com/9B64gBa455hn96t51x6oo0c">Or subscribe — renews itself yearly</a></div>
         </div>
       </div>
       <div class="tier recommended">
@@ -198,8 +204,8 @@
         <div class="btn">
           <!-- STRIPE_PAYMENT_LINK practice (metadata: tier=practice, seats=3) -->
           <a href="https://buy.stripe.com/dRm9AV5NPcJP5UhgKf6oo01">Buy Practice</a>
-          <!-- STRIPE_SUBSCRIPTION_LINK practice (subscription mode, same metadata: tier=practice, seats=3) — https://buy.stripe.com/dRmdRb6RT5hn3M99hN6oo0a -->
-          <div class="subscribe"><a href="https://buy.stripe.com/dRmdRb6RT5hn3M99hN6oo0a">Or subscribe — renews itself yearly</a></div>
+          <!-- STRIPE_SUBSCRIPTION_LINK practice (subscription mode, same metadata: tier=practice, seats=3) — https://buy.stripe.com/7sY8wR901h0582p9hN6oo0d -->
+          <div class="subscribe"><a href="https://buy.stripe.com/7sY8wR901h0582p9hN6oo0d">Or subscribe — renews itself yearly</a></div>
         </div>
       </div>
       <div class="tier">
@@ -211,8 +217,8 @@
         <div class="btn">
           <!-- STRIPE_PAYMENT_LINK clinic (metadata: tier=clinic, seats=10) -->
           <a href="https://buy.stripe.com/dRmeVf7VX117dmJ0Lh6oo02">Buy Clinic</a>
-          <!-- STRIPE_SUBSCRIPTION_LINK clinic (subscription mode, same metadata: tier=clinic, seats=10) — https://buy.stripe.com/dRm3cx2BDfW10zXeC76oo0b -->
-          <div class="subscribe"><a href="https://buy.stripe.com/dRm3cx2BDfW10zXeC76oo0b">Or subscribe — renews itself yearly</a></div>
+          <!-- STRIPE_SUBSCRIPTION_LINK clinic (subscription mode, same metadata: tier=clinic, seats=10) — https://buy.stripe.com/5kQ4gBekleRX1E11Pl6oo0e -->
+          <div class="subscribe"><a href="https://buy.stripe.com/5kQ4gBekleRX1E11Pl6oo0e">Or subscribe — renews itself yearly</a></div>
         </div>
       </div>
     </div>
