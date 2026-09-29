@@ -242,11 +242,11 @@ mod tests {
   #[test]
   fn absent_candidates_seed_and_persist() {
     let dir = tempdir("seed");
-    let first = PathBuf::from(dir.join("a").join("device-id"));
-    let id = device_id_from(&[first.clone()], "install-seed");
+    let first = dir.join("a").join("device-id");
+    let id = device_id_from(std::slice::from_ref(&first), "install-seed");
     assert_eq!(id, "install-seed", "seed reused pre-activation");
     assert_eq!(read_identity(&first).as_deref(), Some("install-seed"));
-    let again = device_id_from(&[first.clone()], "install-seed");
+    let again = device_id_from(std::slice::from_ref(&first), "install-seed");
     assert_eq!(again, "install-seed", "identity stable across launches");
     let _ = std::fs::remove_dir_all(&dir);
   }
@@ -255,7 +255,7 @@ mod tests {
   fn empty_seed_mints_a_fresh_uuid() {
     let dir = tempdir("mint");
     let file = dir.join("device-id");
-    let id = device_id_from(&[file.clone()], "");
+    let id = device_id_from(std::slice::from_ref(&file), "");
     assert_eq!(id.len(), 36, "uuid v4 shape");
     assert_eq!(read_identity(&file).as_deref(), Some(id.as_str()));
     let _ = std::fs::remove_dir_all(&dir);
