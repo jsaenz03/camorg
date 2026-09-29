@@ -282,7 +282,7 @@ check(
 check(
   'attachment changes refresh the photo grids + phone library',
   read('lib/services/result-file-service.ts').includes('notifyAttentionChanged()') &&
-    read('lib/services/result-file-service.ts').includes('companionService.publish()'),
+    read('lib/services/result-file-service.ts').includes('companionService.schedulePublish()'),
 );
 check(
   'photos page filters by attachments in SQL',
@@ -348,7 +348,7 @@ check(
 );
 check(
   'capture dialog republishes the shared library after saving a photo',
-  read('components/capture/capture-dialog.tsx').includes('companionService.publish'),
+  read('components/capture/capture-dialog.tsx').includes('companionService.schedulePublish'),
 );
 
 // 13. Laterality (migration 011): column exists, the shell registers the
