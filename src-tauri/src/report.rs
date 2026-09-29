@@ -14,6 +14,7 @@ use krilla::surface::Surface;
 use krilla::text::{Font as KrillaFont, TextDirection};
 use krilla::Document;
 use serde::Deserialize;
+use std::sync::Mutex;
 
 use skrifa::charmap::Charmap;
 use skrifa::metrics::GlyphMetrics;
@@ -127,6 +128,14 @@ pub struct ReportPhoto {
 #[serde(rename_all = "camelCase")]
 pub struct ReportOutcome {
   pub page_count: u32,
+  /// How an email draft left the device, so the webview can say what the
+  /// clinician still has to do: None for Save PDF and the macOS .eml path
+  /// (attachment embedded); "mapi" — compose window with the PDF attached;
+  /// "mailto" — compose window without the attachment (no MAPI client on
+  /// this PC; the PDF was saved to Downloads for manual attach);
+  /// "saved-only" — no mail app at all (PDF saved to Downloads + revealed).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub handoff: Option<String>,
 }
 
 /// One loaded font face: krilla's draw-side handle plus skrifa metrics for
@@ -1183,12 +1192,26 @@ fn render_report(
 
 // ---- command ----
 
+/// Serialises report rendering across all callers. Before generate_case_report
+/// went async, sync commands ran on the (serialising) main thread; async moved
+/// renders onto the pool, where two could overlap — and the phone-link report
+/// writes to a fixed path (phone-report.pdf), so interleaved writes must not
+/// happen. One clinician, one device: queueing beats cleverness.
+static GENERATE_LOCK: Mutex<()> = Mutex::new(());
+
 #[tauri::command]
-pub fn generate_case_report(request: ReportRequest) -> Result<ReportOutcome, String> {
+pub async fn generate_case_report(request: ReportRequest) -> Result<ReportOutcome, String> {
   let photo_count = request.photos.len();
+  // Rendering up to 50 photos takes seconds, and sync commands run on the
+  // main thread — a sync generator freezes the whole app while it works
+  // (on Windows the window ghosts white / "not responding"). Same shape as
+  // email_case_report: keep the main thread free.
+  let result = tauri::async_runtime::spawn_blocking(move || generate_case_report_inner(request))
+    .await
+    .map_err(|e| format!("Report task failed: {e}"))?;
   // Recorded for Settings → Diagnostics; messages must stay patient-free
   // (counts and pages only).
-  match generate_case_report_inner(request) {
+  match result {
     Ok(outcome) => {
       crate::diagnostics::record(
         crate::diagnostics::Level::Info,
@@ -1206,6 +1229,8 @@ pub fn generate_case_report(request: ReportRequest) -> Result<ReportOutcome, Str
 }
 
 fn generate_case_report_inner(request: ReportRequest) -> Result<ReportOutcome, String> {
+  // Poison can only follow a panic mid-render; the lock state is still fine.
+  let _serialize = GENERATE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
   let fonts = load_fonts();
 
   // Read and validate every photo before writing anything, so a moved file
@@ -1234,7 +1259,7 @@ fn generate_case_report_inner(request: ReportRequest) -> Result<ReportOutcome, S
 
   std::fs::write(&request.save_path, &bytes)
     .map_err(|e| format!("Could not write the PDF: {e}. Check that the folder is writable."))?;
-  Ok(ReportOutcome { page_count: pages })
+  Ok(ReportOutcome { page_count: pages, handoff: None })
 }
 
 /// Open the native print dialog for the main window. WKWebView's JS
@@ -1256,10 +1281,17 @@ pub fn print_report(app: tauri::AppHandle) -> Result<(), String> {
 /// Local-only affordance for the "save, then send it yourself" flow.
 #[tauri::command]
 pub fn reveal_saved_report(path: String) -> Result<(), String> {
+  reveal_in_file_manager(&path)
+}
+
+/// Shared body of the reveal command: used by Save PDF's "show file" toast
+/// action and the mailto fallback (where the clinician must attach the PDF
+/// themselves, so the file manager should open on it).
+fn reveal_in_file_manager(path: &str) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   let result = std::process::Command::new("open")
     .arg("-R")
-    .arg(&path)
+    .arg(path)
     .spawn()
     .map(|_| ());
 
@@ -1270,10 +1302,10 @@ pub fn reveal_saved_report(path: String) -> Result<(), String> {
     .map(|_| ());
 
   #[cfg(all(unix, not(target_os = "macos"), not(target_os = "windows")))]
-  let result = std::path::Path::new(&path)
+  let result = std::path::Path::new(path)
     .parent()
     .map(|dir| std::process::Command::new("xdg-open").arg(dir).spawn().map(|_| ()))
-    .unwrap_or_else(|| std::process::Command::new("xdg-open").arg(&path).spawn().map(|_| ()));
+    .unwrap_or_else(|| std::process::Command::new("xdg-open").arg(path).spawn().map(|_| ()));
 
   result.map_err(|e| {
     let msg = format!("Could not open the file manager: {e}");
@@ -1326,6 +1358,97 @@ fn html_escape(value: &str) -> String {
 /// newline can't split MIME headers or smuggle extra recipients.
 fn sanitise_recipient(recipient: &str) -> String {
   recipient.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Clinician-authored draft from the compose dialog: a custom subject and a
+/// full HTML body. Both arrive over IPC from the webview; the subject is
+/// header-sanitised below, and the HTML is used only as mail-body content
+/// handed to the clinician's own client (never parsed or rendered by Camog).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomDraft {
+  pub subject: String,
+  pub body_html: String,
+}
+
+/// Trust boundary: the custom subject lands in MIME headers downstream
+/// (RFC 822 for the .eml, and MAPI clients treat it as one), so CR/LF/NUL
+/// must never survive into it. Trimmed so an all-whitespace subject falls
+/// back to the default via the caller's emptiness check.
+fn sanitise_subject(subject: &str) -> String {
+  subject
+    .chars()
+    .filter(|c| !matches!(c, '\r' | '\n' | '\0'))
+    .collect::<String>()
+    .trim()
+    .to_string()
+}
+
+/// Naive HTML-to-plain-text for the Windows handoffs (Simple MAPI and
+/// mailto: bodies cannot be HTML): <br> and block-closing tags become line
+/// breaks, every other tag is dropped, and the handful of entities the
+/// compose dialog's template emits are decoded. ponytail: a hand-rolled
+/// pass that covers clinician-written HTML, not arbitrary input; upgrade
+/// path is a real HTML-to-text crate if artefacts show up in drafts.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // test-covered; used by the Windows handoffs
+fn html_to_text(html: &str) -> String {
+  let mut text = String::with_capacity(html.len());
+  let mut tag = String::new();
+  let mut in_tag = false;
+  for c in html.chars() {
+    match c {
+      '<' => {
+        in_tag = true;
+        tag.clear();
+      }
+      '>' if in_tag => {
+        in_tag = false;
+        // <br>, <br/>, <br /> all normalise to "br" before the line-break
+        // check; attribute-laden tags (<li style="…">) keep their prefix.
+        let name = tag.trim().trim_end_matches('/').trim().to_ascii_lowercase();
+        let breaks_line = name == "br"
+          || name.starts_with("/p")
+          || name.starts_with("/li")
+          || name.starts_with("/ul")
+          || name.starts_with("/ol")
+          || name.starts_with("/div")
+          || name.starts_with("/h")
+          || name.starts_with("/tr")
+          || name.starts_with("/blockquote");
+        if breaks_line {
+          text.push('\n');
+        }
+      }
+      _ if in_tag => tag.push(c),
+      _ => text.push(c),
+    }
+  }
+  // &amp; decodes last so "&amp;lt;" survives as the literal text "&lt;".
+  let decoded = text
+    .replace("&lt;", "<")
+    .replace("&gt;", ">")
+    .replace("&quot;", "\"")
+    .replace("&#39;", "'")
+    .replace("&nbsp;", "\u{a0}")
+    .replace("&amp;", "&");
+  // Hand-written HTML carries indentation between tags; trim each line and
+  // collapse blank runs so the plain-text body reads as typed prose.
+  let mut lines: Vec<&str> = Vec::new();
+  for line in decoded.lines() {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+      // Collapse blank runs to one separator line.
+      if lines.last().is_some_and(|l| !l.is_empty()) {
+        lines.push("");
+      }
+    } else {
+      lines.push(trimmed);
+    }
+  }
+  while lines.last() == Some(&"") {
+    lines.pop();
+  }
+  lines.join("\n")
 }
 
 /// Attachment file name derived from the patient name, with the same
@@ -1431,16 +1554,22 @@ fn draft_body_html(req: &ReportRequest) -> String {
 
 #[tauri::command]
 pub async fn email_case_report(
+  app: tauri::AppHandle,
   request: ReportRequest,
   recipient: Option<String>,
+  custom: Option<CustomDraft>,
 ) -> Result<ReportOutcome, String> {
+  use tauri::Manager;
   let photo_count = request.photos.len();
+  // The mailto fallback copies the PDF somewhere the clinician can attach
+  // it from; Downloads is where a mail app's attach dialog starts.
+  let download_dir = app.path().download_dir().ok();
   // The Windows compose window is modal — MAPISendMailW blocks until the
   // clinician closes it — and sync commands run on the main thread, so the
   // handoff must go to the blocking pool or the app and tray freeze for the
   // life of the draft.
   let result = tauri::async_runtime::spawn_blocking(move || {
-    email_case_report_inner(request, recipient)
+    email_case_report_inner(request, recipient, custom, download_dir)
   })
   .await
   .map_err(|e| format!("Email draft task failed: {e}"))?;
@@ -1489,12 +1618,29 @@ fn sweep_stale_drafts() {
 fn email_case_report_inner(
   mut request: ReportRequest,
   recipient: Option<String>,
+  custom: Option<CustomDraft>,
+  download_dir: Option<std::path::PathBuf>,
 ) -> Result<ReportOutcome, String> {
   sweep_stale_drafts();
   let recipient = recipient
     .as_deref()
     .map(sanitise_recipient)
     .filter(|r| !r.is_empty());
+  // The compose dialog always sends its fields; an empty/whitespace subject
+  // or body falls back to the built-in defaults so a cleared box reads as
+  // "start from the standard wording", not "send a blank email".
+  let subject = custom
+    .as_ref()
+    .map(|c| sanitise_subject(&c.subject))
+    .filter(|s| !s.is_empty())
+    .unwrap_or_else(|| draft_subject(&request.patient_name));
+  // Simple MAPI and mailto: carry plain text only, so a custom HTML body is
+  // converted once here and shared by both Windows handoffs.
+  #[cfg(target_os = "windows")]
+  let custom_body_text = custom
+    .as_ref()
+    .map(|c| html_to_text(&c.body_html))
+    .filter(|b| !b.trim().is_empty());
   let stamp = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_millis())
@@ -1503,32 +1649,68 @@ fn email_case_report_inner(
   request.save_path = pdf_path.to_string_lossy().into_owned();
 
   // Byte-identical to the Save PDF output: same renderer, same request.
-  let outcome = generate_case_report_inner(request.clone())?;
+  // Only the Windows branches below annotate how the draft left the device.
+  #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+  let mut outcome = generate_case_report_inner(request.clone())?;
   let pdf =
     std::fs::read(&pdf_path).map_err(|e| format!("Could not read back the generated PDF: {e}"))?;
   let attachment_name = draft_attachment_name(&request.patient_name);
 
   #[cfg(target_os = "windows")]
   {
-    let result = mapi::send_mail(
-      &draft_subject(&request.patient_name),
-      &draft_body_text(&request),
-      recipient.as_deref(),
-      &pdf_path.to_string_lossy(),
-      &attachment_name,
-    );
-    let _ = &pdf; // read back for the macOS .eml path only
-    result?;
-    Ok(outcome)
+    // Simple MAPI needs a registered desktop client (classic Outlook,
+    // Thunderbird…). "New Outlook for Windows" and webmail-only machines
+    // have none, and the mapi32 stub then answers with the shell's "There
+    // is no email program associated…" dialog. Detect that up front and
+    // take the mailto: path instead, so the clinician never sees that
+    // dead end.
+    if mapi::available() {
+      let body = custom_body_text.unwrap_or_else(|| draft_body_text(&request));
+      let result = mapi::send_mail(
+        &subject,
+        &body,
+        recipient.as_deref(),
+        &pdf_path.to_string_lossy(),
+        &attachment_name,
+      );
+      let _ = &pdf; // read back for the macOS .eml path only
+      result?;
+      outcome.handoff = Some(String::from("mapi"));
+      Ok(outcome)
+    } else {
+      outcome.handoff = Some(String::from(mailto_fallback(
+        &request,
+        &subject,
+        custom_body_text,
+        recipient.as_deref(),
+        &pdf_path,
+        &attachment_name,
+        download_dir.as_deref(),
+      )?));
+      Ok(outcome)
+    }
   }
 
   #[cfg(target_os = "macos")]
   {
+    let _ = &download_dir; // used by the Windows mailto fallback only
+    let default_html;
+    let html_body: &str = match custom
+      .as_ref()
+      .map(|c| c.body_html.trim())
+      .filter(|b| !b.is_empty())
+    {
+      Some(body) => body,
+      None => {
+        default_html = draft_body_html(&request);
+        &default_html
+      }
+    };
     let eml_path = std::env::temp_dir().join(format!("camog-report-draft-{stamp}.eml"));
     let eml = build_eml(
-      &draft_subject(&request.patient_name),
+      &subject,
       recipient.as_deref(),
-      &draft_body_html(&request),
+      html_body,
       &attachment_name,
       &pdf,
     );
@@ -1545,16 +1727,262 @@ fn email_case_report_inner(
 
   #[cfg(all(unix, not(target_os = "macos"), not(target_os = "windows")))]
   {
-    let _ = (pdf, attachment_name, recipient, outcome, &pdf_path);
+    let _ = (pdf, attachment_name, recipient, custom, download_dir, outcome, &pdf_path, subject);
     let _ = std::fs::remove_file(&pdf_path);
     Err(String::from("Email drafts are available on Windows and macOS."))
   }
 }
 
+// ---- mailto fallback (Windows machines without a MAPI client) ----
+
+/// Percent-encode for a mailto: URL query (RFC 3986 unreserved characters
+/// pass through; everything else, including spaces and newlines, escapes).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // test-covered; used by the Windows mailto handoff
+fn percent_encode(value: &str) -> String {
+  let mut out = String::with_capacity(value.len());
+  for byte in value.bytes() {
+    match byte {
+      b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+        out.push(byte as char)
+      }
+      _ => out.push_str(&format!("%{byte:02X}")),
+    }
+  }
+  out
+}
+
+/// The compose handoff every Windows mail app understands: To/subject/body
+/// prefilled. mailto: cannot carry attachments — mailto_fallback saves the
+/// PDF to Downloads alongside this.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // test-covered; used by the Windows mailto handoff
+fn mailto_url(recipient: Option<&str>, subject: &str, body: &str) -> String {
+  let mut url = String::from("mailto:");
+  if let Some(to) = recipient {
+    url.push_str(&percent_encode(to));
+  }
+  url.push_str("?subject=");
+  url.push_str(&percent_encode(subject));
+  url.push_str("&body=");
+  // Normalise to LF first so a literal CRLF already in free text can't
+  // double-expand to CR CR LF.
+  url.push_str(&percent_encode(&body.replace("\r\n", "\n").replace('\n', "\r\n")));
+  url
+}
+
+/// Plain-text body for the mailto fallback. Cannot claim the PDF "is
+/// attached" (mailto: has no attachments): it names the saved file instead.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // test-covered; used by the Windows mailto handoff
+fn draft_body_text_mailto(req: &ReportRequest, attachment_name: &str) -> String {
+  let mut body = format!(
+    "A clinical photo report for {} is saved on this computer as \"{attachment_name}\" — attach it before sending.\n\nPrepared by: {}\nPrepared: {}\nPhotos: {}",
+    req.patient_name, req.prepared_by, req.prepared_at, req.photo_count_label
+  );
+  if let Some(timeline) = &req.timeline_label {
+    body.push_str(&format!("\nTimeline: {timeline}"));
+  }
+  body.push_str(&format!("\nConsent on record: {}", req.consent_label));
+  body
+}
+
+/// dir/name.pdf, suffixed " (2)", " (3)"… when a file already exists, so a
+/// second draft for the same patient never silently overwrites the first.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // test-covered; used by the Windows mailto handoff
+fn unique_download_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+  let direct = dir.join(name);
+  if !direct.exists() {
+    return direct;
+  }
+  let stem = name.strip_suffix(".pdf").unwrap_or(name);
+  for n in 2.. {
+    let candidate = dir.join(format!("{stem} ({n}).pdf"));
+    if !candidate.exists() {
+      return candidate;
+    }
+  }
+  unreachable!("the u64 counter cannot run out")
+}
+
+/// No-MAPI handoff: copy the PDF into Downloads (revealed in the file
+/// manager, because the clinician must attach it manually) and open a
+/// mailto: compose in whatever Mail app the machine defaults to. `subject`
+/// and `custom_body_text` carry the compose dialog's custom wording when
+/// present (plain text — mailto: cannot carry HTML); the defaults fill in
+/// otherwise. Returns the handoff kind for the webview's toast copy:
+/// "mailto" when the compose window opened, "saved-only" when even mailto:
+/// has no association (the PDF + open folder is still a complete manual
+/// flow).
+#[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
+fn mailto_fallback(
+  request: &ReportRequest,
+  subject: &str,
+  custom_body_text: Option<String>,
+  recipient: Option<&str>,
+  pdf_path: &std::path::Path,
+  attachment_name: &str,
+  download_dir: Option<&std::path::Path>,
+) -> Result<&'static str, String> {
+  // Keep the PDF attachable: Downloads when it exists, otherwise the temp
+  // copy the report was rendered into. A failed copy must be visible — the
+  // toasts can only say "saved on this computer", so support needs the log
+  // line to know it actually landed in temp.
+  let kept = download_dir
+    .filter(|d| d.is_dir())
+    .map(|d| unique_download_path(d, attachment_name))
+    .and_then(|p| match std::fs::copy(pdf_path, &p) {
+      Ok(_) => Some(p),
+      Err(e) => {
+        crate::diagnostics::record(
+          crate::diagnostics::Level::Error,
+          "report",
+          &format!("Could not copy the report PDF into the Downloads folder: {e}"),
+          None,
+        );
+        None
+      }
+    })
+    .unwrap_or_else(|| pdf_path.to_path_buf());
+  crate::diagnostics::record(
+    crate::diagnostics::Level::Info,
+    "report",
+    "No MAPI mail client registered — falling back to mailto (PDF saved for manual attach)",
+    None,
+  );
+  if let Err(e) = reveal_in_file_manager(&kept.to_string_lossy()) {
+    // Cosmetic: the compose body still names the file.
+    crate::diagnostics::record(crate::diagnostics::Level::Error, "report", &e, None);
+  }
+  // A custom body replaces the stock wording wholesale: the clinician
+  // authored it, and this path's "attach the saved PDF" instruction already
+  // lives in the toast, not the body.
+  let body = custom_body_text.unwrap_or_else(|| draft_body_text_mailto(request, attachment_name));
+  let url = mailto_url(recipient, subject, &body);
+  match win_shell::open_default(&url) {
+    Ok(()) => Ok("mailto"),
+    Err(e) => {
+      crate::diagnostics::record(
+        crate::diagnostics::Level::Error,
+        "report",
+        &format!("mailto handoff failed: {e}"),
+        None,
+      );
+      Ok("saved-only")
+    }
+  }
+}
+
+/// Minimal shell hand-FFI: ShellExecuteW's "open" verb launches a URL with
+/// its default handler (mailto: → the default Mail app). Kept hand-rolled
+/// alongside the mapi32 binding to avoid a windows-rs dependency; a return
+/// value <= 32 means the launch failed (31 = no association for it).
+#[cfg(target_os = "windows")]
+mod win_shell {
+  use std::ffi::c_void;
+  use std::os::raw::c_int;
+
+  const SW_SHOWNORMAL: c_int = 1;
+
+  #[link(name = "shell32")]
+  extern "system" {
+    fn ShellExecuteW(
+      hwnd: *mut c_void,
+      verb: *const u16,
+      file: *const u16,
+      parameters: *const u16,
+      directory: *const u16,
+      show: c_int,
+    ) -> isize;
+  }
+
+  /// UTF-16, NUL-terminated.
+  fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+  }
+
+  pub fn open_default(url: &str) -> Result<(), String> {
+    let verb = wide("open");
+    let file = wide(url);
+    let code = unsafe {
+      ShellExecuteW(
+        std::ptr::null_mut(),
+        verb.as_ptr(),
+        file.as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+        SW_SHOWNORMAL,
+      )
+    };
+    if code > 32 {
+      Ok(())
+    } else {
+      Err(format!("Windows could not open a handler for it (ShellExecute code {code})"))
+    }
+  }
+}
+
+/// Registry reads for the MAPI pre-check (advapi32, string values only).
+#[cfg(target_os = "windows")]
+mod registry {
+  use std::ffi::c_void;
+  use std::os::raw::{c_int, c_ulong};
+
+  pub const HKEY_CURRENT_USER: *mut c_void = 0x8000_0001usize as *mut c_void;
+  pub const HKEY_LOCAL_MACHINE: *mut c_void = 0x8000_0002usize as *mut c_void;
+
+  const RRF_RT_REG_SZ: c_ulong = 0x0000_0002;
+  const RRF_RT_REG_EXPAND_SZ: c_ulong = 0x0000_0004;
+  /// Accept either string type; REG_EXPAND_SZ is auto-expanded in place
+  /// (DllPath entries historically use it).
+  const RESTRICTIONS: c_ulong = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
+
+  #[link(name = "advapi32")]
+  extern "system" {
+    fn RegGetValueW(
+      key: *mut c_void,
+      sub_key: *const u16,
+      value: *const u16,
+      flags: c_ulong,
+      ty: *mut c_ulong,
+      data: *mut c_void,
+      cb_data: *mut c_ulong,
+    ) -> c_int; // LSTATUS; 0 = ERROR_SUCCESS
+  }
+
+  /// A non-empty string value (REG_SZ/REG_EXPAND_SZ), None when the key or
+  /// value is missing or not a string. An empty `value` reads the key's
+  /// default entry.
+  pub fn reg_sz(root: *mut c_void, sub_key: &str, value: &str) -> Option<String> {
+    let sub = sub_key.encode_utf16().chain(std::iter::once(0)).collect::<Vec<_>>();
+    let val = value.encode_utf16().chain(std::iter::once(0)).collect::<Vec<_>>();
+    let mut buf = [0u16; 1024];
+    let mut ty: c_ulong = 0;
+    let mut cb = (buf.len() * std::mem::size_of::<u16>()) as c_ulong;
+    let status = unsafe {
+      RegGetValueW(
+        root,
+        sub.as_ptr(),
+        val.as_ptr(),
+        RESTRICTIONS,
+        &mut ty,
+        buf.as_mut_ptr().cast(),
+        &mut cb,
+      )
+    };
+    if status != 0 {
+      return None;
+    }
+    let len = ((cb as usize) / std::mem::size_of::<u16>()).min(buf.len());
+    let end = buf[..len].iter().position(|&c| c == 0).unwrap_or(len);
+    let s = String::from_utf16_lossy(&buf[..end]);
+    (!s.is_empty()).then_some(s)
+  }
+}
+
 /// Minimal Simple MAPI binding, Unicode variant (MAPISendMailW, Windows 8+):
 /// just enough to open a reviewed compose window with one attachment in the
-/// clinician's own mail client. Hand-rolled FFI (kernel32 + mapi32) to avoid
-/// a windows-rs dependency; the struct layout is pinned by a test.
+/// clinician's own mail client. Hand-rolled FFI (kernel32 + mapi32, plus
+/// shell32/advapi32 for the no-MAPI fallback) to avoid a windows-rs
+/// dependency; the struct layout is pinned by a test.
 /// ponytail: if this grows past one recipient / plain text (e.g. HTML bodies
 /// via extended MAPI), switch to the windows crate.
 #[cfg(target_os = "windows")]
@@ -1563,11 +1991,37 @@ mod mapi {
   use std::os::raw::c_char;
   use std::os::raw::c_ulong;
 
+  use super::registry::{self, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+
   pub const MAPI_LOGON_UI: c_ulong = 0x0000_0001;
   pub const MAPI_DIALOG: c_ulong = 0x0000_0008;
   const MAPI_TO: c_ulong = 1;
   const SUCCESS_SUCCESS: c_ulong = 0;
   const MAPI_E_USER_ABORT: c_ulong = 1; // compose window closed unsent
+
+  /// Is a MAPI-capable mail client registered for this user? Mirrors what
+  /// the mapi32 stub itself resolves: the default mail client named under
+  /// HKCU\Software\Clients\Mail (falling back to HKLM), then that client's
+  /// DllPathEx/DllPath provider entry. Machines without one — "new Outlook
+  /// for Windows" only, webmail-only setups — cannot serve MAPISendMailW,
+  /// and calling it anyway surfaces the shell's "There is no email program
+  /// associated…" dialog, so callers check this first.
+  pub fn available() -> bool {
+    let roots = [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE];
+    let client = roots
+      .iter()
+      .find_map(|root| registry::reg_sz(*root, r"Software\Clients\Mail", ""))
+      .filter(|name| !name.trim().is_empty());
+    let Some(client) = client else {
+      return false;
+    };
+    roots.iter().any(|root| {
+      let key = format!(r"Software\Clients\Mail\{client}");
+      registry::reg_sz(*root, &key, "DllPathEx")
+        .or_else(|| registry::reg_sz(*root, &key, "DllPath"))
+        .is_some()
+    })
+  }
 
   #[repr(C)]
   #[derive(Clone, Copy)]
@@ -1923,6 +2377,55 @@ mod tests {
   }
 
   #[test]
+  fn custom_subject_cannot_break_mime_headers() {
+    // Trust boundary: the compose dialog's subject arrives over IPC and
+    // lands in headers downstream — CR/LF/NUL must go.
+    assert_eq!(
+      sanitise_subject("Hi\r\nBcc: someone@evil.example"),
+      "HiBcc: someone@evil.example"
+    );
+    assert_eq!(sanitise_subject("  Report for Amina \n"), "Report for Amina");
+    assert_eq!(sanitise_subject("\0"), "");
+  }
+
+  #[test]
+  fn html_to_text_keeps_prose_breaks_lines_and_decodes_entities() {
+    let html = "<html><body style=\"x:y\">\n\
+      <p>A clinical photo report for <strong>Amina &amp; Co</strong> is attached.</p>\n\
+      <ul>\n  <li>Prepared by: Dr&nbsp;Whitlam</li>\n  <li>Photos: 3</li>\n</ul>\n\
+      <p>Second paragraph &lt;after&gt; escaping &#39;kept&#39;.</p>\n\
+      </body></html>";
+    let text = html_to_text(html);
+    assert!(text.contains("Amina & Co"), "&amp; must decode: {text}");
+    assert!(!text.contains("<strong>"), "tags must be dropped: {text}");
+    assert!(text.contains("Dr\u{a0}Whitlam"), "&nbsp; must decode: {text}");
+    assert!(text.contains("<after> escaping 'kept'."), "entities must decode: {text}");
+    // Block tags break lines; indentation between them is trimmed and blank
+    // runs collapse, so the body reads as typed prose.
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.contains(&"A clinical photo report for Amina & Co is attached."), "{lines:?}");
+    assert!(lines.contains(&"Prepared by: Dr\u{a0}Whitlam"), "{lines:?}");
+    assert!(lines.contains(&"Photos: 3"), "{lines:?}");
+    assert!(lines.iter().all(|l| *l == l.trim()), "no tag indentation: {lines:?}");
+    assert!(text.starts_with("A clinical"), "no leading blanks: {text:?}");
+    assert!(text.ends_with("escaping 'kept'."), "no trailing blanks: {text:?}");
+  }
+
+  #[test]
+  fn html_to_text_converts_br_and_collapses_blank_runs() {
+    assert_eq!(html_to_text("one<br>two<br/>three"), "one\ntwo\nthree");
+    assert_eq!(html_to_text("<p>a</p>\n\n\n<p>b</p>"), "a\n\nb");
+    assert_eq!(html_to_text(""), "");
+  }
+
+  #[test]
+  fn html_to_text_leaves_an_ampersand_literal() {
+    // &amp; decodes last: "&amp;lt;" is the typed text "&lt;", not "<".
+    assert_eq!(html_to_text("R &amp;lt; Q"), "R &lt; Q");
+    assert_eq!(html_to_text("a &amp; b"), "a & b");
+  }
+
+  #[test]
   fn attachment_name_tracks_the_webviews_file_sanitiser() {
     assert_eq!(
       draft_attachment_name("Amina: Fouad/lekka"),
@@ -1932,6 +2435,90 @@ mod tests {
       draft_attachment_name("  Double  spaces  "),
       "Camog case report - Double spaces.pdf"
     );
+  }
+
+  #[test]
+  fn percent_encode_escapes_everything_but_unreserved() {
+    assert_eq!(percent_encode("Dr-Smith_09.~z"), "Dr-Smith_09.~z");
+    assert_eq!(percent_encode("a b"), "a%20b");
+    assert_eq!(percent_encode("line\nbreak"), "line%0Abreak");
+    // Non-ASCII escapes as its UTF-8 bytes (é = C3 A9).
+    assert_eq!(percent_encode("é"), "%C3%A9");
+    assert_eq!(percent_encode("a&b=c?d"), "a%26b%3Dc%3Fd");
+  }
+
+  #[test]
+  fn mailto_url_carries_recipient_subject_and_body() {
+    let url = mailto_url(
+      Some("patient@example.com"),
+      "Clinical photo report — Amina",
+      "line one\nline two",
+    );
+    assert!(url.starts_with("mailto:patient%40example.com?subject="), "{url}");
+    assert!(url.contains("&body=line%20one%0D%0Aline%20two"), "{url}");
+    // The em dash survives as UTF-8 escapes; newlines become CRLF pairs.
+    assert!(url.contains("%E2%80%94"), "{url}");
+    // A literal CRLF in free text must not double-expand to CR CR LF.
+    assert_eq!(mailto_url(None, "s", "a\r\nb").matches("%0D%0D").count(), 0);
+    assert!(mailto_url(None, "s", "a\r\nb").ends_with("a%0D%0Ab"));
+    // Without a stored patient email the compose opens with a blank To:.
+    let no_to = mailto_url(None, "s", "b");
+    assert!(no_to.starts_with("mailto:?subject=s&body=b"), "{no_to}");
+  }
+
+  #[test]
+  fn mailto_body_names_the_saved_file_not_an_attachment() {
+    let req = ReportRequest {
+      save_path: String::new(),
+      patient_name: String::from("Amina Fouad"),
+      date_of_birth: None,
+      treating_clinician: None,
+      prepared_by: String::from("Dr Sarah Whitlam"),
+      prepared_at: String::from("25/08/2026, 2:05 pm"),
+      consent_label: String::from("Clinical care"),
+      consent_valid: true,
+      photo_count_label: String::from("3 photos"),
+      timeline_label: None,
+      photos: vec![],
+    };
+    let body = draft_body_text_mailto(&req, "Camog case report - Amina Fouad.pdf");
+    // mailto: cannot attach: the body must point at the saved file instead
+    // of claiming an attachment that isn't there.
+    assert!(!body.contains("is attached as a PDF"), "{body}");
+    assert!(body.contains("attach it before sending"), "{body}");
+    assert!(body.contains("\"Camog case report - Amina Fouad.pdf\""), "{body}");
+    assert!(body.contains("Dr Sarah Whitlam"), "{body}");
+  }
+
+  #[test]
+  fn unique_download_path_suffixes_instead_of_overwriting() {
+    let dir = std::env::temp_dir().join(format!(
+      "camog-dl-test-{}-{}",
+      std::process::id(),
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let name = "Camog case report - Test.pdf";
+    assert_eq!(
+      unique_download_path(&dir, name),
+      dir.join(name),
+      "first save takes the plain name"
+    );
+    std::fs::write(dir.join(name), b"x").expect("seed collision");
+    assert_eq!(
+      unique_download_path(&dir, name),
+      dir.join("Camog case report - Test (2).pdf"),
+      "existing file pushes the next save to (2)"
+    );
+    std::fs::write(dir.join("Camog case report - Test (2).pdf"), b"x").expect("seed collision");
+    assert_eq!(
+      unique_download_path(&dir, name),
+      dir.join("Camog case report - Test (3).pdf")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
   }
 
   #[test]

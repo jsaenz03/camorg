@@ -160,7 +160,7 @@ class ResultFileService {
       detail: `attached ${originalName} (${(bytes.byteLength / 1024).toFixed(0)} KB)`,
     });
     notifyAttentionChanged();
-    void companionService.publish().catch(() => {});
+    companionService.schedulePublish();
 
     return {
       id,
@@ -277,7 +277,7 @@ class ResultFileService {
       detail: `removed ${file.originalName}`,
     });
     notifyAttentionChanged();
-    void companionService.publish().catch(() => {});
+    companionService.schedulePublish();
   }
 }
 

@@ -33,6 +33,8 @@ import { hashPasscode, verifyPasscode, randomToken, sha256Hex } from '@/lib/util
 // Approvals/settings changes move the alert counts (pending signups, review
 // windows) — refetch the sidebar/dashboard counters immediately.
 import { notifyAttentionChanged } from '@/lib/services/attention-events';
+// Leaf module (no imports of its own), so this adds no import cycle.
+import { clearThumbCache } from '@/lib/services/thumb-cache';
 import {
   NotAuthenticatedError,
   PermissionDeniedError,
@@ -668,6 +670,13 @@ export class AuthService implements IAuthService {
   async logout(): Promise<void> {
     const session = readSession();
     writeSession(null);
+    // A different clinician may sign in next: decrypted thumbnails must not
+    // outlive the session that was authorised to see them. The notifications
+    // singleton holds patient-identifying alert items with the same lifetime
+    // problem — dynamic import (as with audit-service below) because the
+    // hooks module pulls this one in transitively.
+    clearThumbCache();
+    void import('@/lib/hooks/use-notifications').then((m) => m.resetNotificationsState());
     if (session) {
       try {
         const { auditService } = await import('@/lib/services/audit-service');

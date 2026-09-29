@@ -18,6 +18,7 @@ import { NotFoundError } from '@/lib/validators/errors';
 import { dateFromMs, dateToMs, dobFromMs, dobToMs, parseDobInput } from '@/lib/utils/date-formatting';
 import { renameAuditDetail } from '@/lib/utils/audit';
 import { ensureWritable } from '@/lib/licence/guard';
+import { clearThumbCache } from '@/lib/services/thumb-cache';
 // Every mutating method below ends with notifyAttentionChanged() so the
 // sidebar/dashboard alert counters refetch the moment a change lands.
 import { notifyAttentionChanged } from '@/lib/services/attention-events';
@@ -516,6 +517,9 @@ export class PatientService implements IPatientService {
     await db.execute('DELETE FROM result_files WHERE patient_id = $1', [id]);
     await db.execute('DELETE FROM photos WHERE patient_id = $1', [id]);
     await db.execute('DELETE FROM patients WHERE id = $1', [id]);
+    // Hard delete: the photo files leave disk, so their cached thumbnails
+    // must not survive the rows (wholesale clear — patient deletion is rare).
+    clearThumbCache();
 
     // Awaited so the entry is on disk before the caller reports success —
     // this is the one patient event that must not be lost to a quit.

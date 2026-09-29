@@ -47,6 +47,8 @@ import { formatDateOfBirth } from '@/lib/utils/date-formatting';
 import { orderReportPhotos } from '@/lib/utils/report-order';
 
 class CompanionService {
+  private publishTimer: ReturnType<typeof setTimeout> | null = null;
+
   /**
    * Build the manifest from the same access-filtered reads the desktop UI
    * uses: searchPatients('') returns exactly the patients this clinician can
@@ -151,8 +153,30 @@ class CompanionService {
     });
   }
 
+  /**
+   * Debounced publish for mutation-driven refreshes (captures, review
+   * stamps, result-file changes — anything that fires the attention event).
+   * Each publish rebuilds an O(whole library) manifest, so a burst of saves
+   * would rebuild it per photo; one trailing delay collapses the burst. The
+   * phone's library-wait long-poll holds for up to 25 s, so a couple of
+   * seconds is invisible there. Session start still calls publish() directly.
+   */
+  schedulePublish(delayMs: number = 2_000): void {
+    if (this.publishTimer) clearTimeout(this.publishTimer);
+    this.publishTimer = setTimeout(() => {
+      this.publishTimer = null;
+      void this.publish().catch(() => {});
+    }, delayMs);
+  }
+
   /** Drop the shared library and any staged report. */
   async unpublish(): Promise<void> {
+    // A publish scheduled before the session closed must not fire after it
+    // and leave a stale manifest parked in the shell.
+    if (this.publishTimer) {
+      clearTimeout(this.publishTimer);
+      this.publishTimer = null;
+    }
     await invoke('clear_remote_library');
   }
 
@@ -178,9 +202,19 @@ class CompanionService {
     const active = photos
       .filter((ph) => photoPaths.has(ph.id))
       .sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
+    // Same ceiling as the desktop report page: every image is decrypted and
+    // laid out in Rust, so an unbounded timeline would take minutes to
+    // render. Newest 50, then back to chronological. There is no toast on
+    // the phone flow to flag a truncation, so the header's "X of Y photos"
+    // self-documents the cap.
+    const MAX_REPORT_PHOTOS = 50;
+    const recent = [...active]
+      .sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime())
+      .slice(0, MAX_REPORT_PHOTOS)
+      .sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
     // The phone report reads like the desktop one: chronological spine, with
     // each linked series kept contiguous under its heading.
-    const ordered = orderReportPhotos(active);
+    const ordered = orderReportPhotos(recent);
 
     const consent = consentStatus(patient);
     const consentLabel =
@@ -203,11 +237,14 @@ class CompanionService {
         preparedAt: format(new Date(), 'dd/MM/yyyy, h:mm a'),
         consentLabel,
         consentValid: consent === 'valid',
-        photoCountLabel: `${active.length} ${active.length === 1 ? 'photo' : 'photos'}`,
+        photoCountLabel:
+          recent.length === active.length
+            ? `${active.length} ${active.length === 1 ? 'photo' : 'photos'}`
+            : `${recent.length} of ${active.length} photos`,
         timelineLabel:
-          active.length > 0
-            ? `${format(active[0].capturedAt, 'dd/MM/yyyy')} to ${format(
-                active[active.length - 1].capturedAt,
+          recent.length > 0
+            ? `${format(recent[0].capturedAt, 'dd/MM/yyyy')} to ${format(
+                recent[recent.length - 1].capturedAt,
                 'dd/MM/yyyy',
               )}`
             : null,

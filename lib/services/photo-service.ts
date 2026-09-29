@@ -50,6 +50,7 @@ import { auditService } from '@/lib/services/audit-service';
 import { normalizeLesionGroup } from '@/lib/utils/lesion-group';
 import { writeFile, readFile } from '@tauri-apps/plugin-fs';
 import { decryptPhotoBytes, encryptPhotoBytes } from '@/lib/utils/photo-crypto';
+import { getCachedThumb, putCachedThumb, evictCachedThumb } from '@/lib/services/thumb-cache';
 import {
   NotFoundError,
   ValidationError,
@@ -681,6 +682,7 @@ export class PhotoService implements IPhotoService {
       `UPDATE photos SET is_deleted = 1, deleted_at = $1, updated_at = $2 WHERE id = $3`,
       [nowMs, nowMs, id]
     );
+    evictCachedThumb(id);
 
     // Maintain denormalised counts (single atomic recompute).
     await patientService.recountPhotos(photo.patientId);
@@ -781,6 +783,13 @@ export class PhotoService implements IPhotoService {
    * Throws PermissionDeniedError if the clinician cannot access the patient.
    */
   async exportPhotoAsDataUrl(id: string, useThumbnail: boolean = false): Promise<string> {
+    // Thumbnails are immutable per id and expensive to produce (the whole
+    // decrypt pipeline below), so grids get the cached copy after the first
+    // request — timeline re-mounts and refreshes stop re-decrypting.
+    if (useThumbnail) {
+      const cached = getCachedThumb(id);
+      if (cached !== undefined) return cached;
+    }
     const db = await getDB();
     const rows = await db.select<{ patient_id: string; image_path: string; thumbnail_path: string; mime_type: string }[]>(
       'SELECT patient_id, image_path, thumbnail_path, mime_type FROM photos WHERE id = $1',
@@ -803,7 +812,9 @@ export class PhotoService implements IPhotoService {
     const bytes = await decryptPhotoBytes(new Uint8Array(await readFile(path)));
     const base64 = uint8ToBase64(new Uint8Array(bytes));
     const mime = useThumbnail ? 'image/jpeg' : row.mime_type;
-    return `data:${mime};base64,${base64}`;
+    const dataUrl = `data:${mime};base64,${base64}`;
+    if (useThumbnail) putCachedThumb(id, dataUrl);
+    return dataUrl;
   }
 
   /**

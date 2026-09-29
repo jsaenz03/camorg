@@ -299,7 +299,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
             // photo's review AND counts as the patient's review.
             await photoService.reviewPhoto(photoId);
             if (stateRef.current.shareLibrary) {
-              await companionService.publish().catch(() => {});
+              companionService.schedulePublish();
             }
             toast.success('Photo marked as reviewed (from your phone).');
           } catch (error) {
@@ -369,7 +369,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
     if (!active || !shareLibrary) return;
     const onFocus = () => {
       if (stateRef.current.active && stateRef.current.shareLibrary) {
-        void companionService.publish().catch(() => {});
+        companionService.schedulePublish();
       }
     };
     window.addEventListener('focus', onFocus);
@@ -385,7 +385,7 @@ export function CompanionProvider({ children }: { children: ReactNode }) {
     if (!active || !shareLibrary) return;
     const onAttention = () => {
       if (stateRef.current.active && stateRef.current.shareLibrary) {
-        void companionService.publish().catch(() => {});
+        companionService.schedulePublish();
       }
     };
     window.addEventListener(ATTENTION_CHANGED_EVENT, onAttention);

@@ -625,8 +625,9 @@ function CaptureFlow({
         setActivePendingId(null);
       }
       // Refresh the phone link's shared library (no-op when no session is
-      // open) so the phone can review the new photo immediately.
-      void companionService.publish().catch(() => {});
+      // open). Debounced: a tray of rapid saves collapses into one manifest
+      // rebuild, which the phone's long-poll picks up moments later.
+      companionService.schedulePublish();
 
       // 5. The photo is in — if its patient's consent is missing or expired,
       // ask for it now, while the clinician is still with the patient. The

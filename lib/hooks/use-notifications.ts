@@ -7,11 +7,16 @@
  * Sidebar badges need only `counts`; the dashboard panel also takes
  * `items`. Errors resolve to empty state rather than throwing — the
  * plain-browser preview has no database at all.
+ *
+ * The poller is a module-level singleton: two components mount this hook
+ * (sidebar badge + dashboard panel), and independent instances used to
+ * double the 60 s query set and every event-driven refetch. All mounted
+ * hooks share one interval and one latest result.
  */
 
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AttentionItem, NotificationCounts } from '@/lib/services/notification-service';
 import {
   ATTENTION_CHANGED_EVENT,
@@ -32,37 +37,94 @@ interface UseNotificationsReturn {
   refresh: () => Promise<void>;
 }
 
-export function useNotifications(): UseNotificationsReturn {
-  const [items, setItems] = useState<AttentionItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  // Monotonic seq so a slow poll can't overwrite a newer refresh.
-  const seqRef = useRef(0);
+type Listener = (items: AttentionItem[], isLoading: boolean) => void;
 
-  const refresh = useCallback(async () => {
-    const seq = ++seqRef.current;
-    try {
-      const list = await notificationService.getAttentionItems();
-      if (seq !== seqRef.current) return;
-      setItems(list);
-      pushTraySummary(list);
-      void maybeFireOsAlerts(list);
-    } catch {
-      if (seq !== seqRef.current) return;
-      setItems([]);
-    } finally {
-      if (seq === seqRef.current) setIsLoading(false);
+const listeners = new Set<Listener>();
+let currentItems: AttentionItem[] = [];
+let currentLoading = true;
+let loadedOnce = false;
+let poller: ReturnType<typeof setInterval> | null = null;
+// Monotonic seq so a slow refresh can't overwrite a newer one.
+let seq = 0;
+
+const onAttentionChanged = () => void runRefresh();
+
+function notify(): void {
+  for (const listener of listeners) listener(currentItems, currentLoading);
+}
+
+async function runRefresh(): Promise<void> {
+  const mySeq = ++seq;
+  try {
+    const list = await notificationService.getAttentionItems();
+    if (mySeq !== seq) return;
+    currentItems = list;
+    pushTraySummary(list);
+    void maybeFireOsAlerts(list);
+  } catch {
+    if (mySeq !== seq) return;
+    currentItems = [];
+  } finally {
+    if (mySeq === seq) {
+      loadedOnce = true;
+      currentLoading = false;
+      notify();
     }
-  }, []);
+  }
+}
+
+function ensurePoller(): void {
+  if (poller !== null) return;
+  poller = setInterval(() => void runRefresh(), POLL_MS);
+  window.addEventListener(ATTENTION_CHANGED_EVENT, onAttentionChanged);
+}
+
+function releasePoller(): void {
+  if (listeners.size > 0 || poller === null) return;
+  clearInterval(poller);
+  poller = null;
+  window.removeEventListener(ATTENTION_CHANGED_EVENT, onAttentionChanged);
+}
+
+/**
+ * Logout hygiene: the singleton state outlives SPA navigation, so without
+ * this the next clinician's first render would show the previous session's
+ * attention items (they carry patient names) — and skip the mount-time
+ * refetch because loadedOnce is still true. auth-service logout calls this.
+ */
+export function resetNotificationsState(): void {
+  // Any in-flight refresh from the old session discards itself on the seq
+  // check instead of overwriting the reset.
+  seq++;
+  currentItems = [];
+  currentLoading = true;
+  loadedOnce = false;
+  notify();
+}
+
+export function useNotifications(): UseNotificationsReturn {
+  const [state, setState] = useState<{ items: AttentionItem[]; isLoading: boolean }>(() => ({
+    items: currentItems,
+    isLoading: currentLoading,
+  }));
 
   useEffect(() => {
-    void refresh();
-    const interval = setInterval(() => void refresh(), POLL_MS);
-    window.addEventListener(ATTENTION_CHANGED_EVENT, refresh);
+    const listener: Listener = (items, isLoading) => setState({ items, isLoading });
+    listeners.add(listener);
+    ensurePoller();
+    // Only the first-ever mount fetches immediately; later mounts join the
+    // existing cycle (their data is at most one poll old, as on the dashboard).
+    if (!loadedOnce) void runRefresh();
     return () => {
-      clearInterval(interval);
-      window.removeEventListener(ATTENTION_CHANGED_EVENT, refresh);
+      listeners.delete(listener);
+      releasePoller();
     };
-  }, [refresh]);
+  }, []);
 
-  return { counts: countsFromItems(items), items, isLoading, refresh };
+  return {
+    counts: countsFromItems(state.items),
+    items: state.items,
+    isLoading: state.isLoading,
+    refresh: runRefresh,
+  };
 }

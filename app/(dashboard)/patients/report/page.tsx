@@ -13,6 +13,7 @@
 
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useState, useEffect, useMemo, Suspense } from 'react';
+import { useTheme } from 'next-themes';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
@@ -29,6 +30,10 @@ import { auditService } from '@/lib/services/audit-service';
 import { accessService } from '@/lib/services/access-service';
 import { formatDateOfBirth } from '@/lib/utils/date-formatting';
 import { orderReportPhotos } from '@/lib/utils/report-order';
+import { downscaleImageDataUrl } from '@/lib/utils/downscale-image';
+import { buildDefaultEmailDraft, type EmailDraft } from '@/lib/utils/report-email';
+import { EmailComposeDialog } from '@/components/patient/email-compose-dialog';
+import { useBranding } from '@/components/branding-boot';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
@@ -70,6 +75,12 @@ function ReportView() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const patientId = searchParams.get('id') as string;
+  // The default email template follows the app theme at compose time
+  // (undefined before mount — the compose only opens after that, and the
+  // fallback below keeps the light palette). The clinic's branding (logo +
+  // name, from Settings) rides into the header the same way.
+  const { resolvedTheme: emailTheme } = useTheme();
+  const { orgName, logoDataUrl } = useBranding();
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [photos, setPhotos] = useState<ReportPhoto[]>([]);
@@ -78,6 +89,10 @@ function ReportView() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDrafting, setIsDrafting] = useState(false);
   const [failed, setFailed] = useState<string[]>([]);
+  const [emailOpen, setEmailOpen] = useState(false);
+  // Created on first open from the default template, then kept: a clinician
+  // who cancels the compose dialog keeps their edits for the next attempt.
+  const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   // Resolved after mount so the server-prerendered HTML and the first client
   // render agree (no hydration mismatch); the button appears once known.
   const [platform, setPlatform] = useState<'unknown' | 'windows' | 'macos' | 'other'>('unknown');
@@ -118,9 +133,12 @@ function ReportView() {
         // except that photos linked into a lesion series are grouped into one
         // contiguous block positioned at the series' earliest capture, so a
         // patient reads each lesion's story front to back.
-        // ponytail: capped at 50 — every image loads as a full-size base64
-        // data URL, so a large timeline would freeze the report page.
-        // Upgrade path: paginate the report or print from scaled-down copies.
+        // Previews are downscaled to ~1200px before entering the DOM: 50
+        // full-size base64 strings can push the Windows WebView2 renderer
+        // past its memory ceiling (white window / app crash). The PDF paths
+        // re-read the originals on disk, so print/email quality is unaffected.
+        // ponytail: capped at 50 — even downscaled, a huge timeline keeps
+        // growing the page. Upgrade path: paginate the report.
         const MAX_REPORT_PHOTOS = 50;
         const recent = [...records]
           .sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime())
@@ -137,7 +155,9 @@ function ReportView() {
             continue;
           }
           try {
-            const url = await photoService.exportPhotoAsDataUrl(r.id);
+            const url = await downscaleImageDataUrl(
+              await photoService.exportPhotoAsDataUrl(r.id)
+            );
             loaded.push({
               id: r.id,
               url,
@@ -305,43 +325,95 @@ function ReportView() {
     }
   }
 
+  /** Opens the compose dialog; the first open builds the default draft. */
+  function openEmailCompose() {
+    if (!patient || photos.length === 0 || isDrafting) return;
+    setEmailDraft(
+      (prev) =>
+        prev ??
+        buildDefaultEmailDraft(
+          buildReportRequest(''),
+          patient.email ?? '',
+          emailTheme === 'dark' ? 'dark' : 'light',
+          { orgName, logoDataUrl }
+        )
+    );
+    setEmailOpen(true);
+  }
+
   /**
    * Email draft handoff: the PDF is rendered locally exactly as for
    * Save PDF, then handed to the clinician's own mail client as a draft —
    * MAPISendMail on Windows, an .eml opened in Mail on macOS (press
-   * Forward to send). Nothing is sent by Camog; the stored patient email,
-   * if any, only prefills the To: line. Audited like print/save.
+   * Forward to send) — with the message they composed in EmailComposeDialog.
+   * Nothing is sent by Camog; the To line only prefills from the edited
+   * draft. Audited like print/save.
    */
-  async function handleEmailDraft() {
+  async function handleEmailDraft(draft: EmailDraft) {
     if (!patient || photos.length === 0 || isDrafting) return;
     if (platform !== 'windows' && platform !== 'macos') return;
 
     setIsDrafting(true);
     try {
-      const outcome = await invoke<{ pageCount: number }>('email_case_report', {
-        request: buildReportRequest(''),
-        recipient: patient.email || null,
-      });
+      const outcome = await invoke<{ pageCount: number; handoff?: string | null }>(
+        'email_case_report',
+        {
+          request: buildReportRequest(''),
+          recipient: draft.recipient.trim() || null,
+          custom: { subject: draft.subject, bodyHtml: draft.bodyHtml },
+        }
+      );
+      setEmailOpen(false);
       // Audited only on a successful handoff, like Save PDF — a failed
       // MAPI/.eml open must not enter the trail as "draft opened".
-      void auditService.record('photo.export', {
-        entityType: 'patient',
-        entityId: patientId,
-        patientId,
-        detail: `case report email draft opened (${photos.length} photos)`,
-      });
+      if (outcome.handoff === 'saved-only') {
+        // No draft opened, but a patient PDF still landed outside the app —
+        // audit it like Save PDF so the export trail stays complete.
+        void auditService.record('photo.export', {
+          entityType: 'patient',
+          entityId: patientId,
+          patientId,
+          detail: `case report PDF saved locally for manual send — no email app linked (${photos.length} photos)`,
+        });
+      } else {
+        void auditService.record('photo.export', {
+          entityType: 'patient',
+          entityId: patientId,
+          patientId,
+          detail: `case report email draft opened (${
+            outcome.handoff === 'mailto' ? 'compose without auto-attach; PDF saved locally' : 'attached PDF'
+          }, ${photos.length} photos)`,
+        });
+      }
       if (platform === 'macos') {
         toast.success('Draft opened in Mail — press Forward to send it', {
           description: `The PDF is attached (${outcome.pageCount} ${
             outcome.pageCount === 1 ? 'page' : 'pages'
           }).`,
         });
+      } else if (outcome.handoff === 'mailto') {
+        // No MAPI client on this PC (e.g. new Outlook only): the compose
+        // window opened via mailto: but carries no attachment — say so. The
+        // file's folder opens on it either way (Downloads, or temp if the
+        // copy failed), so the copy stays location-neutral.
+        toast.success('Draft opened in your email app — attach the PDF before sending', {
+          description: `This PC has no Outlook-MAPI link, so the report (${outcome.pageCount} ${
+            outcome.pageCount === 1 ? 'page' : 'pages'
+          }) is saved on this computer and its folder is open.`,
+        });
+      } else if (outcome.handoff === 'saved-only') {
+        // Even mailto: has no default app here; the manual flow is complete.
+        toast.warning('No email app is set as the default on this PC', {
+          duration: 10000,
+          description:
+            'The report PDF is saved on this computer and the folder is open. Windows Settings → Apps → Default apps can set a Mail app, or attach the PDF from your webmail.',
+        });
       } else {
         // MAPI's compose window is modal, so this toast lands after the
         // clinician closes it — confirm the handoff, don't instruct
         // mid-draft.
         toast.success(
-          patient.email
+          draft.recipient.trim()
             ? 'Draft handed to your email app — recipient prefilled'
             : 'Draft handed to your email app — add the recipient before sending',
           {
@@ -396,14 +468,10 @@ function ReportView() {
           {(platform === 'windows' || platform === 'macos') && (
             <Button
               variant="outline"
-              onClick={() => void handleEmailDraft()}
+              onClick={openEmailCompose}
               disabled={photos.length === 0 || isDrafting}
             >
-              {isDrafting ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Mail className="size-4" />
-              )}
+              <Mail className="size-4" />
               Email draft
             </Button>
           )}
@@ -589,6 +657,18 @@ function ReportView() {
           {failed.length} photo{failed.length === 1 ? '' : 's'} could not be loaded and{' '}
           {failed.length === 1 ? 'was' : 'were'} left out of this report.
         </p>
+      )}
+
+      {emailDraft != null && (platform === 'windows' || platform === 'macos') && (
+        <EmailComposeDialog
+          draft={emailDraft}
+          onDraftChange={setEmailDraft}
+          open={emailOpen}
+          onOpenChange={setEmailOpen}
+          onSend={(draft) => void handleEmailDraft(draft)}
+          isSending={isDrafting}
+          platform={platform}
+        />
       )}
     </div>
   );

@@ -46,171 +46,7 @@ fn show_main_window(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  // ponytail: migrations inline here. If the count grows, move to a migrations/ dir.
-  let migrations = vec![
-    Migration {
-      version: 1,
-      description: "create initial tables",
-      sql: include_str!("../migrations/001_init.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 2,
-      description: "auth: roles, invitations, settings",
-      sql: include_str!("../migrations/002_auth.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 3,
-      description: "access control: patient owner, org-share, doctor grants",
-      sql: include_str!("../migrations/003_access_control.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 4,
-      description: "storage: configurable photos directory",
-      sql: include_str!("../migrations/004_storage.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 5,
-      description: "signup approval: pending accounts, public signup on",
-      sql: include_str!("../migrations/005_signup_approval.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 6,
-      description: "patients: optional date of birth",
-      sql: include_str!("../migrations/006_patient_dob.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 7,
-      description: "consent tracking, audit log, idle privacy lock",
-      sql: include_str!("../migrations/007_consent_audit.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 8,
-      description: "licence: signed key storage, trial stamp, install ID",
-      sql: include_str!("../migrations/008_licence.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 9,
-      description: "branding: business logo and colour palette",
-      sql: include_str!("../migrations/009_branding.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 10,
-      description: "reviews: patient review dates, alert windows",
-      sql: include_str!("../migrations/010_reviews.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 11,
-      description: "photos: laterality (left/right side of the patient)",
-      sql: include_str!("../migrations/011_laterality.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 12,
-      description: "auth: open public signup by default (invite codes optional)",
-      sql: include_str!("../migrations/012_open_signup_default.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 13,
-      description: "photos: per-photo review stamps + lesion series grouping",
-      sql: include_str!("../migrations/013_photo_review_series.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 14,
-      description: "photos: scheduled review dates (dashboard alerts per photo)",
-      sql: include_str!("../migrations/014_photo_review_due.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 15,
-      description: "photos: per-photo result files (PDF/RTF/… documents)",
-      sql: include_str!("../migrations/015_result_files.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 16,
-      description: "photos: exact pinpoint mark (X) on the body map",
-      sql: include_str!("../migrations/016_photo_pinpoint.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 17,
-      description: "photos: which face (front/back) the pinpoint X was marked on",
-      sql: include_str!("../migrations/017_photo_pin_view.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 18,
-      description: "audit: patient name stored per row (survives renames/deletes)",
-      sql: include_str!("../migrations/018_audit_patient_name.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 19,
-      description: "audit: legacy patient rows attributed, photo labels snapshot",
-      sql: include_str!("../migrations/019_audit_identity_backfill.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 20,
-      description: "licence: activation token (server-side seat enforcement)",
-      sql: include_str!("../migrations/020_licence_activation.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 21,
-      description: "photos: body part optional (inherited when linked into a series)",
-      sql: include_str!("../migrations/021_photo_body_part_optional.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 22,
-      description: "licence: last definitive seat re-validation timestamp",
-      sql: include_str!("../migrations/022_licence_validated.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 23,
-      description: "licence: auto-renew toggle (specs/005), default on",
-      sql: include_str!("../migrations/023_licence_auto_renew.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 24,
-      description: "note templates: per-clinician quick-text phrases + shortcuts",
-      sql: include_str!("../migrations/024_note_templates.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 25,
-      description: "note templates: replace v1 starters (dupe-prone seeds, overlapping content)",
-      sql: include_str!("../migrations/025_note_template_starters_v2.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 26,
-      description: "settings: close-to-tray toggle (system tray with alert counters)",
-      sql: include_str!("../migrations/026_close_to_tray.sql"),
-      kind: MigrationKind::Up,
-    },
-    Migration {
-      version: 27,
-      description: "patients: optional email (prefills report email drafts)",
-      sql: include_str!("../migrations/027_patient_email.sql"),
-      kind: MigrationKind::Up,
-    },
-  ];
+  let migrations = app_migrations();
 
   // Grants the fs plugin runtime access to a user-chosen photo directory
   // (e.g. a cloud-synced folder outside the app data dir). Capability scopes
@@ -311,6 +147,21 @@ pub fn run() {
       // the window, not just focus a hidden webview.
       show_main_window(app);
     }))
+    // Post-mortem breadcrumb: when the Windows WebView2 renderer dies the
+    // window just turns white (no crash event reaches Rust), so camog.log
+    // records each completed navigation — the last line before a white
+    // screen is the page that died. Path only; never the query string
+    // (it can carry a patient id).
+    .on_page_load(|_webview, payload| {
+      if let tauri::webview::PageLoadEvent::Finished = payload.event() {
+        diagnostics::record(
+          diagnostics::Level::Info,
+          "webview",
+          &format!("page loaded: {}", payload.url().path()),
+          None,
+        );
+      }
+    })
     .setup(|app| {
       diagnostics::install_panic_hook();
       // Close-to-tray cache; the tray handles are filled in below once the
@@ -442,6 +293,15 @@ pub fn run() {
             let _ = window.hide();
           }
         }
+      } else if let tauri::WindowEvent::Destroyed = event {
+        // Crash-vs-quiet-quit breadcrumb: a destroyed window followed by a
+        // later "Camog started" marks an unexpected exit in camog.log.
+        diagnostics::record(
+          diagnostics::Level::Info,
+          "window",
+          &format!("window {} destroyed", window.label()),
+          None,
+        );
       }
     })
     .invoke_handler(tauri::generate_handler![
@@ -476,6 +336,219 @@ pub fn run() {
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
+}
+
+
+/// The app's SQLite migrations, registered with tauri-plugin-sql in run().
+/// Extracted from run() so a test can pin the numbering (see migration_tests
+/// below). ponytail: inline here. If the count grows, move to a migrations/ dir.
+fn app_migrations() -> Vec<Migration> {
+  vec![
+    Migration {
+    version: 1,
+    description: "create initial tables",
+    sql: include_str!("../migrations/001_init.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 2,
+    description: "auth: roles, invitations, settings",
+    sql: include_str!("../migrations/002_auth.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 3,
+    description: "access control: patient owner, org-share, doctor grants",
+    sql: include_str!("../migrations/003_access_control.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 4,
+    description: "storage: configurable photos directory",
+    sql: include_str!("../migrations/004_storage.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 5,
+    description: "signup approval: pending accounts, public signup on",
+    sql: include_str!("../migrations/005_signup_approval.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 6,
+    description: "patients: optional date of birth",
+    sql: include_str!("../migrations/006_patient_dob.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 7,
+    description: "consent tracking, audit log, idle privacy lock",
+    sql: include_str!("../migrations/007_consent_audit.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 8,
+    description: "licence: signed key storage, trial stamp, install ID",
+    sql: include_str!("../migrations/008_licence.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 9,
+    description: "branding: business logo and colour palette",
+    sql: include_str!("../migrations/009_branding.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 10,
+    description: "reviews: patient review dates, alert windows",
+    sql: include_str!("../migrations/010_reviews.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 11,
+    description: "photos: laterality (left/right side of the patient)",
+    sql: include_str!("../migrations/011_laterality.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 12,
+    description: "auth: open public signup by default (invite codes optional)",
+    sql: include_str!("../migrations/012_open_signup_default.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 13,
+    description: "photos: per-photo review stamps + lesion series grouping",
+    sql: include_str!("../migrations/013_photo_review_series.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 14,
+    description: "photos: scheduled review dates (dashboard alerts per photo)",
+    sql: include_str!("../migrations/014_photo_review_due.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 15,
+    description: "photos: per-photo result files (PDF/RTF/… documents)",
+    sql: include_str!("../migrations/015_result_files.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 16,
+    description: "photos: exact pinpoint mark (X) on the body map",
+    sql: include_str!("../migrations/016_photo_pinpoint.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 17,
+    description: "photos: which face (front/back) the pinpoint X was marked on",
+    sql: include_str!("../migrations/017_photo_pin_view.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 18,
+    description: "audit: patient name stored per row (survives renames/deletes)",
+    sql: include_str!("../migrations/018_audit_patient_name.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 19,
+    description: "audit: legacy patient rows attributed, photo labels snapshot",
+    sql: include_str!("../migrations/019_audit_identity_backfill.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 20,
+    description: "licence: activation token (server-side seat enforcement)",
+    sql: include_str!("../migrations/020_licence_activation.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 21,
+    description: "photos: body part optional (inherited when linked into a series)",
+    sql: include_str!("../migrations/021_photo_body_part_optional.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 22,
+    description: "licence: last definitive seat re-validation timestamp",
+    sql: include_str!("../migrations/022_licence_validated.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 23,
+    description: "licence: auto-renew toggle (specs/005), default on",
+    sql: include_str!("../migrations/023_licence_auto_renew.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 24,
+    description: "note templates: per-clinician quick-text phrases + shortcuts",
+    sql: include_str!("../migrations/024_note_templates.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 25,
+    description: "note templates: replace v1 starters (dupe-prone seeds, overlapping content)",
+    sql: include_str!("../migrations/025_note_template_starters_v2.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 26,
+    description: "settings: close-to-tray toggle (system tray with alert counters)",
+    sql: include_str!("../migrations/026_close_to_tray.sql"),
+    kind: MigrationKind::Up,
+  },
+  Migration {
+    version: 27,
+    description: "patients: optional email (prefills report email drafts)",
+    sql: include_str!("../migrations/027_patient_email.sql"),
+    kind: MigrationKind::Up,
+  },
+    Migration {
+      version: 28,
+      description: "scaling: global listing indexes",
+      sql: include_str!("../migrations/028_scaling_indexes.sql"),
+      kind: MigrationKind::Up,
+    },
+  ]
+}
+
+#[cfg(test)]
+mod migration_tests {
+  use super::*;
+
+  /// A migration file that exists but isn't registered in app_migrations()
+  /// silently never runs — the same class of miss as the three-file version
+  /// bump in the releases convention. Versions must be contiguous from 1 and
+  /// match the numbered files in src-tauri/migrations exactly.
+  #[test]
+  fn migration_versions_are_contiguous_and_match_files() {
+    let migrations = app_migrations();
+    let versions: Vec<i64> = migrations.iter().map(|m| m.version).collect();
+    let expected: Vec<i64> = (1..=versions.len() as i64).collect();
+    assert_eq!(versions, expected, "migration versions must be contiguous from 1");
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let mut files: Vec<i64> = std::fs::read_dir(&dir)
+      .expect("migrations dir exists")
+      .flatten()
+      .filter_map(|e| {
+        let name = e.file_name().into_string().ok()?;
+        if !name.ends_with(".sql") {
+          return None;
+        }
+        name.split('_').next()?.parse().ok()
+      })
+      .collect();
+    files.sort_unstable();
+    files.dedup();
+    assert_eq!(
+      files, versions,
+      "every migration file must be registered in app_migrations(), and every registration must have a file"
+    );
+  }
 }
 
 // The badge-dot variant must decode to the same dimensions as the plain logo
