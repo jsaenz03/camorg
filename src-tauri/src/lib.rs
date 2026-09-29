@@ -12,10 +12,37 @@ mod remote_camera;
 mod report;
 
 use std::path::{Component, Path};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
-use tauri::Manager;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, Wry};
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 use tauri_plugin_fs::FsExt;
+
+/// Tray + window-close behaviour, shared between the Rust shell and the
+/// webview. The stored setting lives in the settings table (web-owned);
+/// the webview pushes it here on every settings load/change. The window
+/// close handler must answer synchronously, so it reads this cached flag
+/// rather than the database.
+struct TrayPrefs {
+  close_to_tray: AtomicBool,
+  /// Filled once the tray exists in setup(): the summary menu line and the
+  /// tray handle that `update_tray_summary` keeps fresh.
+  summary_item: Mutex<Option<MenuItem<Wry>>>,
+  tray: Mutex<Option<TrayIcon<Wry>>>,
+}
+
+/// Un-hide, un-minimise and focus the main window. The tray icon click, the
+/// tray "Open Camog" item and the single-instance callback all land here.
+fn show_main_window(app: &tauri::AppHandle) {
+  if let Some(webview) = app.get_webview_window("main") {
+    let _ = webview.show();
+    let _ = webview.unminimize();
+    let _ = webview.set_focus();
+  }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -171,6 +198,18 @@ pub fn run() {
       sql: include_str!("../migrations/025_note_template_starters_v2.sql"),
       kind: MigrationKind::Up,
     },
+    Migration {
+      version: 26,
+      description: "settings: close-to-tray toggle (system tray with alert counters)",
+      sql: include_str!("../migrations/026_close_to_tray.sql"),
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 27,
+      description: "patients: optional email (prefills report email drafts)",
+      sql: include_str!("../migrations/027_patient_email.sql"),
+      kind: MigrationKind::Up,
+    },
   ];
 
   // Grants the fs plugin runtime access to a user-chosen photo directory
@@ -219,17 +258,68 @@ pub fn run() {
       })
   }
 
+  /// Web-owned preference: hide to the tray on window close (default on).
+  #[tauri::command]
+  fn set_close_to_tray(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    app
+      .state::<TrayPrefs>()
+      .close_to_tray
+      .store(enabled, Ordering::Relaxed);
+    Ok(())
+  }
+
+  /// Push the pre-formatted alert summary ("2 reviews overdue · 1 consent
+  /// expired") into the tray menu line + tooltip, and swap the tray icon to
+  /// the badge-dot variant while anything needs attention. Formatting stays
+  /// in the webview so the copy lives in one place; Rust is a dumb pipe. An
+  /// empty summary means "all clear".
+  #[tauri::command]
+  fn update_tray_summary(app: tauri::AppHandle, summary: String) -> Result<(), String> {
+    let prefs = app.state::<TrayPrefs>();
+    if let Some(item) = prefs.summary_item.lock().ok().and_then(|g| g.clone()) {
+      let _ = item.set_text(if summary.is_empty() {
+        String::from("Up to date")
+      } else {
+        summary.clone()
+      });
+    }
+    if let Some(tray) = prefs.tray.lock().ok().and_then(|g| g.clone()) {
+      let _ = tray.set_tooltip(if summary.is_empty() {
+        Some(String::from("Camog"))
+      } else {
+        Some(format!("Camog — {summary}"))
+      });
+      // 32x32-alert.png is the plain logo + a #dc2626 badge dot (bottom
+      // right); regenerate it alongside 32x32.png when the logo changes.
+      let icon = if summary.is_empty() {
+        tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
+      } else {
+        tauri::image::Image::from_bytes(include_bytes!("../icons/32x32-alert.png"))
+      };
+      if let Ok(icon) = icon {
+        let _ = tray.set_icon(Some(icon));
+      }
+    }
+    Ok(())
+  }
+
   tauri::Builder::default()
     // Second launch focuses the existing window instead of opening a second
     // process on the same SQLite file (split-brain UI + SQLITE_BUSY writes).
     .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-      if let Some(webview) = app.get_webview_window("main") {
-        let _ = webview.unminimize();
-        let _ = webview.set_focus();
-      }
+      // Covers the hidden-to-tray case too: a second launch must surface
+      // the window, not just focus a hidden webview.
+      show_main_window(app);
     }))
     .setup(|app| {
       diagnostics::install_panic_hook();
+      // Close-to-tray cache; the tray handles are filled in below once the
+      // tray icon exists.
+      app.manage(TrayPrefs {
+        close_to_tray: AtomicBool::new(true),
+        summary_item: Mutex::new(None),
+        tray: Mutex::new(None),
+      });
       // Apply a staged database restore (Settings → Backup & restore) at
       // startup. The config window already exists by setup(), but the sql
       // pool only opens when the webview's JS first calls Database.load —
@@ -288,19 +378,76 @@ pub fn run() {
         &format!("Camog started (v{}, {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS),
         None,
       );
+      // System tray: a disabled summary line the webview keeps fresh (alert
+      // counters), Open and Quit. A left click opens the window on both
+      // platforms; the menu (Open Camog, Quit) is right-click only.
+      let summary_item = MenuItem::with_id(app, "tray-summary", "Up to date", false, None::<&str>)?;
+      let open_item = MenuItem::with_id(app, "tray-open", "Open Camog", true, None::<&str>)?;
+      let quit_item = MenuItem::with_id(app, "tray-quit", "Quit Camog", true, None::<&str>)?;
+      let tray_menu = Menu::with_items(
+        app,
+        &[
+          &summary_item,
+          &PredefinedMenuItem::separator(app)?,
+          &open_item,
+          &quit_item,
+        ],
+      )?;
+      let tray = TrayIconBuilder::with_id("camog-tray")
+        .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
+        .tooltip("Camog")
+        .menu(&tray_menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+          "tray-open" => show_main_window(app),
+          "tray-quit" => app.exit(0),
+          _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+          if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+          } = event
+          {
+            show_main_window(tray.app_handle());
+          }
+        })
+        .build(app)?;
+      let prefs = app.state::<TrayPrefs>();
+      *prefs.summary_item.lock().expect("tray summary item lock") = Some(summary_item);
+      *prefs.tray.lock().expect("tray handle lock") = Some(tray);
       Ok(())
     })
     .plugin(tauri_plugin_dialog::init())
     // Opens the hosted buy page (licence purchase) in the system browser.
     .plugin(tauri_plugin_opener::init())
+    // Local OS notifications for review/consent alerts (generic text only).
+    .plugin(tauri_plugin_notification::init())
     .plugin(
       SqlBuilder::default()
         .add_migrations("sqlite:camog.db", migrations)
         .build(),
     )
     .plugin(tauri_plugin_fs::init())
+    // Close-to-tray: the window close button hides Camog while the tray
+    // keeps running (alert counters stay live). Turned off via Settings →
+    // App settings; Quit in the tray menu always exits for real.
+    .on_window_event(|window, event| {
+      if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        if window.label() == "main" {
+          let prefs = window.app_handle().state::<TrayPrefs>();
+          if prefs.close_to_tray.load(Ordering::Relaxed) {
+            api.prevent_close();
+            let _ = window.hide();
+          }
+        }
+      }
+    })
     .invoke_handler(tauri::generate_handler![
       grant_directory_access,
+      set_close_to_tray,
+      update_tray_summary,
       db_restore::restart_for_restore,
       licence_device::device_id,
       licence_device::device_id_fresh,
@@ -312,6 +459,7 @@ pub fn run() {
       report::generate_case_report,
       report::print_report,
       report::reveal_saved_report,
+      report::email_case_report,
       remote_camera::start_remote_camera,
       remote_camera::stop_remote_camera,
       remote_camera::reset_pairing_token,
@@ -328,4 +476,22 @@ pub fn run() {
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
+}
+
+// The badge-dot variant must decode to the same dimensions as the plain logo
+// and actually differ from it — a missing or placeholder asset would silently
+// no-op the tray attention indicator.
+#[cfg(test)]
+mod tray_icon_tests {
+  use tauri::image::Image;
+
+  #[test]
+  fn alert_tray_icon_decodes_and_differs_from_plain() {
+    let plain = Image::from_bytes(include_bytes!("../icons/32x32.png")).expect("plain icon decodes");
+    let alert =
+      Image::from_bytes(include_bytes!("../icons/32x32-alert.png")).expect("alert icon decodes");
+    assert_eq!((plain.width(), plain.height()), (32, 32));
+    assert_eq!((alert.width(), alert.height()), (32, 32));
+    assert_ne!(plain.rgba(), alert.rgba(), "alert icon carries no visible badge");
+  }
 }

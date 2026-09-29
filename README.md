@@ -4,6 +4,18 @@ A desktop app (Tauri 2 + Next.js) for capturing clinical photos with patient
 metadata. Photos are stored as JPEG files on disk; metadata lives in a local
 SQLite database. Production target: Windows. Dev/test: macOS or Windows.
 
+Since 0.9.0:
+
+- **System tray + close-to-tray** — closing the window hides Camog to the
+  tray (tooltip/menu carry the review-alert counters; Settings → App settings
+  toggles it off) and OS notifications fire once for new review/consent
+  alerts (generic counts only, never patient names).
+- **Email draft handoff** — the report page can open the user's own mail
+  client with the case-report PDF attached (Windows: MAPI compose window;
+  macOS: an .eml opened in Mail — press Forward to send). Camog opens no
+  network connection for this; an optional patient email only prefills the
+  To: line.
+
 ## Prerequisites
 
 1. **Node.js 18+** and npm.

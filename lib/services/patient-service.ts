@@ -34,6 +34,7 @@ const PATIENT_COLUMNS = `
   p.owner_clinician_id, p.is_org_shared,
   p.consent_given_at, p.consent_scope, p.consent_expires_at,
   p.review_due_at, p.last_reviewed_at,
+  p.email,
   owner.display_name AS owner_name,
   -- Null-safe: a grant to the owner is not a share to another clinician.
   (SELECT COUNT(*) FROM patient_shares ps
@@ -64,6 +65,7 @@ function rowToPatient(row: Record<string, unknown>): Patient {
     consentExpiresAt: row.consent_expires_at != null ? new Date(row.consent_expires_at as number) : null,
     reviewDueAt: row.review_due_at != null ? dateFromMs(row.review_due_at as number) : null,
     lastReviewedAt: row.last_reviewed_at != null ? new Date(row.last_reviewed_at as number) : null,
+    email: (row.email as string | null) ?? null,
   };
 }
 
@@ -89,12 +91,12 @@ export class PatientService implements IPatientService {
     const db = await getDB();
     await db.execute(
       `INSERT INTO patients
-         (id, name, normalized_name, dob, photo_count, deleted_photo_count,
+         (id, name, normalized_name, dob, email, photo_count, deleted_photo_count,
           created_at, updated_at, last_photo_at, clinician_id,
           is_archived, archived_at, owner_clinician_id, is_org_shared,
           review_due_at, last_reviewed_at)
-       VALUES ($1, $2, $3, $4, 0, 0, $5, $5, NULL, $6, 0, NULL, $6, 0, NULL, NULL)`,
-      [id, validated.name, normalizedName, dobMs, nowMs, clinician.id],
+       VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $6, NULL, $7, 0, NULL, $7, 0, NULL, NULL)`,
+      [id, validated.name, normalizedName, dobMs, validated.email || null, nowMs, clinician.id],
     );
 
     void auditService.record('patient.create', {
@@ -112,6 +114,7 @@ export class PatientService implements IPatientService {
       name: validated.name,
       normalizedName,
       dateOfBirth: validated.dateOfBirth ?? null,
+      email: validated.email || null,
       photoCount: 0,
       deletedPhotoCount: 0,
       createdAt: new Date(nowMs),
@@ -249,8 +252,8 @@ export class PatientService implements IPatientService {
       `UPDATE patients
          SET name = $1, normalized_name = $2, dob = $3,
              consent_given_at = $4, consent_scope = $5, consent_expires_at = $6,
-             review_due_at = $7, updated_at = $8
-       WHERE id = $9`,
+             review_due_at = $7, email = $8, updated_at = $9
+       WHERE id = $10`,
       [
         validated.name,
         normalizedName,
@@ -259,6 +262,7 @@ export class PatientService implements IPatientService {
         consent.scope,
         consentExpiryMs,
         reviewDueMs,
+        validated.email || null,
         nowMs,
         id,
       ],

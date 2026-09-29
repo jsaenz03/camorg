@@ -141,6 +141,7 @@ export function AppSettingsPanel() {
           idleLockTimeoutMs: s.idleLockTimeoutMs,
           reviewWarningDays: s.reviewWarningDays,
           reviewStaleDays: s.reviewStaleDays,
+          closeToTray: s.closeToTray ?? true,
         });
       })
       .catch((err) => toast.error(err instanceof Error ? err.message : 'Failed to load settings'));
@@ -158,6 +159,7 @@ export function AppSettingsPanel() {
         idleLockTimeoutMs: updated.idleLockTimeoutMs,
         reviewWarningDays: updated.reviewWarningDays,
         reviewStaleDays: updated.reviewStaleDays,
+        closeToTray: updated.closeToTray,
       });
       refreshBranding();
       toast.success('Settings saved');
@@ -315,6 +317,32 @@ export function AppSettingsPanel() {
                       When on, anyone can request access; accounts stay pending
                       until approved in Users. When off, new users can only join
                       via an admin invite.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <input
+                      type="checkbox"
+                      className="size-4"
+                      checked={field.value ?? false}
+                      onChange={(e) => field.onChange(e.target.checked)}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="closeToTray"
+              render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-md border p-3">
+                  <div>
+                    <FormLabel>Keep running in the system tray</FormLabel>
+                    <FormDescription>
+                      Closing the window hides Camog to the system tray, so
+                      review alerts and the tray counters stay live. Off:
+                      closing the window exits the app. Quit is always
+                      available from the tray menu.
                     </FormDescription>
                   </div>
                   <FormControl>

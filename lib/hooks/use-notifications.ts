@@ -18,6 +18,10 @@ import {
   countsFromItems,
   notificationService,
 } from '@/lib/services/notification-service';
+// Side channel: the tray counters (always) and one aggregate OS toast when
+// a new clinical alert appears while the window is hidden/unfocused —
+// patient-free text, deduped inside.
+import { maybeFireOsAlerts, pushTraySummary } from '@/lib/services/os-alerts';
 
 const POLL_MS = 60_000;
 
@@ -40,6 +44,8 @@ export function useNotifications(): UseNotificationsReturn {
       const list = await notificationService.getAttentionItems();
       if (seq !== seqRef.current) return;
       setItems(list);
+      pushTraySummary(list);
+      void maybeFireOsAlerts(list);
     } catch {
       if (seq !== seqRef.current) return;
       setItems([]);

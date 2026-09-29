@@ -22,6 +22,7 @@
     "dialog:default",
     "dialog:allow-confirm",
     "opener:default",
+    "notification:default",
     {
       "identifier": "fs:scope",
       "allow": [

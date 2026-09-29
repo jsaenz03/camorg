@@ -511,6 +511,27 @@ function CaptureFlow({
         if (consentStatus(exactMatch) !== 'valid') {
           needsConsent = exactMatch;
         }
+        // An email typed at capture time lands on the matched record too —
+        // best-effort so a clinician without edit rights still gets the
+        // photo; the email can always be set later via Edit details.
+        const email = formData.patientEmail.trim();
+        if (email && email !== (exactMatch.email ?? '')) {
+          try {
+            await patientService.updatePatient(exactMatch.id, {
+              name: exactMatch.name,
+              dateOfBirth: exactMatch.dateOfBirth,
+              email,
+              consent: {
+                givenAt: exactMatch.consentGivenAt,
+                scope: exactMatch.consentScope,
+                expiresAt: exactMatch.consentExpiresAt,
+              },
+              review: { dueAt: exactMatch.reviewDueAt },
+            });
+          } catch {
+            toast.info("Couldn't save the patient's email — you can add it via Edit details.");
+          }
+        }
       } else {
         // Name-variant guard: without this, "Jon Smith" vs "John Smith" or a
         // typo silently fragments one patient's record across two rows.
@@ -528,6 +549,7 @@ function CaptureFlow({
         const newPatient = await patientService.createPatient({
           name: formData.patientName,
           dateOfBirth: parseDobInput(formData.patientDob),
+          email: formData.patientEmail,
         });
         patientId = newPatient.id;
         needsConsent = newPatient;

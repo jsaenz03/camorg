@@ -200,6 +200,7 @@ function rowToSettings(row: Record<string, unknown>): AppSettings {
     logoDataUrl: (row.logo_data_url as string | null) ?? null,
     reviewWarningDays: (row.review_warning_days as number) ?? 7,
     reviewStaleDays: (row.review_stale_days as number) ?? 90,
+    closeToTray: ((row.close_to_tray as number | null) ?? 1) !== 0,
     updatedAt: new Date(row.updated_at as number),
   };
 }
@@ -382,6 +383,7 @@ export class AuthService implements IAuthService {
         logoDataUrl: null,
         reviewWarningDays: 7,
         reviewStaleDays: 90,
+        closeToTray: true,
         updatedAt: new Date(),
       };
     }
@@ -402,6 +404,7 @@ export class AuthService implements IAuthService {
       logoDataUrl: current.logoDataUrl,
       reviewWarningDays: validated.reviewWarningDays ?? current.reviewWarningDays,
       reviewStaleDays: validated.reviewStaleDays ?? current.reviewStaleDays,
+      closeToTray: validated.closeToTray ?? current.closeToTray,
       updatedAt: new Date(),
     };
     const db = await getDB();
@@ -415,7 +418,8 @@ export class AuthService implements IAuthService {
              brand_accent = $6,
              review_warning_days = $7,
              review_stale_days = $8,
-             updated_at = $9
+             close_to_tray = $9,
+             updated_at = $10
        WHERE id = 'app'`,
       [
         next.sessionTimeoutMs,
@@ -426,6 +430,7 @@ export class AuthService implements IAuthService {
         next.brandAccent,
         next.reviewWarningDays,
         next.reviewStaleDays,
+        next.closeToTray ? 1 : 0,
         next.updatedAt.getTime(),
       ],
     );

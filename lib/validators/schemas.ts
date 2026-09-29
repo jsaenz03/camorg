@@ -100,9 +100,18 @@ export const reviewScheduleSchema = z.object({
 
 export type ReviewScheduleInput = z.infer<typeof reviewScheduleSchema>;
 
+/** Optional patient email ('' allowed — contact details are never required).
+ *  Only used to prefill the recipient on report email drafts. */
+const optionalEmailSchema = z
+  .string()
+  .trim()
+  .max(254, 'Email must be 254 characters or less')
+  .refine((v) => v === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), 'Enter a valid email address');
+
 export const patientCreateSchema = z.object({
   name: z.string().min(1, 'Patient name is required').max(100, 'Patient name must be 100 characters or less').trim(),
   dateOfBirth: dateOfBirthSchema.optional(), // optional: DOB is never required
+  email: optionalEmailSchema.optional(), // optional: contact details are never required
 });
 
 export const patientUpdateSchema = z.object({
@@ -110,6 +119,9 @@ export const patientUpdateSchema = z.object({
   // Explicit, no .default(): an omitted dateOfBirth must fail validation
   // rather than silently clear the stored DOB. Callers pass null to clear.
   dateOfBirth: dateOfBirthSchema,
+  // Same rule: an omitted email must fail rather than silently clear.
+  // Callers pass '' to clear.
+  email: optionalEmailSchema,
   consent: consentSchema,
   review: reviewScheduleSchema,
 });
@@ -228,6 +240,8 @@ export const settingsUpdateSchema = z.object({
   /** Review alert windows, in days. */
   reviewWarningDays: z.number().int().min(0).max(365).optional(),
   reviewStaleDays: z.number().int().min(7).max(730).optional(),
+  /** Keep running in the system tray when the window is closed. */
+  closeToTray: z.boolean().optional(),
 });
 
 /** The business logo as an inline data URL (already downscaled by the UI).

@@ -453,6 +453,13 @@ const editPatientSchema = z.object({
   reviewDueAt: z
     .string()
     .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), 'Enter a valid date'),
+  /** Optional email; only prefills the recipient on report email drafts.
+   *  '' = none recorded. */
+  email: z
+    .string()
+    .trim()
+    .max(254, 'Email must be 254 characters or less')
+    .refine((v) => v === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), 'Enter a valid email address'),
 });
 
 type EditPatientValues = z.infer<typeof editPatientSchema>;
@@ -488,6 +495,7 @@ function EditPatientDialog({
       consentScope: patient.consentScope ?? '',
       consentExpiresAt: patient.consentExpiresAt ? format(patient.consentExpiresAt, 'yyyy-MM-dd') : '',
       reviewDueAt: patient.reviewDueAt ? format(patient.reviewDueAt, 'yyyy-MM-dd') : '',
+      email: patient.email ?? '',
     },
   });
 
@@ -523,6 +531,7 @@ function EditPatientDialog({
         review: {
           dueAt: values.reviewDueAt ? new Date(`${values.reviewDueAt}T00:00:00`) : null,
         },
+        email: values.email,
       });
       notifyAttentionChanged();
       toast.success('Patient details updated');
@@ -545,7 +554,8 @@ function EditPatientDialog({
         <DialogHeader>
           <DialogTitle>Edit patient details</DialogTitle>
           <DialogDescription>
-            Update the patient name, date of birth, consent, or review schedule.
+            Update the patient name, date of birth, email, consent, or review
+            schedule.
           </DialogDescription>
         </DialogHeader>
 
@@ -583,6 +593,24 @@ function EditPatientDialog({
                   </FormControl>
                   <FormDescription>
                     Optional — type it (e.g. 4/2/85) or use the calendar. Leave blank for none.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email (optional)</FormLabel>
+                  <FormControl>
+                    <Input type="email" {...field} value={field.value ?? ''} disabled={isSaving} />
+                  </FormControl>
+                  <FormDescription>
+                    Used only to prefill the recipient when you email a report
+                    draft from this patient&apos;s timeline. Leave blank for none.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -14,6 +14,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { brandStyleCss } from '@/lib/branding';
 import { authService } from '@/lib/services/auth-service';
 
@@ -78,6 +79,10 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
           reviewWarningDays: s.reviewWarningDays,
           reviewStaleDays: s.reviewStaleDays,
         });
+        // Push the close-to-tray preference to the Rust shell so the window
+        // close handler matches the stored setting. Runs on boot and again
+        // whenever the admin saves App settings (which calls refresh()).
+        void invoke('set_close_to_tray', { enabled: s.closeToTray ?? true }).catch(() => {});
       })
       .catch(() => {});
   }, []);

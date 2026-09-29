@@ -38,5 +38,7 @@ export interface AppSettings {
   reviewWarningDays: number;
   /** Photos but no review scheduled for this long flags the patient stale. */
   reviewStaleDays: number;
+  /** Keep running in the system tray when the window is closed (migration 026). */
+  closeToTray: boolean;
   updatedAt: Date;
 }

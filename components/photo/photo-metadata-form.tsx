@@ -67,6 +67,14 @@ const photoMetadataFormSchema = z.object({
       (v) => !v.trim() || parseDobInput(v) !== null,
       'Enter a valid date, e.g. 4/2/85 or 04/02/1985',
     ),
+  /** Optional patient email: saved when the patient is created here, or
+      recorded onto the matched existing patient at capture time. Only ever
+      used to prefill the recipient on report email drafts. */
+  patientEmail: z
+    .string()
+    .trim()
+    .max(254, 'Email must be 254 characters or less')
+    .refine((v) => v === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), 'Enter a valid email address'),
   /** Optional: a photo saved without one inherits the body part of the
       photo it is linked into a series with. */
   bodyPart: z.nativeEnum(BodyPart, {
@@ -121,6 +129,7 @@ export function PhotoMetadataForm({
     defaultValues: {
       patientName: defaultValues?.patientName || '',
       patientDob: defaultValues?.patientDob || '',
+      patientEmail: defaultValues?.patientEmail || '',
       bodyPart: defaultValues?.bodyPart || undefined,
       laterality: defaultValues?.laterality,
       subpart: defaultValues?.subpart || '',
@@ -227,6 +236,33 @@ export function PhotoMetadataForm({
               {!patientLocked && (
                 <FormDescription>
                   Optional — type it (e.g. 4/2/85) or use the calendar. Enables search by date of birth.
+                </FormDescription>
+              )}
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* Patient Email (optional) */}
+        <FormField
+          control={form.control}
+          name="patientEmail"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Email (optional)</FormLabel>
+              <FormControl>
+                <Input
+                  type="email"
+                  placeholder="patient@example.com"
+                  {...field}
+                  value={field.value ?? ''}
+                  disabled={isSubmitting || patientLocked}
+                />
+              </FormControl>
+              {!patientLocked && (
+                <FormDescription>
+                  Saved on the patient record and used to prefill the recipient
+                  when you email a report draft. Leave blank for none.
                 </FormDescription>
               )}
               <FormMessage />

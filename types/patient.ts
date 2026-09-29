@@ -17,6 +17,10 @@ export interface Patient {
   name: string; // Display name (as entered)
   normalizedName: string; // Lowercase, trimmed for case-insensitive search
   dateOfBirth: Date | null; // Optional DOB, stored as UTC-midnight unix ms
+  /** Optional email (migration 027). Only used to prefill the recipient when
+   *  the report page opens an email draft in the clinician's own mail client;
+   *  never rendered into reports and never transmitted by Camog itself. */
+  email: string | null;
 
   // Metadata
   photoCount: number; // Denormalized count of active photos

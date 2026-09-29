@@ -16,7 +16,7 @@ import { useState, useEffect, useMemo, Suspense } from 'react';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
-import { ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react';
+import { ArrowLeft, FileDown, Loader2, Mail, Printer } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import { consentStatus, ConsentScopeLabels } from '@/types/patient';
 import { BodyPartLabels, bodyPartSurfaceLabel, type BodyPart, type Laterality, type Pinpoint } from '@/types/body-part';
@@ -76,7 +76,16 @@ function ReportView() {
   const [preparedBy, setPreparedBy] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isDrafting, setIsDrafting] = useState(false);
   const [failed, setFailed] = useState<string[]>([]);
+  // Resolved after mount so the server-prerendered HTML and the first client
+  // render agree (no hydration mismatch); the button appears once known.
+  const [platform, setPlatform] = useState<'unknown' | 'windows' | 'macos' | 'other'>('unknown');
+
+  useEffect(() => {
+    const ua = navigator.userAgent;
+    setPlatform(/Windows/.test(ua) ? 'windows' : /Mac/.test(ua) ? 'macos' : 'other');
+  }, []);
 
   useEffect(() => {
     if (!patientId) {
@@ -211,6 +220,37 @@ function ReportView() {
     return counts;
   }, [photos]);
 
+  /** The shared report payload for Save PDF and the email draft — same
+   *  renderer on the Rust side, so both produce identical PDFs. */
+  function buildReportRequest(savePath: string) {
+    return {
+      savePath,
+      patientName: patient!.name,
+      dateOfBirth: patient!.dateOfBirth ? formatDateOfBirth(patient!.dateOfBirth) : null,
+      treatingClinician: patient!.ownerName ?? null,
+      preparedBy,
+      preparedAt: format(new Date(), 'dd/MM/yyyy, h:mm a'),
+      consentLabel: consentText,
+      consentValid: consent === 'valid',
+      photoCountLabel,
+      timelineLabel,
+      photos: photos.map((p) => ({
+        path: p.path,
+        capturedLabel: format(p.capturedAt, 'dd/MM/yyyy'),
+        bodyPart: siteLabel(p),
+        bodyPartKey: p.bodyPartKey,
+        laterality: p.laterality,
+        pinX: p.pin?.x ?? null,
+        pinY: p.pin?.y ?? null,
+        pinSpace: p.pin?.space ?? null,
+        pinView: p.pin?.view ?? null,
+        subpart: p.subpart,
+        clinicalNotes: p.clinicalNotes,
+        seriesLabel: p.lesionGroup,
+      })),
+    };
+  }
+
   function handlePrint() {
     // WKWebView's window.print() is a silent no-op; go through Tauri's
     // native print dialog instead.
@@ -239,32 +279,7 @@ function ReportView() {
     setIsGenerating(true);
     try {
       const outcome = await invoke<{ pageCount: number }>('generate_case_report', {
-        request: {
-          savePath: target,
-          patientName: patient.name,
-          dateOfBirth: patient.dateOfBirth ? formatDateOfBirth(patient.dateOfBirth) : null,
-          treatingClinician: patient.ownerName ?? null,
-          preparedBy,
-          preparedAt: format(new Date(), 'dd/MM/yyyy, h:mm a'),
-          consentLabel: consentText,
-          consentValid: consent === 'valid',
-          photoCountLabel,
-          timelineLabel,
-          photos: photos.map((p) => ({
-            path: p.path,
-            capturedLabel: format(p.capturedAt, 'dd/MM/yyyy'),
-            bodyPart: siteLabel(p),
-            bodyPartKey: p.bodyPartKey,
-            laterality: p.laterality,
-            pinX: p.pin?.x ?? null,
-            pinY: p.pin?.y ?? null,
-            pinSpace: p.pin?.space ?? null,
-            pinView: p.pin?.view ?? null,
-            subpart: p.subpart,
-            clinicalNotes: p.clinicalNotes,
-            seriesLabel: p.lesionGroup,
-          })),
-        },
+        request: buildReportRequest(target),
       });
       void auditService.record('photo.export', {
         entityType: 'patient',
@@ -287,6 +302,62 @@ function ReportView() {
       toast.error(errorText(error), { duration: 8000 });
     } finally {
       setIsGenerating(false);
+    }
+  }
+
+  /**
+   * Email draft handoff: the PDF is rendered locally exactly as for
+   * Save PDF, then handed to the clinician's own mail client as a draft —
+   * MAPISendMail on Windows, an .eml opened in Mail on macOS (press
+   * Forward to send). Nothing is sent by Camog; the stored patient email,
+   * if any, only prefills the To: line. Audited like print/save.
+   */
+  async function handleEmailDraft() {
+    if (!patient || photos.length === 0 || isDrafting) return;
+    if (platform !== 'windows' && platform !== 'macos') return;
+
+    setIsDrafting(true);
+    try {
+      const outcome = await invoke<{ pageCount: number }>('email_case_report', {
+        request: buildReportRequest(''),
+        recipient: patient.email || null,
+      });
+      // Audited only on a successful handoff, like Save PDF — a failed
+      // MAPI/.eml open must not enter the trail as "draft opened".
+      void auditService.record('photo.export', {
+        entityType: 'patient',
+        entityId: patientId,
+        patientId,
+        detail: `case report email draft opened (${photos.length} photos)`,
+      });
+      if (platform === 'macos') {
+        toast.success('Draft opened in Mail — press Forward to send it', {
+          description: `The PDF is attached (${outcome.pageCount} ${
+            outcome.pageCount === 1 ? 'page' : 'pages'
+          }).`,
+        });
+      } else {
+        // MAPI's compose window is modal, so this toast lands after the
+        // clinician closes it — confirm the handoff, don't instruct
+        // mid-draft.
+        toast.success(
+          patient.email
+            ? 'Draft handed to your email app — recipient prefilled'
+            : 'Draft handed to your email app — add the recipient before sending',
+          {
+            description: `The PDF is attached (${outcome.pageCount} ${
+              outcome.pageCount === 1 ? 'page' : 'pages'
+            }).`,
+          }
+        );
+      }
+    } catch (error) {
+      toast.error(errorText(error), {
+        duration: 8000,
+        description: 'You can still use Save PDF and attach the file yourself.',
+      });
+    } finally {
+      setIsDrafting(false);
     }
   }
 
@@ -322,6 +393,20 @@ function ReportView() {
             <Printer className="size-4" />
             Print
           </Button>
+          {(platform === 'windows' || platform === 'macos') && (
+            <Button
+              variant="outline"
+              onClick={() => void handleEmailDraft()}
+              disabled={photos.length === 0 || isDrafting}
+            >
+              {isDrafting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Mail className="size-4" />
+              )}
+              Email draft
+            </Button>
+          )}
           <Button
             onClick={() => void handleSavePdf()}
             disabled={photos.length === 0 || isGenerating}

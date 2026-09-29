@@ -483,7 +483,7 @@ fn draw_body_map(
   pin: Option<(f32, f32)>,
 ) {
   let view = if matches!(body_part, "back" | "scalp") { "back" } else { "front" };
-  let regions: &[MapRegion] = if view == "back" { &BACK_MAP } else { &FRONT_MAP };
+  let regions: &[MapRegion] = if view == "back" { BACK_MAP } else { FRONT_MAP };
   let k = BODY_MAP_H / 320.0;
 
   let draw_region = |s: &mut Surface, region: &MapRegion, hit: bool| {
@@ -1282,6 +1282,429 @@ pub fn reveal_saved_report(path: String) -> Result<(), String> {
   })
 }
 
+// ---- email draft handoff ----
+//
+// A local-only handoff, not a sending feature: the PDF is rendered exactly
+// as for "Save PDF", then handed to the clinician's own mail client as a
+// draft — MAPISendMailW (Windows) or a temporary .eml opened in Mail
+// (macOS). Camog opens no network connection for this; nothing is sent
+// until the user presses Send in their own client (same posture as
+// printing the report, and the webview writes the matching audit entry).
+
+/// Subject line for the draft (both platforms).
+fn draft_subject(patient_name: &str) -> String {
+  format!("Clinical photo report — {patient_name}")
+}
+
+/// Plain-text body. Windows MAPI bodies cannot be HTML; the attached PDF is
+/// the formatted artefact (the macOS .eml path gets an HTML variant below).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // test-covered; used by the Windows MAPI handoff
+fn draft_body_text(req: &ReportRequest) -> String {
+  let mut body = format!(
+    "A clinical photo report for {} is attached as a PDF.\n\nPrepared by: {}\nPrepared: {}\nPhotos: {}",
+    req.patient_name, req.prepared_by, req.prepared_at, req.photo_count_label
+  );
+  if let Some(timeline) = &req.timeline_label {
+    body.push_str(&format!("\nTimeline: {timeline}"));
+  }
+  body.push_str(&format!("\nConsent on record: {}", req.consent_label));
+  body
+}
+
+/// Escape text interpolated into the HTML body (patient/clinician names are
+/// free text from the webview).
+#[cfg(target_os = "macos")]
+fn html_escape(value: &str) -> String {
+  value
+    .replace('&', "&amp;")
+    .replace('<', "&lt;")
+    .replace('>', "&gt;")
+}
+
+/// Trust boundary: the recipient arrives over IPC from the webview (the
+/// stored patient email). Strip every whitespace character so a stray
+/// newline can't split MIME headers or smuggle extra recipients.
+fn sanitise_recipient(recipient: &str) -> String {
+  recipient.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Attachment file name derived from the patient name, with the same
+/// character set blanked as the webview's sanitiseFileToken.
+fn draft_attachment_name(patient_name: &str) -> String {
+  let cleaned: String = patient_name
+    .chars()
+    .map(|c| {
+      if matches!(c, '/' | '\\' | '?' | '%' | '*' | ':' | '|' | '"' | '<' | '>') {
+        ' '
+      } else {
+        c
+      }
+    })
+    .collect();
+  format!(
+    "Camog case report - {}.pdf",
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+  )
+}
+
+/// Build the RFC-822 draft handed to Mail.app on macOS: an inline-styled
+/// HTML body plus the PDF as a base64 attachment. The subject is RFC 2047
+/// encoded so non-ASCII patient names survive; X-Unsent marks the message
+/// as a draft for Outlook-family clients. `recipient` is already sanitised.
+#[cfg(target_os = "macos")]
+fn build_eml(
+  subject: &str,
+  recipient: Option<&str>,
+  html_body: &str,
+  attachment_name: &str,
+  pdf: &[u8],
+) -> String {
+  use base64::engine::general_purpose::STANDARD;
+  use base64::Engine;
+  const BOUNDARY: &str = "camog-draft-boundary-2b7f41";
+
+  let mut eml = String::new();
+  if let Some(to) = recipient {
+    eml.push_str(&format!("To: {to}\n"));
+  }
+  eml.push_str(&format!(
+    "Subject: =?utf-8?B?{}?=\n",
+    STANDARD.encode(subject.as_bytes())
+  ));
+  eml.push_str("MIME-Version: 1.0\n");
+  eml.push_str("X-Unsent: 1\n");
+  eml.push_str(&format!(
+    "Content-Type: multipart/mixed; boundary=\"{BOUNDARY}\"\n\n"
+  ));
+
+  eml.push_str(&format!("--{BOUNDARY}\n"));
+  eml.push_str("Content-Type: text/html; charset=\"utf-8\"\n");
+  eml.push_str("Content-Transfer-Encoding: 8bit\n\n");
+  eml.push_str(html_body);
+  eml.push_str("\n\n");
+
+  eml.push_str(&format!("--{BOUNDARY}\n"));
+  eml.push_str(&format!(
+    "Content-Type: application/pdf; name=\"{attachment_name}\"\n"
+  ));
+  eml.push_str("Content-Transfer-Encoding: base64\n");
+  eml.push_str(&format!(
+    "Content-Disposition: attachment; filename=\"{attachment_name}\"\n\n"
+  ));
+  let encoded = STANDARD.encode(pdf);
+  for chunk in encoded.as_bytes().chunks(76) {
+    eml.push_str(std::str::from_utf8(chunk).expect("base64 is ascii"));
+    eml.push('\n');
+  }
+  eml.push_str(&format!("--{BOUNDARY}--\n"));
+  eml
+}
+
+/// HTML variant of the body (macOS .eml only — Mail renders it inline).
+#[cfg(target_os = "macos")]
+fn draft_body_html(req: &ReportRequest) -> String {
+  let timeline = req
+    .timeline_label
+    .as_deref()
+    .map(|t| format!("<li>Timeline: {}</li>", html_escape(t)))
+    .unwrap_or_default();
+  format!(
+    "<html><body style=\"font-family: -apple-system, 'Segoe UI', sans-serif; color: #18181b; font-size: 14px; line-height: 1.5;\">\n\
+     <p>A clinical photo report for <strong>{}</strong> is attached as a PDF.</p>\n\
+     <ul style=\"padding-left: 1.2em;\">\n\
+     <li>Prepared by: {}</li>\n\
+     <li>Prepared: {}</li>\n\
+     <li>Photos: {}</li>\n\
+     {}\n\
+     <li>Consent on record: {}</li>\n\
+     </ul>\n\
+     <p style=\"color: #71717a; font-size: 12px;\">Generated locally with Camog. The attached PDF contains the clinical photos and notes.</p>\n\
+     </body></html>",
+    html_escape(&req.patient_name),
+    html_escape(&req.prepared_by),
+    html_escape(&req.prepared_at),
+    html_escape(&req.photo_count_label),
+    timeline,
+    html_escape(&req.consent_label),
+  )
+}
+
+#[tauri::command]
+pub async fn email_case_report(
+  request: ReportRequest,
+  recipient: Option<String>,
+) -> Result<ReportOutcome, String> {
+  let photo_count = request.photos.len();
+  // The Windows compose window is modal — MAPISendMailW blocks until the
+  // clinician closes it — and sync commands run on the main thread, so the
+  // handoff must go to the blocking pool or the app and tray freeze for the
+  // life of the draft.
+  let result = tauri::async_runtime::spawn_blocking(move || {
+    email_case_report_inner(request, recipient)
+  })
+  .await
+  .map_err(|e| format!("Email draft task failed: {e}"))?;
+  // Diagnostics stay patient-free (counts only), as for report generation.
+  match result {
+    Ok(outcome) => {
+      crate::diagnostics::record(
+        crate::diagnostics::Level::Info,
+        "report",
+        &format!(
+          "Email draft handed to the mail client ({} photos, {} pages)",
+          photo_count, outcome.page_count
+        ),
+        None,
+      );
+      Ok(outcome)
+    }
+    Err(e) => {
+      crate::diagnostics::record(crate::diagnostics::Level::Error, "report", &e, None);
+      Err(e)
+    }
+  }
+}
+
+/// Drafts are a few MB each; sweep leftovers older than a day on every
+/// handoff instead of tracking deletion across mail clients that read the
+/// staged file at unpredictable times. ponytail: full temp-dir scan per
+/// send; upgrade path is an in-memory set of paths this process staged.
+fn sweep_stale_drafts() {
+  let cutoff = std::time::SystemTime::now()
+    .checked_sub(std::time::Duration::from_secs(24 * 60 * 60));
+  let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+    return;
+  };
+  for entry in entries.flatten() {
+    if entry.file_name().to_string_lossy().starts_with("camog-report-draft-") {
+      if let (Ok(meta), Some(cutoff)) = (entry.metadata(), cutoff) {
+        if meta.modified().map(|m| m < cutoff).unwrap_or(false) {
+          let _ = std::fs::remove_file(entry.path());
+        }
+      }
+    }
+  }
+}
+
+fn email_case_report_inner(
+  mut request: ReportRequest,
+  recipient: Option<String>,
+) -> Result<ReportOutcome, String> {
+  sweep_stale_drafts();
+  let recipient = recipient
+    .as_deref()
+    .map(sanitise_recipient)
+    .filter(|r| !r.is_empty());
+  let stamp = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis())
+    .unwrap_or(0);
+  let pdf_path = std::env::temp_dir().join(format!("camog-report-draft-{stamp}.pdf"));
+  request.save_path = pdf_path.to_string_lossy().into_owned();
+
+  // Byte-identical to the Save PDF output: same renderer, same request.
+  let outcome = generate_case_report_inner(request.clone())?;
+  let pdf =
+    std::fs::read(&pdf_path).map_err(|e| format!("Could not read back the generated PDF: {e}"))?;
+  let attachment_name = draft_attachment_name(&request.patient_name);
+
+  #[cfg(target_os = "windows")]
+  {
+    let result = mapi::send_mail(
+      &draft_subject(&request.patient_name),
+      &draft_body_text(&request),
+      recipient.as_deref(),
+      &pdf_path.to_string_lossy(),
+      &attachment_name,
+    );
+    let _ = &pdf; // read back for the macOS .eml path only
+    result?;
+    Ok(outcome)
+  }
+
+  #[cfg(target_os = "macos")]
+  {
+    let eml_path = std::env::temp_dir().join(format!("camog-report-draft-{stamp}.eml"));
+    let eml = build_eml(
+      &draft_subject(&request.patient_name),
+      recipient.as_deref(),
+      &draft_body_html(&request),
+      &attachment_name,
+      &pdf,
+    );
+    std::fs::write(&eml_path, eml)
+      .map_err(|e| format!("Could not stage the email draft: {e}"))?;
+    // The .eml embeds the PDF bytes; Mail never opens the file itself.
+    let _ = std::fs::remove_file(&pdf_path);
+    std::process::Command::new("open")
+      .arg(&eml_path)
+      .spawn()
+      .map_err(|e| format!("Could not open Mail: {e}"))?;
+    Ok(outcome)
+  }
+
+  #[cfg(all(unix, not(target_os = "macos"), not(target_os = "windows")))]
+  {
+    let _ = (pdf, attachment_name, recipient, outcome, &pdf_path);
+    let _ = std::fs::remove_file(&pdf_path);
+    Err(String::from("Email drafts are available on Windows and macOS."))
+  }
+}
+
+/// Minimal Simple MAPI binding, Unicode variant (MAPISendMailW, Windows 8+):
+/// just enough to open a reviewed compose window with one attachment in the
+/// clinician's own mail client. Hand-rolled FFI (kernel32 + mapi32) to avoid
+/// a windows-rs dependency; the struct layout is pinned by a test.
+/// ponytail: if this grows past one recipient / plain text (e.g. HTML bodies
+/// via extended MAPI), switch to the windows crate.
+#[cfg(target_os = "windows")]
+mod mapi {
+  use std::ffi::{c_void, CString};
+  use std::os::raw::c_char;
+  use std::os::raw::c_ulong;
+
+  pub const MAPI_LOGON_UI: c_ulong = 0x0000_0001;
+  pub const MAPI_DIALOG: c_ulong = 0x0000_0008;
+  const MAPI_TO: c_ulong = 1;
+  const SUCCESS_SUCCESS: c_ulong = 0;
+  const MAPI_E_USER_ABORT: c_ulong = 1; // compose window closed unsent
+
+  #[repr(C)]
+  #[derive(Clone, Copy)]
+  pub struct MapiRecipDescW {
+    pub reserved: c_ulong,
+    pub recip_class: c_ulong,
+    pub name: *mut u16,
+    pub address: *mut u16,
+    pub entry_size: c_ulong,
+    pub entry_id: *mut c_void,
+  }
+
+  #[repr(C)]
+  #[derive(Clone, Copy)]
+  pub struct MapiFileDescW {
+    pub reserved: c_ulong,
+    pub flags: c_ulong,
+    pub position: c_ulong,
+    pub path_name: *mut u16,
+    pub file_name: *mut u16,
+    pub file_type: *mut c_void,
+  }
+
+  #[repr(C)]
+  pub struct MapiMessageW {
+    pub reserved: c_ulong,
+    pub subject: *mut u16,
+    pub note_text: *mut u16,
+    pub message_type: *mut u16,
+    pub date_received: *mut u16,
+    pub conversation_id: *mut u16,
+    pub flags: c_ulong,
+    pub originator: *mut MapiRecipDescW,
+    pub recip_count: c_ulong,
+    pub recips: *mut MapiRecipDescW,
+    pub file_count: c_ulong,
+    pub files: *mut MapiFileDescW,
+  }
+
+  type MapiSendMailW =
+    unsafe extern "system" fn(usize, usize, *mut MapiMessageW, c_ulong, c_ulong) -> c_ulong;
+
+  /// UTF-16, NUL-terminated.
+  fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+  }
+
+  /// Open the default mail client's compose window with the attachment,
+  /// prefilled subject/body and optional To: recipient. Blocks until the
+  /// compose window closes.
+  pub fn send_mail(
+    subject: &str,
+    body: &str,
+    recipient: Option<&str>,
+    attachment_path: &str,
+    attachment_name: &str,
+  ) -> Result<(), String> {
+    extern "system" {
+      fn LoadLibraryW(filename: *const u16) -> isize;
+      fn GetProcAddress(module: isize, name: *const c_char) -> *mut c_void;
+      fn FreeLibrary(module: isize);
+    }
+
+    let subject_w = wide(subject);
+    let body_w = wide(body);
+    let path_w = wide(attachment_path);
+    let name_w = wide(attachment_name);
+
+    let mut recip = MapiRecipDescW {
+      reserved: 0,
+      recip_class: MAPI_TO,
+      name: std::ptr::null_mut(),
+      address: std::ptr::null_mut(),
+      entry_id: std::ptr::null_mut(),
+      entry_size: 0,
+    };
+    let recipient_w = recipient.map(wide);
+    if let Some(w) = &recipient_w {
+      recip.name = w.as_ptr() as *mut u16;
+    }
+    let (recip_count, recips) = if recipient_w.is_some() {
+      (1 as c_ulong, &mut recip as *mut MapiRecipDescW)
+    } else {
+      (0, std::ptr::null_mut())
+    };
+
+    let mut file = MapiFileDescW {
+      reserved: 0,
+      flags: 0,
+      position: c_ulong::MAX, // attachment goes at the end of the body
+      path_name: path_w.as_ptr() as *mut u16,
+      file_name: name_w.as_ptr() as *mut u16,
+      file_type: std::ptr::null_mut(),
+    };
+    let mut message = MapiMessageW {
+      reserved: 0,
+      subject: subject_w.as_ptr() as *mut u16,
+      note_text: body_w.as_ptr() as *mut u16,
+      message_type: std::ptr::null_mut(),
+      date_received: std::ptr::null_mut(),
+      conversation_id: std::ptr::null_mut(),
+      flags: 0,
+      originator: std::ptr::null_mut(),
+      recip_count,
+      recips,
+      file_count: 1,
+      files: &mut file,
+    };
+
+    let dll: Vec<u16> = "mapi32.dll\0".encode_utf16().collect();
+    let module = unsafe { LoadLibraryW(dll.as_ptr()) };
+    if module == 0 {
+      return Err(String::from(
+        "Windows MAPI (mapi32.dll) could not be loaded. You can use Save PDF and attach the file yourself.",
+      ));
+    }
+    let proc_name = CString::new("MAPISendMailW").expect("no interior NUL");
+    let proc = unsafe { GetProcAddress(module, proc_name.as_ptr()) };
+    if proc.is_null() {
+      unsafe { FreeLibrary(module) };
+      return Err(String::from(
+        "This Windows version lacks the Unicode MAPI entry point. You can use Save PDF and attach the file yourself.",
+      ));
+    }
+    let send: MapiSendMailW = unsafe { std::mem::transmute(proc) };
+    let code = unsafe { send(0, 0, &mut message, MAPI_DIALOG | MAPI_LOGON_UI, 0) };
+    unsafe { FreeLibrary(module) };
+
+    match code {
+      SUCCESS_SUCCESS | MAPI_E_USER_ABORT => Ok(()),
+      other => Err(format!(
+        "The mail client could not open a draft (MAPI error {other}). You can use Save PDF and attach the file yourself."
+      )),
+    }
+  }
+}
+
 // ---- tests ----
 
 #[cfg(test)]
@@ -1486,5 +1909,130 @@ mod tests {
       let _ = std::fs::write(format!("{dir}/report-test.pdf"), &bytes2);
     }
     assert_content_operators(&bytes2, photos.len());
+  }
+
+  #[test]
+  fn recipient_is_stripped_of_header_breaking_whitespace() {
+    // Trust boundary: the stored patient email arrives over IPC; a newline
+    // must never reach a MIME header or smuggle extra recipients.
+    assert_eq!(
+      sanitise_recipient("patient@example.com\nBcc: x@example.com"),
+      "patient@example.comBcc:x@example.com"
+    );
+    assert_eq!(sanitise_recipient("  a@b.com "), "a@b.com");
+  }
+
+  #[test]
+  fn attachment_name_tracks_the_webviews_file_sanitiser() {
+    assert_eq!(
+      draft_attachment_name("Amina: Fouad/lekka"),
+      "Camog case report - Amina Fouad lekka.pdf"
+    );
+    assert_eq!(
+      draft_attachment_name("  Double  spaces  "),
+      "Camog case report - Double spaces.pdf"
+    );
+  }
+
+  #[test]
+  fn plain_text_body_carries_the_report_facts() {
+    let req = ReportRequest {
+      save_path: String::new(),
+      patient_name: String::from("Amina Fouad"),
+      date_of_birth: None,
+      treating_clinician: None,
+      prepared_by: String::from("Dr Sarah Whitlam"),
+      prepared_at: String::from("25/08/2026, 2:05 pm"),
+      consent_label: String::from("Clinical care"),
+      consent_valid: true,
+      photo_count_label: String::from("3 photos"),
+      timeline_label: Some(String::from("01/03/2024 to 07/03/2024")),
+      photos: vec![],
+    };
+    let body = draft_body_text(&req);
+    assert!(body.contains("attached as a PDF"));
+    assert!(body.contains("Dr Sarah Whitlam"));
+    assert!(body.contains("3 photos"));
+    assert!(body.contains("01/03/2024 to 07/03/2024"));
+    assert!(body.contains("Clinical care"));
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn eml_draft_encodes_headers_escapes_html_and_attaches_the_pdf() {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+
+    let req = ReportRequest {
+      save_path: String::new(),
+      // HTML metacharacters must arrive escaped in the HTML body.
+      patient_name: String::from("Amina <Fouad> & Sons"),
+      date_of_birth: None,
+      treating_clinician: None,
+      prepared_by: String::from("Dr Sarah Whitlam"),
+      prepared_at: String::from("25/08/2026, 2:05 pm"),
+      consent_label: String::from("Clinical care"),
+      consent_valid: true,
+      photo_count_label: String::from("3 photos"),
+      timeline_label: None,
+      photos: vec![],
+    };
+    let html = draft_body_html(&req);
+    assert!(html.contains("Amina &lt;Fouad&gt; &amp; Sons"), "{html}");
+    assert!(!html.contains("<Fouad>"), "{html}");
+
+    let pdf_bytes = b"%PDF-1.7 tiny fixture";
+    let eml = build_eml(
+      &draft_subject("Amina Fouad"),
+      Some("patient@example.com"),
+      &html,
+      "Camog case report - Amina Fouad.pdf",
+      pdf_bytes,
+    );
+    assert!(eml.starts_with("To: patient@example.com\n"), "{eml}");
+    // RFC 2047 subject decodes back to the exact string (em dash survives).
+    let encoded_subject = eml
+      .lines()
+      .find(|l| l.starts_with("Subject: "))
+      .unwrap()
+      .strip_prefix("Subject: =?utf-8?B?")
+      .unwrap()
+      .strip_suffix("?=")
+      .unwrap();
+    assert_eq!(
+      STANDARD.decode(encoded_subject).unwrap(),
+      draft_subject("Amina Fouad").into_bytes()
+    );
+    assert!(eml.contains("X-Unsent: 1"));
+    assert!(eml.contains("Content-Type: application/pdf"));
+    assert!(eml.contains(
+      "Content-Disposition: attachment; filename=\"Camog case report - Amina Fouad.pdf\""
+    ));
+    assert!(eml.contains(&STANDARD.encode(pdf_bytes)));
+    assert!(eml.trim_end().ends_with("--camog-draft-boundary-2b7f41--"));
+  }
+
+  #[cfg(all(test, target_os = "windows"))]
+  mod mapi_layout {
+    use super::super::mapi::*;
+    use std::os::raw::c_void;
+    use std::os::raw::c_ulong;
+
+    fn void_ptr() -> *mut c_void {
+      std::ptr::null_mut()
+    }
+
+    // The structs must mirror win32/x64 exactly: u32 fields pad to the next
+    // pointer boundary. A mismatch here means the FFI drifted from win32.
+    // (40/40/96 with 4-byte c_ulong — 48/48 would be the LP64/macOS layout.)
+    #[test]
+    fn ffi_struct_sizes_match_win32_x64() {
+      assert_eq!(std::mem::size_of::<c_ulong>(), 4);
+      let _ = void_ptr();
+      assert_eq!(std::mem::size_of::<MapiRecipDescW>(), 40);
+      assert_eq!(std::mem::size_of::<MapiFileDescW>(), 40);
+      assert_eq!(std::mem::size_of::<MapiMessageW>(), 96);
+      assert_eq!(std::mem::align_of::<MapiMessageW>(), 8);
+    }
   }
 }
