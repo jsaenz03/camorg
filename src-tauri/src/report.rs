@@ -1349,7 +1349,7 @@ fn draft_body_text(req: &ReportRequest) -> String {
 
 /// Escape text interpolated into the HTML body (patient/clinician names are
 /// free text from the webview).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn html_escape(value: &str) -> String {
   value
     .replace('&', "&amp;")
@@ -2596,7 +2596,7 @@ mod tests {
     assert!(body.contains("Clinical care"));
   }
 
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   #[test]
   fn eml_draft_encodes_headers_escapes_html_and_attaches_the_pdf() {
     use base64::engine::general_purpose::STANDARD;
