@@ -344,10 +344,11 @@ function ReportView() {
   /**
    * Email draft handoff: the PDF is rendered locally exactly as for
    * Save PDF, then handed to the clinician's own mail client as a draft —
-   * MAPISendMail on Windows, an .eml opened in Mail on macOS (press
-   * Forward to send) — with the message they composed in EmailComposeDialog.
-   * Nothing is sent by Camog; the To line only prefills from the edited
-   * draft. Audited like print/save.
+   * MAPISendMail on Windows, an .eml opened in the mail client otherwise
+   * (macOS always; Windows too when no MAPI client is registered — press
+   * Send or Forward there) — with the message they composed in
+   * EmailComposeDialog. Nothing is sent by Camog; the To line only
+   * prefills from the edited draft. Audited like print/save.
    */
   async function handleEmailDraft(draft: EmailDraft) {
     if (!patient || photos.length === 0 || isDrafting) return;
@@ -387,6 +388,16 @@ function ReportView() {
       }
       if (platform === 'macos') {
         toast.success('Draft opened in Mail — press Forward to send it', {
+          description: `The PDF is attached (${outcome.pageCount} ${
+            outcome.pageCount === 1 ? 'page' : 'pages'
+          }).`,
+        });
+      } else if (outcome.handoff === 'eml') {
+        // No MAPI client on this PC: the .eml draft opened in the machine's
+        // .eml handler with the HTML body and PDF embedded. Outlook-family
+        // clients may open it as an editable draft (Send) or a read view
+        // (Forward) — both preserve attachment and formatting.
+        toast.success('Draft opened in your email app — press Send or Forward to send it', {
           description: `The PDF is attached (${outcome.pageCount} ${
             outcome.pageCount === 1 ? 'page' : 'pages'
           }).`,

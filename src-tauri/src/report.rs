@@ -131,9 +131,12 @@ pub struct ReportOutcome {
   /// How an email draft left the device, so the webview can say what the
   /// clinician still has to do: None for Save PDF and the macOS .eml path
   /// (attachment embedded); "mapi" — compose window with the PDF attached;
-  /// "mailto" — compose window without the attachment (no MAPI client on
-  /// this PC; the PDF was saved to Downloads for manual attach);
-  /// "saved-only" — no mail app at all (PDF saved to Downloads + revealed).
+  /// "eml" — Windows with no MAPI client: the .eml draft (HTML body +
+  /// embedded PDF) opened in the machine's .eml handler, Send or Forward
+  /// from there; "mailto" — compose window without the attachment (no MAPI
+  /// client and no .eml handler; the PDF was saved to Downloads for manual
+  /// attach); "saved-only" — no mail app at all (PDF saved to Downloads +
+  /// revealed).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub handoff: Option<String>,
 }
@@ -1318,10 +1321,11 @@ fn reveal_in_file_manager(path: &str) -> Result<(), String> {
 //
 // A local-only handoff, not a sending feature: the PDF is rendered exactly
 // as for "Save PDF", then handed to the clinician's own mail client as a
-// draft — MAPISendMailW (Windows) or a temporary .eml opened in Mail
-// (macOS). Camog opens no network connection for this; nothing is sent
-// until the user presses Send in their own client (same posture as
-// printing the report, and the webview writes the matching audit entry).
+// draft — MAPISendMailW, or a temporary .eml opened in the mail client
+// (macOS always; Windows when no MAPI client is registered). Camog opens no
+// network connection for this; nothing is sent until the user presses Send
+// in their own client (same posture as printing the report, and the webview
+// writes the matching audit entry).
 
 /// Subject line for the draft (both platforms).
 fn draft_subject(patient_name: &str) -> String {
@@ -1470,11 +1474,12 @@ fn draft_attachment_name(patient_name: &str) -> String {
   )
 }
 
-/// Build the RFC-822 draft handed to Mail.app on macOS: an inline-styled
-/// HTML body plus the PDF as a base64 attachment. The subject is RFC 2047
+/// Build the RFC-822 draft handed to Mail.app on macOS and to the machine's
+/// .eml handler on Windows (the no-MAPI fallback): an inline-styled HTML
+/// body plus the PDF as a base64 attachment. The subject is RFC 2047
 /// encoded so non-ASCII patient names survive; X-Unsent marks the message
 /// as a draft for Outlook-family clients. `recipient` is already sanitised.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn build_eml(
   subject: &str,
   recipient: Option<&str>,
@@ -1523,8 +1528,9 @@ fn build_eml(
   eml
 }
 
-/// HTML variant of the body (macOS .eml only — Mail renders it inline).
-#[cfg(target_os = "macos")]
+/// HTML variant of the body (the .eml paths — Mail and Windows .eml
+/// handlers render it inline).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn draft_body_html(req: &ReportRequest) -> String {
   let timeline = req
     .timeline_label
@@ -1550,6 +1556,19 @@ fn draft_body_html(req: &ReportRequest) -> String {
     timeline,
     html_escape(&req.consent_label),
   )
+}
+
+/// The composed HTML verbatim when present, else the stock draft body —
+/// shared by the macOS .eml path and the Windows no-MAPI .eml fallback.
+/// (An empty/whitespace composition reads as "back to the standard
+/// wording", matching the subject handling in email_case_report_inner.)
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn eml_html_body(custom: Option<&CustomDraft>, request: &ReportRequest) -> String {
+  custom
+    .map(|c| c.body_html.trim())
+    .filter(|b| !b.is_empty())
+    .map(str::to_owned)
+    .unwrap_or_else(|| draft_body_html(request))
 }
 
 #[tauri::command]
@@ -1635,7 +1654,8 @@ fn email_case_report_inner(
     .filter(|s| !s.is_empty())
     .unwrap_or_else(|| draft_subject(&request.patient_name));
   // Simple MAPI and mailto: carry plain text only, so a custom HTML body is
-  // converted once here and shared by both Windows handoffs.
+  // converted once here for those two Windows handoffs (the .eml fallback
+  // uses the HTML verbatim instead).
   #[cfg(target_os = "windows")]
   let custom_body_text = custom
     .as_ref()
@@ -1662,7 +1682,7 @@ fn email_case_report_inner(
     // Thunderbird…). "New Outlook for Windows" and webmail-only machines
     // have none, and the mapi32 stub then answers with the shell's "There
     // is no email program associated…" dialog. Detect that up front and
-    // take the mailto: path instead, so the clinician never sees that
+    // stage an .eml draft instead, so the clinician never sees that
     // dead end.
     if mapi::available() {
       let body = custom_body_text.unwrap_or_else(|| draft_body_text(&request));
@@ -1673,44 +1693,75 @@ fn email_case_report_inner(
         &pdf_path.to_string_lossy(),
         &attachment_name,
       );
-      let _ = &pdf; // read back for the macOS .eml path only
+      let _ = &pdf; // read back for the .eml paths only
       result?;
       outcome.handoff = Some(String::from("mapi"));
       Ok(outcome)
     } else {
-      outcome.handoff = Some(String::from(mailto_fallback(
-        &request,
+      // No MAPI client: stage the same .eml the macOS side uses — the HTML
+      // body and the embedded PDF both survive, and the machine's .eml
+      // handler (new Outlook registers one) opens the message to Send or
+      // Forward. Only when no app claims .eml does the mailto: path take
+      // over.
+      let html_body = eml_html_body(custom.as_ref(), &request);
+      let eml_path = std::env::temp_dir().join(format!("camog-report-draft-{stamp}.eml"));
+      let eml = build_eml(
         &subject,
-        custom_body_text,
         recipient.as_deref(),
-        &pdf_path,
+        &html_body,
         &attachment_name,
-        download_dir.as_deref(),
-      )?));
-      Ok(outcome)
+        &pdf,
+      );
+      std::fs::write(&eml_path, eml)
+        .map_err(|e| format!("Could not stage the email draft: {e}"))?;
+      match win_shell::open_default(&eml_path.to_string_lossy()) {
+        Ok(()) => {
+          // The .eml embeds the PDF bytes; nothing needs the temp copy.
+          let _ = std::fs::remove_file(&pdf_path);
+          crate::diagnostics::record(
+            crate::diagnostics::Level::Info,
+            "report",
+            "No MAPI client — .eml draft opened (HTML body + attached PDF)",
+            None,
+          );
+          outcome.handoff = Some(String::from("eml"));
+          Ok(outcome)
+        }
+        Err(e) => {
+          // No .eml association on this PC: drop the staged draft and fall
+          // back to mailto:, which saves the PDF to Downloads for a manual
+          // attach.
+          crate::diagnostics::record(
+            crate::diagnostics::Level::Info,
+            "report",
+            &format!("No .eml handler — falling back to mailto: {e}"),
+            None,
+          );
+          let _ = std::fs::remove_file(&eml_path);
+          outcome.handoff = Some(String::from(mailto_fallback(
+            &request,
+            &subject,
+            custom_body_text,
+            recipient.as_deref(),
+            &pdf_path,
+            &attachment_name,
+            download_dir.as_deref(),
+          )?));
+          Ok(outcome)
+        }
+      }
     }
   }
 
   #[cfg(target_os = "macos")]
   {
-    let _ = &download_dir; // used by the Windows mailto fallback only
-    let default_html;
-    let html_body: &str = match custom
-      .as_ref()
-      .map(|c| c.body_html.trim())
-      .filter(|b| !b.is_empty())
-    {
-      Some(body) => body,
-      None => {
-        default_html = draft_body_html(&request);
-        &default_html
-      }
-    };
+    let _ = &download_dir; // used by the Windows fallbacks only
+    let html_body = eml_html_body(custom.as_ref(), &request);
     let eml_path = std::env::temp_dir().join(format!("camog-report-draft-{stamp}.eml"));
     let eml = build_eml(
       &subject,
       recipient.as_deref(),
-      html_body,
+      &html_body,
       &attachment_name,
       &pdf,
     );
@@ -1802,7 +1853,8 @@ fn unique_download_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf
   unreachable!("the u64 counter cannot run out")
 }
 
-/// No-MAPI handoff: copy the PDF into Downloads (revealed in the file
+/// Last-resort no-MAPI handoff (this PC has no .eml handler either): copy
+/// the PDF into Downloads (revealed in the file
 /// manager, because the clinician must attach it manually) and open a
 /// mailto: compose in whatever Mail app the machine defaults to. `subject`
 /// and `custom_body_text` carry the compose dialog's custom wording when

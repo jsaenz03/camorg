@@ -17,8 +17,8 @@
  * authored HTML cannot execute, so it cannot touch the app.
  *
  * Confirming hands the wording to email_case_report (Rust) exactly as for
- * the one-click flow: PDF rendered locally and attached, nothing sent by
- * Camog.
+ * the one-click flow: PDF rendered locally and handed over with the draft,
+ * nothing sent by Camog.
  */
 
 import { useState } from 'react';
@@ -46,7 +46,8 @@ interface EmailComposeDialogProps {
   /** Runs the handoff with the current draft; resolves on success. */
   onSend: (draft: EmailDraft) => void;
   isSending: boolean;
-  /** Windows MAPI/mailto bodies are plain text — the helper copy says so. */
+  /** Windows MAPI/mailto bodies are plain text (.eml keeps HTML) — the
+   *  helper copy says so. */
   platform: 'windows' | 'macos';
 }
 
@@ -78,9 +79,9 @@ export function EmailComposeDialog({
           <DialogHeader>
             <DialogTitle>Email case report</DialogTitle>
             <DialogDescription>
-              Edit the message that opens in your email app with the report PDF
-              attached. Nothing is sent until you press Send in your own email
-              app.
+              Edit the message that opens in your email app alongside the
+              report PDF. Nothing is sent until you send it from your own
+              email app.
             </DialogDescription>
           </DialogHeader>
 
@@ -170,7 +171,7 @@ export function EmailComposeDialog({
                   />
                   <p id="email-body-hint" className="text-sm text-muted-foreground">
                     {platform === 'windows'
-                      ? 'HTML message. Your Windows email app shows it as plain text; the attached PDF keeps the formatting.'
+                      ? 'HTML message. Most Windows email apps open it with the formatting and the PDF attached; if yours shows plain text, the PDF keeps the formatting.'
                       : 'HTML message — Preview shows it as your mail app will render it.'}
                   </p>
                 </TabsContent>

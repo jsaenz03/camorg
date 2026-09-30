@@ -448,6 +448,21 @@ check(
   read('app/(dashboard)/settings/page.tsx').includes('NoteTemplatesPanel'),
 );
 
+// 15. Email draft handoff: on Windows without a MAPI client the shell
+//     stages an .eml (HTML body + embedded PDF) and only falls back to
+//     mailto: when no .eml handler exists; the report page toasts the
+//     difference so the clinician knows whether to attach or Forward.
+check(
+  'report page toasts the .eml handoff (Send or Forward, PDF attached)',
+  read('app/(dashboard)/patients/report/page.tsx').includes("outcome.handoff === 'eml'"),
+);
+check(
+  'Windows no-MAPI path stages the .eml draft before the mailto fallback',
+  /No MAPI client: stage the same \.eml[\s\S]*?build_eml\([\s\S]*?mailto_fallback\(/.test(
+    read('src-tauri/src/report.rs'),
+  ),
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);
