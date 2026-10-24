@@ -45,6 +45,7 @@ import {
   extractRenewal,
   verifyStripeSignature,
 } from './fulfil.mjs';
+import { renderLegalDoc } from './legal-render.mjs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -101,6 +102,9 @@ export default {
         if (!(await isAdmin(request, env))) return json({ error: 'unauthorised' }, 401);
         return await listLicences(url, env);
       }
+      if (request.method === 'GET' && /^\/legal\/[\w.-]+\.md$/.test(url.pathname)) {
+        return await legalDoc(url, env);
+      }
       return json({ error: 'not_found' }, 404);
     } catch (err) {
       if (err instanceof ActivationError) {
@@ -111,6 +115,21 @@ export default {
     }
   },
 };
+
+// Legal documents: public/legal/*.md is the single source of truth (also
+// bundled into the app and linked from the Store listing). Served as branded
+// HTML rendered at request time from the markdown — no second copy to drift.
+async function legalDoc(url, env) {
+  const asset = await env.ASSETS.fetch(url);
+  if (!asset.ok) return json({ error: 'not_found' }, 404);
+  const md = await asset.text();
+  return new Response(renderLegalDoc(md), {
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=300',
+    },
+  });
+}
 
 async function activate(request, env) {
   const body = await request.json().catch(() => null);

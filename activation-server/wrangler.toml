@@ -8,9 +8,12 @@ compatibility_date = "2026-08-01"
 
 # Static assets (landing page + the public legal documents the Microsoft
 # Store listing links to) are served directly; API routes fall through to
-# the worker.
+# the worker. /legal/*.md is the exception: the worker runs first there so
+# it can render the raw markdown into a branded page (src/legal-render.mjs).
 [assets]
 directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/legal/*"]
 
 [vars]
 # Vendor licence public key — public by design (pair of the private key in
