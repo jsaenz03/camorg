@@ -2,6 +2,7 @@
 // tauri-plugin-fs (photo files). App-level Rust commands: photo-directory
 // scope grants and the phone-camera tether server.
 
+mod backup_keychain;
 mod diagnostics;
 mod db_restore;
 mod licence_activation;
@@ -309,6 +310,9 @@ pub fn run() {
       set_close_to_tray,
       update_tray_summary,
       db_restore::restart_for_restore,
+      backup_keychain::backup_passphrase_get,
+      backup_keychain::backup_passphrase_set,
+      backup_keychain::backup_passphrase_delete,
       licence_device::device_id,
       licence_device::device_id_fresh,
       licence_device::device_id_adopt,

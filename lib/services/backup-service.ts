@@ -46,6 +46,9 @@ import { ValidationError } from '@/lib/validators/errors';
 /** Backups kept before the oldest is pruned (one per createBackup call). */
 const KEEP_BACKUPS = 10;
 
+/** Automatic backups run at most once a day, on the first eligible check. */
+const AUTO_BACKUP_INTERVAL_MS = 86_400_000;
+
 /**
  * Newest schema this app can open (highest migration version in
  * src-tauri/src/lib.rs). A backup from a newer schema is refused below —
@@ -109,7 +112,10 @@ class BackupService {
    * bad backup is a data-loss trap). Admin-only: the snapshot contains every
    * clinician's patient data.
    */
-  async createBackup(passphrase: string): Promise<BackupResult> {
+  async createBackup(
+    passphrase: string,
+    trigger: 'manual' | 'auto' = 'manual',
+  ): Promise<BackupResult> {
     await accessService.requireAdmin();
     assertValidPassphrase(passphrase);
     const db = await getDB();
@@ -129,7 +135,7 @@ class BackupService {
     // ponytail: inline the path as an escaped SQL literal — VACUUM INTO takes
     // an expression, so bound params work on modern SQLite, but sqlx/param
     // handling varies by driver version and a mis-bind fails silently late.
-    // If backup targets grow (scheduled, network), switch to a Rust command.
+    // Scheduled backups reuse this path; network targets move to Rust.
     const literal = `'${target.replace(/'/g, "''")}'`;
     await db.execute(`VACUUM INTO ${literal}`);
 
@@ -151,10 +157,67 @@ class BackupService {
 
     void auditService.record('backup.create', {
       entityType: 'database',
-      detail: `${filename} (encrypted)`,
+      detail: `${filename} (encrypted${trigger === 'auto' ? ', automatic' : ''})`,
     });
 
     return { path: target, createdAt: now };
+  }
+
+  /** The passphrase saved for automatic backups; null when none is stored. */
+  async getSavedPassphrase(): Promise<string | null> {
+    const saved = await invoke<string | null>('backup_passphrase_get');
+    return saved ?? null;
+  }
+
+  /**
+   * Save (or replace) the passphrase automatic backups reuse. It lives in
+   * the OS credential store (src-tauri/src/backup_keychain.rs) — never in
+   * the database it protects, which a restore swaps wholesale.
+   */
+  async savePassphrase(passphrase: string): Promise<void> {
+    assertValidPassphrase(passphrase);
+    await invoke('backup_passphrase_set', { passphrase });
+  }
+
+  /** Stop automatic backups: forget the saved passphrase. Existing backups stay. */
+  async forgetPassphrase(): Promise<void> {
+    await invoke('backup_passphrase_delete');
+  }
+
+  /**
+   * The daily automatic backup. The saved passphrase is the on switch, an
+   * administrator session is required, and the newest backup must be a day
+   * old. Never throws — the caller chooses what to surface; failures land
+   * in diagnostics so an unattended miss is traceable.
+   */
+  async maybeAutoBackup(): Promise<
+    'done' | 'not-due' | 'off' | 'skipped' | 'failed'
+  > {
+    const passphrase = await this.getSavedPassphrase().catch(() => null);
+    if (!passphrase) return 'off';
+    try {
+      await accessService.requireAdmin();
+    } catch {
+      return 'skipped';
+    }
+    const last = await this.getLastBackupAt().catch(() => null);
+    if (last && Date.now() - last.getTime() < AUTO_BACKUP_INTERVAL_MS) {
+      return 'not-due';
+    }
+    try {
+      await this.createBackup(passphrase, 'auto');
+      return 'done';
+    } catch (err) {
+      console.warn('[backup] automatic backup failed:', err);
+      await invoke('record_web_diagnostic', {
+        level: 'error',
+        source: 'backup',
+        message: `Automatic backup failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      }).catch(() => {});
+      return 'failed';
+    }
   }
 
   /** Timestamp of the newest camog-backup-*.db in the photos dir, null if none. */

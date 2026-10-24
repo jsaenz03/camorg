@@ -463,6 +463,27 @@ check(
   ),
 );
 
+// 16. Automatic backup: the passphrase lives in the OS credential store via
+//     the backup_keychain commands, the service gates the daily run on it,
+//     and the dashboard kicks the check while a session is live.
+for (const cmd of [
+  'backup_passphrase_get',
+  'backup_passphrase_set',
+  'backup_passphrase_delete',
+]) {
+  check(`lib.rs registers backup_keychain::${cmd}`, libRs.includes(`backup_keychain::${cmd}`));
+}
+const backupServiceSrc = read('lib/services/backup-service.ts');
+check(
+  'backup service keys maybeAutoBackup off the saved passphrase',
+  backupServiceSrc.includes("'backup_passphrase_get'") &&
+    backupServiceSrc.includes('maybeAutoBackup'),
+);
+check(
+  'dashboard layout kicks the automatic backup',
+  read('app/(dashboard)/layout.tsx').includes('maybeAutoBackup'),
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

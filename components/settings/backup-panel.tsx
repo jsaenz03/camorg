@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import {
+  CalendarClock,
   Database,
   FileDown,
   Loader2,
@@ -36,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { PasswordInput } from '@/components/ui/password-input';
 import { toast } from 'sonner';
 
@@ -53,6 +55,8 @@ export function BackupPanel() {
   const [restorePassphrase, setRestorePassphrase] = useState('');
   const [isPreparing, setIsPreparing] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [autoSaved, setAutoSaved] = useState(false);
+  const [rememberAuto, setRememberAuto] = useState(true);
 
   useEffect(() => {
     refreshBackups();
@@ -70,6 +74,10 @@ export function BackupPanel() {
     } catch {
       // can't read the folder — don't nag on top of it
     }
+    backupService
+      .getSavedPassphrase()
+      .then((saved) => setAutoSaved(saved !== null))
+      .catch(() => {});
   }
 
   const passReady =
@@ -85,6 +93,18 @@ export function BackupPanel() {
       const result = await backupService.createBackup(passphrase);
       setLastBackup(result);
       setStale(false);
+      if (rememberAuto) {
+        await backupService
+          .savePassphrase(passphrase)
+          .then(() => setAutoSaved(true))
+          .catch((err: unknown) =>
+            toast.error(
+              `Backup created, but saving the passphrase for automatic backups failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+      }
       // Don't leave the secret sitting in form state.
       setPassphrase('');
       setConfirmPassphrase('');
@@ -147,6 +167,21 @@ export function BackupPanel() {
     }
   }
 
+  async function handleForgetAuto() {
+    const ok = await confirmDialog(
+      'Turn off automatic backups? Camog stops backing up on its own and forgets the saved passphrase. Backup files already written stay.',
+    );
+    if (!ok) return;
+    try {
+      await backupService.forgetPassphrase();
+      setAutoSaved(false);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Could not turn off automatic backups.',
+      );
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -191,6 +226,18 @@ export function BackupPanel() {
             />
           </div>
         </div>
+        <label className="flex items-start gap-2 text-sm">
+          <Checkbox
+            checked={rememberAuto}
+            onCheckedChange={(v) => setRememberAuto(v === true)}
+            className="mt-0.5"
+          />
+          <span className="text-muted-foreground">
+            Use for automatic backups — Camog keeps this passphrase in the OS
+            credential store (macOS Keychain / Windows Credential Manager) and
+            repeats the backup once a day on its own.
+          </span>
+        </label>
         <div className="flex flex-wrap items-center gap-3">
           <Button onClick={handleBackup} disabled={isBacking || !passReady}>
             {isBacking ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
@@ -207,7 +254,32 @@ export function BackupPanel() {
           encrypted backup — record it with your practice’s critical credentials. Older backups
           (before encrypted backups were introduced) are plain files and restore without a
           passphrase; delete them once a newer encrypted backup exists.
+          Automatic backups reuse the saved passphrase, so those files stay
+          restorable too.
         </p>
+
+        <div className="rounded-md border bg-muted/40 p-3 text-sm">
+          <p className="flex items-center gap-2 font-medium">
+            <CalendarClock className="size-4" /> Automatic backups
+          </p>
+          {autoSaved ? (
+            <>
+              <p className="mt-1 text-muted-foreground">
+                On — Camog backs up once a day with the saved passphrase
+                (stored in this machine&rsquo;s OS credential store, never in
+                the database it protects).
+              </p>
+              <Button variant="outline" size="sm" className="mt-2" onClick={handleForgetAuto}>
+                Turn off automatic backups
+              </Button>
+            </>
+          ) : (
+            <p className="mt-1 text-muted-foreground">
+              Off — create a backup with <em>Use for automatic backups</em>{" "}
+              ticked and Camog repeats it daily on its own.
+            </p>
+          )}
+        </div>
 
         <div className="rounded-md border bg-muted/40 p-3 text-sm">
           <p className="font-medium">To restore a backup</p>

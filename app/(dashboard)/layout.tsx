@@ -8,7 +8,8 @@
  *
  * Auth gate: redirects to /login when no session is present. Holds a minimal
  * skeleton while the session is resolving so we never flash protected UI.
- * Also mounts the idle privacy lock (Settings → App → idle timeout) and
+ * Also mounts the idle privacy lock (Settings → App → idle timeout), kicks
+ * the daily automatic backup, and
  * blocks on a must-change-passcode screen for temporary-passcode accounts
  * (precreated invitations, dev seed) until a new passcode is set.
  */
@@ -30,6 +31,8 @@ import { LicenceBanner } from '@/components/licence/licence-banner';
 import { ChangePasscodeForm } from '@/components/settings/change-passcode-form';
 import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
+import { backupService } from '@/lib/services/backup-service';
+import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 
 function IdleLockGate() {
@@ -50,6 +53,38 @@ function IdleLockGate() {
   }, []);
 
   return <IdleLockOverlay timeoutMs={timeoutMs} />;
+}
+
+/**
+ * Automatic backup kick: with a session live, run the daily backup check
+ * (off unless a passphrase is saved in the OS credential store) and re-check
+ * hourly so a machine left open past midnight still gets backed up.
+ */
+function AutoBackupKick() {
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => {
+      void backupService.maybeAutoBackup().then((status) => {
+        if (cancelled) return;
+        if (status === 'done') {
+          toast.success('Automatic backup created', {
+            description: 'Encrypted snapshot saved to the photo storage folder.',
+          });
+        } else if (status === 'failed') {
+          toast.warning('Automatic backup failed', {
+            description: 'Back up manually from Settings → Backup & restore.',
+          });
+        }
+      });
+    };
+    run();
+    const timer = setInterval(run, 3_600_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+  return null;
 }
 
 /**
@@ -168,6 +203,7 @@ export default function DashboardLayout({
           <CaptureHost />
         </CompanionProvider>
       </CaptureProvider>
+      <AutoBackupKick />
       <IdleLockGate />
     </SidebarProvider>
   );
