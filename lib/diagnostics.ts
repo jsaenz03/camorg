@@ -124,7 +124,7 @@ export function initDiagnostics(): void {
   };
 }
 
-export type DiskEncryptionState = 'on' | 'off' | 'unknown';
+export type DiskEncryptionState = 'on' | 'off' | 'home' | 'unknown';
 
 export interface DiskEncryptionStatus {
   state: DiskEncryptionState;
@@ -147,7 +147,10 @@ export function diskEncryptionStatus(): Promise<DiskEncryptionStatus> {
       .then((info) => info.version)
       .catch(() => ''),
   ]).then(([rawState, appVersion]) => ({
-    state: rawState === 'on' || rawState === 'off' ? rawState : 'unknown',
+    state:
+      rawState === 'on' || rawState === 'off' || rawState === 'home'
+        ? rawState
+        : 'unknown',
     appVersion,
   }));
   return encryptionStatusPromise;

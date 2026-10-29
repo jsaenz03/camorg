@@ -57,6 +57,8 @@ const initialHealth: Health = {
 function encryptionLabel(state: DiskEncryptionState | 'checking'): string {
   if (state === 'on') return 'on (BitLocker/FileVault)';
   if (state === 'off') return 'OFF — patient details are readable if the device is lost';
+  if (state === 'home')
+    return 'unavailable on Windows Home — check Settings → Privacy & security → Device encryption';
   if (state === 'unknown') return 'could not verify';
   return 'checking…';
 }

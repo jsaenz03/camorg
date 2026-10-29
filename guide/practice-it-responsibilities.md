@@ -22,8 +22,11 @@ Notifiable Data Breaches scheme.
 
 Camog checks this at startup: an unencrypted volume raises a warning banner
 above the dashboard, and Settings → Diagnostics shows the current state
-("Disk encryption"). The app warns; it deliberately never blocks — enforcing
-device policy is the practice's decision, not the software's.
+("Disk encryption"). On Windows Home edition Camog cannot read the status
+without admin rights — it says so and points at Settings → Privacy & security
+→ Device encryption (full BitLocker requires Windows Pro). The app warns; it
+deliberately never blocks — enforcing device policy is the practice's
+decision, not the software's.
 
 ## 2. Physical security of the vault machine
 

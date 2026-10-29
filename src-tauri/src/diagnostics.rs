@@ -148,7 +148,9 @@ pub fn diagnostics_info(app: tauri::AppHandle) -> DiagnosticsInfo {
 /// and the Settings → Diagnostics line. Advisory only: photos are
 /// app-encrypted, but the database inherits the volume's protection, and
 /// turning BitLocker/FileVault on is a practice IT decision the app cannot
-/// make. Async so the one-shot OS tooling runs off the main thread.
+/// make. "home" is Windows Home edition, where no non-admin probe exists
+/// and the UI points at Settings → Device encryption instead. Async so the
+/// one-shot OS tooling runs off the main thread.
 #[tauri::command]
 pub async fn disk_encryption_status() -> &'static str {
   match std::env::consts::OS {
@@ -159,14 +161,77 @@ pub async fn disk_encryption_status() -> &'static str {
       .filter(|out| out.status.success())
       .and_then(|out| parse_fdesetup(&String::from_utf8_lossy(&out.stdout)))
       .unwrap_or("unknown"),
-    "windows" => std::process::Command::new("manage-bde")
-      .args(["-status", "C:"])
-      .output()
-      .ok()
-      .map(|out| parse_manage_bde(&String::from_utf8_lossy(&out.stdout)))
-      .unwrap_or("unknown"),
+    "windows" => windows_encryption_status(),
     _ => "unknown",
   }
+}
+
+/// Windows probe, in order: `manage-bde -status` answers without elevation
+/// on Pro/Enterprise; `Get-BitLockerVolume` covers builds where it doesn't.
+/// On Home neither works unelevated (jsaenz-desktop: "ERROR: An attempt to
+/// access a required resource was denied") — there is no non-admin query at
+/// all, so report "home" and let the UI give the honest instruction.
+fn windows_encryption_status() -> &'static str {
+  let manage_bde = std::process::Command::new("manage-bde")
+    .args(["-status", "C:"])
+    .output()
+    .ok()
+    .map(|out| parse_manage_bde(&String::from_utf8_lossy(&out.stdout)));
+  let ps = std::process::Command::new("powershell")
+    .args([
+      "-NoProfile",
+      "-Command",
+      "(Get-BitLockerVolume -MountPoint $env:SystemDrive).ProtectionStatus.ToString()",
+    ])
+    .output()
+    .ok()
+    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned());
+  decide_windows_status(manage_bde, ps.as_deref(), windows_home_edition())
+}
+
+/// The evidence table behind the Windows probe: a parsed manage-bde answer
+/// wins, then the PowerShell cmdlet, then Home edition is named explicitly;
+/// anything else stays "unknown" rather than guessing.
+fn decide_windows_status(
+  manage_bde: Option<&'static str>,
+  ps: Option<&str>,
+  home: bool,
+) -> &'static str {
+  if let Some("on" | "off") = manage_bde {
+    return manage_bde.unwrap();
+  }
+  match ps {
+    Some("On") => return "on",
+    Some("Off") => return "off",
+    _ => {}
+  }
+  if home {
+    return "home";
+  }
+  "unknown"
+}
+
+/// Home or not: `reg query` of ProductName — world-readable and English on
+/// every display locale ("Windows 10/11 Home"), so a plain contains-check
+/// is enough.
+fn windows_home_edition() -> bool {
+  std::process::Command::new("reg")
+    .args([
+      "query",
+      r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+      "/v",
+      "ProductName",
+    ])
+    .output()
+    .map(|out| reg_product_name_is_home(&String::from_utf8_lossy(&out.stdout)))
+    .unwrap_or(false)
+}
+
+fn reg_product_name_is_home(stdout: &str) -> bool {
+  stdout
+    .lines()
+    .find_map(|line| line.split("REG_SZ").nth(1))
+    .is_some_and(|value| value.contains("Home"))
 }
 
 /// `fdesetup isactive` prints exactly "true" or "false".
@@ -320,5 +385,37 @@ mod tests {
     assert_eq!(parse_fdesetup("true\n"), Some("on"));
     assert_eq!(parse_fdesetup("false\n"), Some("off"));
     assert_eq!(parse_fdesetup("Unexpected error"), None);
+  }
+
+  #[test]
+  fn manage_bde_elevation_denial_reads_unknown() {
+    // The literal shape from jsaenz-desktop (Windows 10 Home, standard user).
+    let denied = "BitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\n\
+                  Copyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\n\
+                  ERROR: An attempt to access a required resource was denied.\r\n\r\n\
+                  Check that you have administrative rights on the computer.\r\n";
+    assert_eq!(parse_manage_bde(denied), "unknown");
+  }
+
+  #[test]
+  fn windows_probe_decides_from_evidence() {
+    assert_eq!(decide_windows_status(Some("on"), None, false), "on");
+    assert_eq!(decide_windows_status(Some("off"), Some("On"), false), "off");
+    assert_eq!(decide_windows_status(Some("unknown"), Some("On"), true), "on");
+    assert_eq!(decide_windows_status(Some("unknown"), None, true), "home");
+    assert_eq!(decide_windows_status(Some("unknown"), Some(""), false), "unknown");
+  }
+
+  #[test]
+  fn reg_product_name_detects_home_edition() {
+    let home = "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\r\n    \
+                ProductName    REG_SZ    Windows 10 Home\r\n\r\n";
+    assert!(reg_product_name_is_home(home));
+    assert!(!reg_product_name_is_home(
+      "    ProductName    REG_SZ    Windows 10 Pro\r\n"
+    ));
+    assert!(!reg_product_name_is_home(
+      "ERROR: The system was unable to find the specified registry key or value.\r\n"
+    ));
   }
 }
