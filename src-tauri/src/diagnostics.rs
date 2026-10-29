@@ -166,26 +166,40 @@ pub async fn disk_encryption_status() -> &'static str {
   }
 }
 
+/// Console children on Windows allocate a visible console window unless
+/// CREATE_NO_WINDOW is set — the encryption probe runs while the GUI is
+/// coming up, so manage-bde/powershell/reg must spawn hidden. macOS has no
+/// such concept, so the flag is Windows-only.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+fn silent(command: &mut std::process::Command) -> &mut std::process::Command {
+  #[cfg(windows)]
+  {
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(CREATE_NO_WINDOW);
+  }
+  command
+}
+
 /// Windows probe, in order: `manage-bde -status` answers without elevation
 /// on Pro/Enterprise; `Get-BitLockerVolume` covers builds where it doesn't.
 /// On Home neither works unelevated (jsaenz-desktop: "ERROR: An attempt to
 /// access a required resource was denied") — there is no non-admin query at
 /// all, so report "home" and let the UI give the honest instruction.
 fn windows_encryption_status() -> &'static str {
-  let manage_bde = std::process::Command::new("manage-bde")
-    .args(["-status", "C:"])
+  let manage_bde = silent(std::process::Command::new("manage-bde").args(["-status", "C:"]))
     .output()
     .ok()
     .map(|out| parse_manage_bde(&String::from_utf8_lossy(&out.stdout)));
-  let ps = std::process::Command::new("powershell")
-    .args([
-      "-NoProfile",
-      "-Command",
-      "(Get-BitLockerVolume -MountPoint $env:SystemDrive).ProtectionStatus.ToString()",
-    ])
-    .output()
-    .ok()
-    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned());
+  let ps = silent(std::process::Command::new("powershell").args([
+    "-NoProfile",
+    "-Command",
+    "(Get-BitLockerVolume -MountPoint $env:SystemDrive).ProtectionStatus.ToString()",
+  ]))
+  .output()
+  .ok()
+  .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned());
   decide_windows_status(manage_bde, ps.as_deref(), windows_home_edition())
 }
 
@@ -215,16 +229,15 @@ fn decide_windows_status(
 /// every display locale ("Windows 10/11 Home"), so a plain contains-check
 /// is enough.
 fn windows_home_edition() -> bool {
-  std::process::Command::new("reg")
-    .args([
-      "query",
-      r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
-      "/v",
-      "ProductName",
-    ])
-    .output()
-    .map(|out| reg_product_name_is_home(&String::from_utf8_lossy(&out.stdout)))
-    .unwrap_or(false)
+  silent(std::process::Command::new("reg").args([
+    "query",
+    r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+    "/v",
+    "ProductName",
+  ]))
+  .output()
+  .map(|out| reg_product_name_is_home(&String::from_utf8_lossy(&out.stdout)))
+  .unwrap_or(false)
 }
 
 fn reg_product_name_is_home(stdout: &str) -> bool {
