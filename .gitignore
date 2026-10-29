@@ -28,7 +28,8 @@
 .zcode/
 
 # local installer build artifacts (CI produces release bundles)
-/installers/
+/installers/*
+!installers/repair-phone-link-firewall.ps1
 
 # licence signing keys (never commit; see scripts/licence-keygen.mjs)
 /.keys/
