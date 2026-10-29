@@ -51,6 +51,16 @@ Approved 30 Oct 2026. **Shipped as 0.12.0** (shipped 30 Oct 2026; 007 follows).
   update" acceptance item remains a **manual Windows test** (no Windows box
   is drivable from the dev machine; jsaenz-desktop has no sshd). Outstanding
   until someone runs one update end to end on jsaenz-desktop.
+- **Defect found in the field, fixed in 0.13.1**: the macOS builds of
+  0.12.0 and 0.13.0 crash at launch — the updater plugin panics at
+  registration when `plugins.updater` is absent from the merged config
+  (non-Windows platforms merge nothing, so it deserializes null). CI only
+  *builds* the macOS apps and never launches them, so it never surfaced;
+  the user's `npm run desktop` did. The registration is now
+  `#[cfg(windows)]`-gated (the plugin only exists where the channel does),
+  verified by an actual `tauri dev` launch on macOS. Windows installs were
+  never affected (the config exists there), so the auto-update channel and
+  its acceptance tests stand as described.
 
 ## Problem
 

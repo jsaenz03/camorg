@@ -58,8 +58,13 @@ Cloudflare Worker (`activation-server/`).
 
 - Any console child process (manage-bde, powershell, reg, …) spawned from the
   GUI **must** set `CREATE_NO_WINDOW` — see the `silent()` helper in
-  `diagnostics.rs`. Without it each spawn flashes a console window over the
+  diagnostics.rs. Without it each spawn flashes a console window over the
   app.
+- Updater plugin registration is `#[cfg(windows)]`-gated in lib.rs: the
+  plugin panics at startup when `plugins.updater` is absent from the merged
+  config, and non-Windows platforms merge nothing (0.12.0/0.13.0 macOS
+  builds crashed at launch for exactly this — CI builds but never launches
+  them; launch the app once when touching plugin/config wiring).
 - Disk-encryption probe (`diagnostics.rs`): `manage-bde -status` works
   unelevated on Pro/Enterprise; on **Windows Home no non-admin query exists
   at all** (manage-bde demands elevation, the BitLocker cmdlet/WMI are

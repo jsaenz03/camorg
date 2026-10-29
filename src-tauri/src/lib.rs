@@ -153,7 +153,19 @@ pub fn run() {
     Ok(())
   }
 
-  tauri::Builder::default()
+  // Signed auto-update channel (specs/006). The endpoints and public key
+  // live in tauri.windows.conf.json, and the plugin PANICS at registration
+  // when plugins.updater is absent from the config (it deserializes the
+  // missing section as null) — so only Windows may register it. Non-Windows
+  // platforms have no channel by design: the webview's update service gates
+  // on Windows too, so nothing ever calls the missing plugin.
+  #[cfg(windows)]
+  let builder = tauri::Builder::default()
+    .plugin(tauri_plugin_updater::Builder::new().build());
+  #[cfg(not(windows))]
+  let builder = tauri::Builder::default();
+
+  builder
     // Second launch focuses the existing window instead of opening a second
     // process on the same SQLite file (split-brain UI + SQLITE_BUSY writes).
     .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -301,11 +313,6 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     // Local OS notifications for review/consent alerts (generic text only).
     .plugin(tauri_plugin_notification::init())
-    // Signed auto-update channel (specs/006). The endpoints and public key
-    // live in tauri.windows.conf.json, so non-Windows builds register an
-    // inert plugin. The webview drives every check; nothing runs on a timer.
-    .plugin(tauri_plugin_updater::Builder::new().build())
-    // Relaunch after an update has been downloaded and verified.
     .plugin(tauri_plugin_process::init())
     .plugin(
       SqlBuilder::default()
