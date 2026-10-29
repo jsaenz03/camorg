@@ -39,9 +39,11 @@ Approved 30 Oct 2026. **Shipped as 0.12.0** (shipped 30 Oct 2026; 007 follows).
   `minisign_verify` calls the updater crate makes — valid signature passes,
   one flipped byte rejects, the configured pubkey/endpoint parse (endpoint
   must be the `releases/latest/download` form). Post-release, the published
-  `latest.json` + `.exe.sig` are verified against the config pubkey as the
-  real-artifact negative test (planned for v0.12.0 immediately after the
-  release publishes; result recorded at the bottom of this file).
+  artifacts were verified for real: `latest.json`'s `windows-x86_64`
+  signature authenticates the published 10 MB NSIS installer against the
+  pubkey configured in `tauri.windows.conf.json` (the same minisign-verify
+  call the updater makes), and one flipped byte of the artifact is
+  rejected. Done for v0.12.0 on 30 Oct.
 
 ## Deviations / notes
 
