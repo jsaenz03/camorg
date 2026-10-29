@@ -40,7 +40,12 @@ While in use, the PC listens on the practice network for a paired phone (plain
 HTTP, gated by a pairing code; see the phone-link answers in
 `camog-it-qa.pdf` for the full picture). From v0.11.0 the link does **not**
 start on its own: nothing listens until the clinician opens the phone link or
-turns "Start automatically" on in the link dialog.
+turns "Start automatically" on in the link dialog. The Windows installer adds
+a firewall rule ("Camog phone link") that permits inbound from the local
+subnet and Tailscale ranges on **any** network profile, so it works whether
+Windows classifies the network Private or Public; machines missing that rule
+(Store installs, or a declined elevation prompt) can be fixed with
+`installers/repair-phone-link-firewall.ps1` (run once, as administrator).
 
 Use it on a trusted practice network (or over Tailscale); avoid guest or flat
 networks. Ending the session signs paired phones out. The listener also closes
