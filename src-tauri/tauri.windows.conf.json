@@ -1,0 +1,17 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/jsaenz03/camorg/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4RTFENjAxQTMzNzg2QTYKUldTbWhqZWpBZGJocUVOa3RaK1ppYXhtVXVFbFpvejA2TkdPaVhEWkt4QUhaV3VYb3hySzRBK2QK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

@@ -110,8 +110,19 @@ jobs:
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signed update channel (specs/006): only the Windows leg gets the
+          # signing key — it produces the signed NSIS artifact and, on stable
+          # releases, uploads latest.json to the release. Edge pushes have no
+          # release to upload to, so the rolling edge never serves a manifest
+          # and stable users can never auto-take a pre-release.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ matrix.platform == 'windows-latest' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ matrix.platform == 'windows-latest' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         with:
           args: ${{ matrix.args }}
+          includeUpdaterJson: ${{ matrix.platform == 'windows-latest' }}
+          # Serve the NSIS installer from the channel; WiX MSI installs keep
+          # manual updates.
+          updaterJsonPreferNsis: true
           # On a published release, attach the bundles to that release
           # (empty on push/PR/dispatch, where tauri-action ignores it).
           releaseId: ${{ github.event_name == 'release' && github.event.release.id || '' }}

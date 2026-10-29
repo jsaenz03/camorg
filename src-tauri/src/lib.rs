@@ -105,6 +105,19 @@ pub fn run() {
     Ok(())
   }
 
+  /// Store-guard for the updater (specs/006): an install living in Windows'
+  /// WindowsApps folder is Store-managed (MSIX) — the Store updates it, and
+  /// the updater's NSIS payload would install a second, non-Store copy.
+  /// ponytail: the well-known path substring stands in for the
+  /// package-identity API. Fail closed: no exe path, no updater.
+  #[tauri::command]
+  fn updater_allowed() -> bool {
+    match std::env::current_exe() {
+      Ok(exe) => !exe.to_string_lossy().contains("WindowsApps"),
+      Err(_) => false,
+    }
+  }
+
   /// Push the pre-formatted alert summary ("2 reviews overdue · 1 consent
   /// expired") into the tray menu line + tooltip, and swap the tray icon to
   /// the badge-dot variant while anything needs attention. Formatting stays
@@ -288,6 +301,12 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     // Local OS notifications for review/consent alerts (generic text only).
     .plugin(tauri_plugin_notification::init())
+    // Signed auto-update channel (specs/006). The endpoints and public key
+    // live in tauri.windows.conf.json, so non-Windows builds register an
+    // inert plugin. The webview drives every check; nothing runs on a timer.
+    .plugin(tauri_plugin_updater::Builder::new().build())
+    // Relaunch after an update has been downloaded and verified.
+    .plugin(tauri_plugin_process::init())
     .plugin(
       SqlBuilder::default()
         .add_migrations("sqlite:camog.db", migrations)
@@ -321,6 +340,7 @@ pub fn run() {
       grant_directory_access,
       set_close_to_tray,
       update_tray_summary,
+      updater_allowed,
       db_restore::restart_for_restore,
       backup_keychain::backup_passphrase_get,
       backup_keychain::backup_passphrase_set,
@@ -583,5 +603,87 @@ mod tray_icon_tests {
     assert_eq!((plain.width(), plain.height()), (32, 32));
     assert_eq!((alert.width(), alert.height()), (32, 32));
     assert_ne!(plain.rgba(), alert.rgba(), "alert icon carries no visible badge");
+  }
+}
+
+// The signed update channel (specs/006): tauri-plugin-updater verifies every
+// artifact with minisign before an install ever runs. This pins those exact
+// mechanics — same crate, same call (trusted comments required, permissive
+// legacy allowed) — against a fixture signed with the tauri CLI the CI
+// channel uses: a valid signature verifies, one flipped byte rejects the
+// artifact. The configured channel public key must itself decode as a
+// minisign key, so a fat-fingered config edit fails here instead of on a
+// user's machine. (The channel's real private key exists only as a GitHub
+// Actions secret, so the full artifact round-trip is proven post-release by
+// verifying the published .sig against this config — see specs/006.)
+#[cfg(test)]
+mod updater_signature_tests {
+  use base64::Engine as _;
+  use minisign_verify::{PublicKey, Signature};
+
+  const FIXTURE_DATA: &[u8] = b"camog updater acceptance fixture\n";
+  // `printf 'camog updater acceptance fixture\n' > fixture` signed with a
+  // throwaway keypair via `npm run tauri signer generate/sign -p x --ci`.
+  const FIXTURE_PUB_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQxRjIzMDRGMzhCNURBOEYKUldTUDJyVTRUekR5UWVvbFdIQUxneHNmTG9vTUxxT0tMSGcwT1hBTzNRTnZQZzZ1VjlPQi9qZU4K";
+  const FIXTURE_SIG_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUDJyVTRUekR5UVpWU1ZtUFFUenhEVnA1bkdVVFJRYitBWVBxbDhSdXlseHpZRmc0b2YzYVROMi9SbW5pSUgvdlp0ODNpaFo0NlpLYUIzR0JDQ1o2Rldvb2xNRVVTMEFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjgwNTU0CWZpbGU6Zml4dHVyZQpkM0huaHJnLzlJcEIybkd6cjVwWU5rcUJNY3dlNVpCTE9yKzJjdldIV1R6T011UEZmZXdVRG9RUVRqUHgyOWkzV2NOWXdkZWRIRG8wbDYvR1VOeGJEUT09Cg==";
+
+  /// The outer base64 → minisign key step, mirroring the updater crate's
+  /// base64_to_string + PublicKey::decode pair.
+  fn decode_pub(pub_b64: &str) -> PublicKey {
+    let text = base64::engine::general_purpose::STANDARD
+      .decode(pub_b64.trim())
+      .expect("public key outer base64");
+    let text = String::from_utf8(text).expect("minisign public key text");
+    PublicKey::decode(&text).expect("minisign public key")
+  }
+
+  fn decode_sig(sig_b64: &str) -> Signature {
+    let text = base64::engine::general_purpose::STANDARD
+      .decode(sig_b64.trim())
+      .expect("signature outer base64");
+    let text = String::from_utf8(text).expect("minisign signature text");
+    Signature::decode(&text).expect("minisign signature")
+  }
+
+  #[test]
+  fn valid_signature_verifies() {
+    let verify = decode_pub(FIXTURE_PUB_B64).verify(FIXTURE_DATA, &decode_sig(FIXTURE_SIG_B64), true);
+    assert!(verify.is_ok(), "the channel's verify call must accept a genuine artifact");
+  }
+
+  #[test]
+  fn tampered_artifact_is_rejected() {
+    let mut tampered = FIXTURE_DATA.to_vec();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 0x20;
+    let verify =
+      decode_pub(FIXTURE_PUB_B64).verify(&tampered, &decode_sig(FIXTURE_SIG_B64), true);
+    assert!(verify.is_err(), "one flipped byte must fail signature verification");
+  }
+
+  /// The config the shipped app will trust: base64 that decodes, and the
+  /// decoded text parsing as a real minisign key.
+  #[test]
+  fn configured_channel_pubkey_is_a_minisign_key() {
+    let conf = std::fs::read_to_string(
+      std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.windows.conf.json"),
+    )
+    .expect("tauri.windows.conf.json exists");
+    let conf: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
+    let pub_b64 = conf
+      .pointer("/plugins/updater/pubkey")
+      .and_then(|v| v.as_str())
+      .expect("updater pubkey configured");
+    let _ = decode_pub(pub_b64);
+    // The endpoint must be the stable-release manifest, never a rolling tag:
+    // a pre-release manifest would let stable installs auto-take edge builds.
+    let endpoint = conf
+      .pointer("/plugins/updater/endpoints/0")
+      .and_then(|v| v.as_str())
+      .expect("updater endpoint configured");
+    assert!(
+      endpoint.ends_with("/releases/latest/download/latest.json"),
+      "endpoint must serve the latest stable release manifest, got {endpoint}"
+    );
   }
 }

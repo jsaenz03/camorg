@@ -33,6 +33,7 @@ import { ChangePasscodeForm } from '@/components/settings/change-passcode-form';
 import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
 import { backupService } from '@/lib/services/backup-service';
+import { maybeAutoCheckUpdate } from '@/lib/services/update-service';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -84,6 +85,18 @@ function AutoBackupKick() {
       cancelled = true;
       clearInterval(timer);
     };
+  }, []);
+  return null;
+}
+
+/**
+ * Daily signed-update check (specs/006): Windows only, at most one manifest
+ * request per day per machine. An available version is offered as a toast —
+ * installing always waits for the user's click.
+ */
+function UpdateCheckKick() {
+  useEffect(() => {
+    void maybeAutoCheckUpdate();
   }, []);
   return null;
 }
@@ -206,6 +219,7 @@ export default function DashboardLayout({
         </CompanionProvider>
       </CaptureProvider>
       <AutoBackupKick />
+      <UpdateCheckKick />
       <IdleLockGate />
     </SidebarProvider>
   );

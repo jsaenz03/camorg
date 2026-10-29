@@ -29,6 +29,7 @@ import { BackupPanel } from '@/components/settings/backup-panel';
 import { AuditLogPanel } from '@/components/settings/audit-log-panel';
 import { LicencePanel } from '@/components/settings/licence-panel';
 import { DiagnosticsPanel } from '@/components/settings/diagnostics-panel';
+import { UpdatesCard } from '@/components/settings/updates-card';
 import { NoteTemplatesPanel } from '@/components/settings/note-templates-panel';
 import { PageHeader } from '@/components/page-header';
 
@@ -171,7 +172,8 @@ function SettingsContent() {
             <AppSettingsPanel />
           </TabsContent>
         )}
-        <TabsContent value="diagnostics" className="mt-6">
+        <TabsContent value="diagnostics" className="mt-6 space-y-4">
+          <UpdatesCard />
           <DiagnosticsPanel />
         </TabsContent>
       </Tabs>

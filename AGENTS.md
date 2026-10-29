@@ -73,8 +73,11 @@ Cloudflare Worker (`activation-server/`).
 
 ## Approved roadmap
 
-- `specs/006-signed-update-channel` — tauri updater, Windows-first, manifest
-  only on stable `vX.Y.Z` releases, Store/MSIX excluded. Ship as 0.12.0.
+- `specs/006-signed-update-channel` — **SHIPPED as 0.12.0** (30 Oct): tauri
+  updater, Windows-only via tauri.windows.conf.json, NSIS served from the
+  channel (MSI + macOS + Store stay manual), signing keys only as GitHub
+  secrets. spec.md records the details; the real-box update test on a
+  Windows machine is still outstanding.
 - `specs/007-qr-keyed-link-crypto` — QR-delivered AES-256-GCM envelope for
   phone-link payloads (QR scan off the desktop screen is the authenticated
   key exchange). Tailscale path must not change. Ship as 0.13.0.

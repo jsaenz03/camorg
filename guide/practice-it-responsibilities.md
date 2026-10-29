@@ -59,10 +59,29 @@ is the practice's choice. Pointing backups at a OneDrive or Dropbox folder
 extends trust to that sync account and its history — a deliberate decision an
 IT contact should make, not a default.
 
-## 5. Updates are currently manual
+## 5. Updates (automatic on Windows, from 0.12.0)
 
-There is no automatic update channel yet. Check for new versions periodically;
-Microsoft Store installs update through the Store, direct installs from
-camog.com.au. A machine holding health information should not run stale
-clinical software indefinitely — put Camog on the same patch cadence as the
-rest of the fleet. (A signature-verified update channel is on the roadmap.)
+Camog 0.12.0 and newer checks a signature-verified update channel on Windows:
+once a day at launch, and on demand from Settings → Diagnostics → Check for
+updates. A new version is downloaded, checked against the publisher's signing
+key and installed only when someone clicks Install — never silently — and the
+restart that finishes it is a separate click. Machines can therefore stay
+current without a per-machine reinstall.
+
+Install-type notes:
+
+- **Microsoft Store installs** never use the channel — the Store manages
+  those updates itself (Camog detects the Store install and skips checking).
+- **NSIS installer installs** (`Camog_..._x64-setup.exe`) update
+  automatically through the channel.
+- **WiX MSI installs** (`Camog_..._x64_en-US.msi`) are not updated by the
+  channel — the updater serves the NSIS payload, so an MSI machine keeps
+  updating manually (reinstall over the top; data lives in the app data
+  folder and survives). Prefer the NSIS installer for new direct installs.
+- **macOS** has no update channel yet (the builds are not Developer-ID
+  signed/notarised) — update by downloading the new DMG.
+
+A machine holding health information should still be on the same patch
+cadence as the rest of the fleet: the channel reaches direct Windows
+installs automatically, but a machine that rarely opens Camog only checks
+when it does.
