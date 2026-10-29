@@ -16,7 +16,8 @@ import { ClipboardCopy, FolderOpen, RefreshCw, Stethoscope, Trash2 } from 'lucid
 import { toast } from 'sonner';
 
 import { getDB, getPhotosDir } from '@/lib/db/database';
-import type { DiagnosticsInfo } from '@/lib/diagnostics';
+import type { DiagnosticsInfo, DiskEncryptionState } from '@/lib/diagnostics';
+import { diskEncryptionStatus } from '@/lib/diagnostics';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -43,12 +44,22 @@ interface Health {
   db: CheckState;
   /** 'ok' + resolved path, or 'failed' + the error message. */
   photos: { state: CheckState; detail: string };
+  /** 'checking' until the one-shot OS query resolves. */
+  encryption: DiskEncryptionState | 'checking';
 }
 
 const initialHealth: Health = {
   db: 'checking',
   photos: { state: 'checking', detail: '' },
+  encryption: 'checking',
 };
+
+function encryptionLabel(state: DiskEncryptionState | 'checking'): string {
+  if (state === 'on') return 'on (BitLocker/FileVault)';
+  if (state === 'off') return 'OFF — patient details are readable if the device is lost';
+  if (state === 'unknown') return 'could not verify';
+  return 'checking…';
+}
 
 function buildReportText(info: DiagnosticsInfo, health: Health): string {
   const lines = [
@@ -59,6 +70,7 @@ function buildReportText(info: DiagnosticsInfo, health: Health): string {
     `Generated: ${format(new Date(), 'dd/MM/yyyy HH:mm:ss')}`,
     `Database: ${health.db === 'ok' ? 'reachable' : health.db === 'failed' ? 'unreachable' : 'unknown'}`,
     `Photos folder: ${health.photos.detail || 'unknown'}`,
+    `Disk encryption: ${encryptionLabel(health.encryption)}`,
     '',
     'Events (oldest first):',
     ...info.entries.map(
@@ -181,6 +193,8 @@ export function DiagnosticsPanel() {
           },
         })),
       );
+
+    diskEncryptionStatus().then(({ state }) => setHealth((h) => ({ ...h, encryption: state })));
   }, []);
 
   useEffect(() => {
@@ -271,6 +285,19 @@ export function DiagnosticsPanel() {
                     ? 'checking…'
                     : health.photos.detail}
                 </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckStateDot
+                  state={
+                    health.encryption === 'on'
+                      ? 'ok'
+                      : health.encryption === 'off'
+                        ? 'failed'
+                        : 'checking'
+                  }
+                />
+                <span>Disk encryption</span>
+                <span className="text-muted-foreground">{encryptionLabel(health.encryption)}</span>
               </div>
               <p className="text-muted-foreground">
                 Camog v{info.version} · {info.os}

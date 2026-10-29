@@ -25,7 +25,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -590,15 +590,14 @@ fn pin_port(app: &AppHandle, port: u16) -> Result<(), String> {
 
 /// "Start automatically" preference (the Phone link dialog's toggle): when
 /// on, the link starts itself whenever the app opens, so a doctor who has
-/// paired once never scans the QR again. On by default.
+/// paired once never scans the QR again. Off by default — the link is a
+/// plaintext LAN listener, so keeping it up between sessions is an explicit
+/// choice. Installs that had paired before 0.11.0 (token on disk, no prefs
+/// file, old default on) are carried over by migrate_auto_start_pref.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PhoneLinkPrefs {
-  #[serde(default = "default_true")]
+  #[serde(default)]
   remember: bool,
-}
-
-fn default_true() -> bool {
-  true
 }
 
 fn phone_link_prefs_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -609,16 +608,50 @@ fn phone_link_prefs_path(app: &AppHandle) -> Result<PathBuf, String> {
     .map_err(|e| format!("could not resolve the app data dir: {e}"))
 }
 
-#[tauri::command]
-pub fn get_phone_link_remember(app: AppHandle) -> Result<bool, String> {
-  let path = phone_link_prefs_path(&app)?;
-  match std::fs::read_to_string(&path) {
+/// The stored preference: false when absent or unreadable. Auto-start is
+/// opt-in, so only a prefs file that explicitly says "on" turns it on.
+fn read_remember_pref(dir: &Path) -> bool {
+  match std::fs::read_to_string(dir.join("phone-link.json")) {
     Ok(text) => serde_json::from_str::<PhoneLinkPrefs>(&text)
       .map(|p| p.remember)
-      .map_err(|e| e.to_string()),
-    // No file yet: the default (remembered) applies.
-    Err(_) => Ok(true),
+      .unwrap_or(false),
+    Err(_) => false,
   }
+}
+
+/// One-time carry-over for 0.11.0: auto-start became opt-in, but installs
+/// that had paired before the change hold a phone-link-token with no prefs
+/// file — for them the old always-on behaviour was a choice they made by
+/// pairing, so it is seeded once. Fresh installs (never paired) keep the
+/// off default until they pair and opt in. Runs in setup(), before the
+/// webview can read the preference.
+pub fn migrate_auto_start_pref(app: &AppHandle) -> Result<(), String> {
+  let dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("could not resolve the app data dir: {e}"))?;
+  migrate_auto_start_pref_in(&dir)
+}
+
+fn migrate_auto_start_pref_in(dir: &Path) -> Result<(), String> {
+  let prefs = dir.join("phone-link.json");
+  if prefs.exists() || !dir.join("phone-link-token").exists() {
+    return Ok(());
+  }
+  if let Some(parent) = prefs.parent() {
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  let json = serde_json::to_string(&PhoneLinkPrefs { remember: true }).map_err(|e| e.to_string())?;
+  std::fs::write(&prefs, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_phone_link_remember(app: AppHandle) -> Result<bool, String> {
+  let dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("could not resolve the app data dir: {e}"))?;
+  Ok(read_remember_pref(&dir))
 }
 
 #[tauri::command]
@@ -2641,5 +2674,49 @@ mod tests {
     );
     let plain = [IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5))];
     assert_eq!(cgnat_address_among(&plain), None);
+  }
+}
+
+/// Auto-start is opt-in from 0.11.0: absent/corrupt prefs read as off, and
+/// only installs that had paired (token on disk, no prefs file) carry the
+/// old always-on default over. ponytail: tempdir under TMP, no cleanup —
+/// the same trade the db_restore tests make.
+#[cfg(test)]
+mod phone_link_prefs_tests {
+  use super::*;
+
+  fn tempdir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("camog-phone-link-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("tempdir");
+    dir
+  }
+
+  #[test]
+  fn absent_or_corrupt_prefs_read_as_off() {
+    let dir = tempdir("absent");
+    assert!(!read_remember_pref(&dir), "no file: the opt-in default applies");
+    std::fs::write(dir.join("phone-link.json"), "not json").expect("write");
+    assert!(!read_remember_pref(&dir), "corrupt file must fail closed to off");
+    std::fs::write(dir.join("phone-link.json"), r#"{"remember":true}"#).expect("write");
+    assert!(read_remember_pref(&dir), "an explicit on must be honoured");
+  }
+
+  #[test]
+  fn migration_seeds_only_paired_installs_and_never_overwrites() {
+    let dir = tempdir("migrate");
+    // Fresh install (never paired): nothing written, default stays off.
+    migrate_auto_start_pref_in(&dir).expect("migrate");
+    assert!(!dir.join("phone-link.json").exists(), "fresh install must stay opt-in");
+
+    // Paired before 0.11.0: token exists, no prefs file — seed the old on.
+    std::fs::write(dir.join("phone-link-token"), "token").expect("write");
+    migrate_auto_start_pref_in(&dir).expect("migrate");
+    assert!(read_remember_pref(&dir), "an existing pairing keeps auto-start");
+
+    // An explicit preference is never overwritten — including off.
+    std::fs::write(dir.join("phone-link.json"), r#"{"remember":false}"#).expect("write");
+    migrate_auto_start_pref_in(&dir).expect("migrate");
+    assert!(!read_remember_pref(&dir), "explicit choice must survive the migration");
   }
 }

@@ -28,6 +28,7 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { UserMenu } from '@/components/user-menu';
 import { IdleLockOverlay } from '@/components/idle-lock-overlay';
 import { LicenceBanner } from '@/components/licence/licence-banner';
+import { DiskEncryptionBanner } from '@/components/dashboard/disk-encryption-banner';
 import { ChangePasscodeForm } from '@/components/settings/change-passcode-form';
 import { useAuth } from '@/lib/auth/auth-context';
 import { authService } from '@/lib/services/auth-service';
@@ -173,6 +174,7 @@ export default function DashboardLayout({
           {navLayout === 'top' ? null : <AppSidebar side={navLayout} />}
           <SidebarInset>
             <LicenceBanner />
+            <DiskEncryptionBanner />
             {navLayout === 'top' ? (
               <TopNavHeader />
             ) : (

@@ -123,3 +123,32 @@ export function initDiagnostics(): void {
     return originalToastError(message, data);
   };
 }
+
+export type DiskEncryptionState = 'on' | 'off' | 'unknown';
+
+export interface DiskEncryptionStatus {
+  state: DiskEncryptionState;
+  /** App version the check ran under; banner dismissal is stamped with it. */
+  appVersion: string;
+}
+
+let encryptionStatusPromise: Promise<DiskEncryptionStatus> | null = null;
+
+/**
+ * Whether the system volume is encrypted (BitLocker/FileVault), plus the app
+ * version the check ran under. One OS query per session — the banner, the
+ * Diagnostics panel and the support report all share it. Outside the Tauri
+ * webview this resolves to "unknown" (the banner stays hidden).
+ */
+export function diskEncryptionStatus(): Promise<DiskEncryptionStatus> {
+  encryptionStatusPromise ??= Promise.all([
+    invoke<string>('disk_encryption_status').catch(() => 'unknown'),
+    invoke<DiagnosticsInfo>('diagnostics_info')
+      .then((info) => info.version)
+      .catch(() => ''),
+  ]).then(([rawState, appVersion]) => ({
+    state: rawState === 'on' || rawState === 'off' ? rawState : 'unknown',
+    appVersion,
+  }));
+  return encryptionStatusPromise;
+}

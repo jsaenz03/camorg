@@ -59,8 +59,9 @@ next-env.d.ts
 playwright-report/
 test-results/
 
-# user guide (HTML/PDF + screenshots)
-guide/
+# user guide (HTML/PDF + screenshots; tracked markdown sources excepted)
+guide/*
+!guide/practice-it-responsibilities.md
 
 # marketing guide videos (243 MB of hyperframes projects; local only)
 /videos/

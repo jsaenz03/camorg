@@ -144,6 +144,58 @@ pub fn diagnostics_info(app: tauri::AppHandle) -> DiagnosticsInfo {
   }
 }
 
+/// Disk-encryption posture of the system volume, for the dashboard banner
+/// and the Settings → Diagnostics line. Advisory only: photos are
+/// app-encrypted, but the database inherits the volume's protection, and
+/// turning BitLocker/FileVault on is a practice IT decision the app cannot
+/// make. Async so the one-shot OS tooling runs off the main thread.
+#[tauri::command]
+pub async fn disk_encryption_status() -> &'static str {
+  match std::env::consts::OS {
+    "macos" => std::process::Command::new("fdesetup")
+      .arg("isactive")
+      .output()
+      .ok()
+      .filter(|out| out.status.success())
+      .and_then(|out| parse_fdesetup(&String::from_utf8_lossy(&out.stdout)))
+      .unwrap_or("unknown"),
+    "windows" => std::process::Command::new("manage-bde")
+      .args(["-status", "C:"])
+      .output()
+      .ok()
+      .map(|out| parse_manage_bde(&String::from_utf8_lossy(&out.stdout)))
+      .unwrap_or("unknown"),
+    _ => "unknown",
+  }
+}
+
+/// `fdesetup isactive` prints exactly "true" or "false".
+fn parse_fdesetup(stdout: &str) -> Option<&'static str> {
+  match stdout.trim() {
+    "true" => Some("on"),
+    "false" => Some("off"),
+    _ => None,
+  }
+}
+
+/// manage-bde -status C: reports the system volume's state on one line,
+/// "Protection Status:    Protection On/Off". ponytail: label and values
+/// are localised, so a non-English Windows reads as "unknown" (the banner
+/// stays hidden rather than nagging wrongly); upgrade path: the WMI
+/// Win32_EncryptableVolume query.
+fn parse_manage_bde(stdout: &str) -> &'static str {
+  for line in stdout.lines() {
+    if let Some(value) = line.split("Protection Status:").nth(1) {
+      return match value.trim() {
+        v if v.ends_with("On") => "on",
+        v if v.ends_with("Off") => "off",
+        _ => "unknown",
+      };
+    }
+  }
+  "unknown"
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClearDiagnosticsOutcome {
@@ -249,5 +301,24 @@ mod tests {
     for name in ["camography.log", "other.log", "camog"] {
       assert!(!is_camog_log(name), "{name} must be left alone");
     }
+  }
+
+  #[test]
+  fn manage_bde_protection_status_is_parsed() {
+    let on = "Volume C: [OS]\r\n\r\n    Size:                 476.94 GB\r\n    \
+              Conversion Status:    Fully Encrypted\r\n    Protection Status:    \
+              Protection On\r\n    Lock Status:          Unlocked\r\n";
+    assert_eq!(parse_manage_bde(on), "on");
+    assert_eq!(parse_manage_bde("    Protection Status:    Protection Off\r\n"), "off");
+    // Unexpected values (localised output) must read as unknown, never on/off.
+    assert_eq!(parse_manage_bde("    Protection Status:    Aktiviert\r\n"), "unknown");
+    assert_eq!(parse_manage_bde("no status output at all"), "unknown");
+  }
+
+  #[test]
+  fn fdesetup_output_is_parsed() {
+    assert_eq!(parse_fdesetup("true\n"), Some("on"));
+    assert_eq!(parse_fdesetup("false\n"), Some("off"));
+    assert_eq!(parse_fdesetup("Unexpected error"), None);
   }
 }

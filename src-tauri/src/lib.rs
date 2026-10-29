@@ -224,6 +224,18 @@ pub fn run() {
       if let Ok(dir) = app.path().home_dir() {
         licence_device::init_device_path(dir);
       }
+      // 0.11.0 made phone-link auto-start opt-in; installs that had paired
+      // carry the old always-on choice over (seeded once, see
+      // remote_camera.rs). A failure means the preference falls back to off
+      // for a user who had it on — that is worth a log line.
+      if let Err(msg) = remote_camera::migrate_auto_start_pref(app.handle()) {
+        diagnostics::record(
+          diagnostics::Level::Error,
+          "phone-link",
+          &format!("could not carry over the phone-link auto-start preference: {msg}"),
+          None,
+        );
+      }
       diagnostics::record(
         diagnostics::Level::Info,
         "app",
@@ -336,7 +348,8 @@ pub fn run() {
       remote_camera::stage_remote_report,
       diagnostics::record_web_diagnostic,
       diagnostics::diagnostics_info,
-      diagnostics::diagnostics_clear
+      diagnostics::diagnostics_clear,
+      diagnostics::disk_encryption_status
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
