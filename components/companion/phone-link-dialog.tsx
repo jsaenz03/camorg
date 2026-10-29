@@ -207,15 +207,20 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
                 <p className="text-xs text-muted-foreground">
                   Anyone with this code — on the same Wi-Fi or hotspot, or in your
                   Tailscale network — can take photos and open the shared library
-                  until you end the session. The link itself is not encrypted (a
-                  Tailscale address is, by the tunnel), so end it when
-                  you&rsquo;re done — ending it also signs paired phones out, and
-                  they re-scan to reconnect. It closes itself after 30 minutes of
-                  inactivity, and with Start automatically on it reopens (same
-                  address) next time Camog starts. If a different clinician
-                  signs in on the computer, the code rotates too — paired
-                  phones scan the new QR once. If the code was shared or
-                  photographed, generate a new one — the old code stops working
+                  until you end the session. Everything patient-related that
+                  crosses the link (the library, photos, uploads, reports) is
+                  encrypted with a key your phone only holds because it scanned
+                  this QR — the network traffic alone shows nothing. The phone
+                  app&apos;s own screen still loads over plain HTTP the first
+                  time, so pair on a network you trust (a Tailscale address is
+                  tunnel-encrypted end to end). End it when you&apos;re done —
+                  ending it also signs paired phones out, and they re-scan to
+                  reconnect. It closes itself after 30 minutes of inactivity,
+                  and with Start automatically on it reopens (same address)
+                  next time Camog starts. If a different clinician signs in on
+                  the computer, the code rotates too — paired phones scan the
+                  new QR once. If the code was shared or photographed,
+                  generate a new one — the old code (and its key) stop working
                   straight away.
                 </p>
               </div>

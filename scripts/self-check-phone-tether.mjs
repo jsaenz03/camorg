@@ -31,10 +31,30 @@ for (const needle of ['remote-camera-photo', 'remote-camera-status']) {
 }
 // Remembered pairing: the token persists in the app data dir so the phone's
 // saved link keeps working across app restarts, and the "start automatically"
-// preference is stored beside it (default on).
-for (const needle of ['phone-link-token', 'phone-link.json', 'pairing_token']) {
+// preference is stored beside it (default on). The transit key (specs/007)
+// persists beside them and rotates with the code.
+for (const needle of ['phone-link-token', 'phone-link-key', 'phone-link.json', 'pairing_token']) {
   assert(rust.includes(needle), `remote_camera.rs missing remembered-pairing piece: ${needle}`);
 }
+// Transit envelope (specs/007): AES-256-GCM over every patient-data record,
+// keyed from the QR's ?k= parameter and never served over the link itself.
+for (const needle of [
+  'envelope_seal',
+  'envelope_open',
+  'link_key_param',
+  '?k={}',
+  "'X-Link-Envelope'",
+  "'X-Link-Key'",
+  'URL_SAFE_NO_PAD',
+  'camog-page-', // the shell revalidates by version ETag instead of refetching
+]) {
+  assert(rust.includes(needle), `remote_camera.rs missing envelope piece: ${needle}`);
+}
+// The QR URL carries the key; the Tailscale and LAN URLs embed it identically.
+assert(
+  rust.includes('?k=') && rust.includes('pairing_urls('),
+  'remote_camera.rs must embed the transit key into the pairing URLs',
+);
 // Home-screen app: the manifest (with the logo icon) is served by the shell.
 assert(rust.includes('manifest.webmanifest'), 'remote_camera.rs missing PWA manifest route');
 assert(rust.includes('web_manifest'), 'remote_camera.rs missing web_manifest');
@@ -56,6 +76,31 @@ assert(tray.includes('linkPhotoId'), 'pending-photo-service.ts missing review fo
 const phonePage = read('../src-tauri/src/remote_camera_page.rs');
 for (const needle of ['capture="environment"', 'image/jpeg']) {
   assert(phonePage.includes(needle), `remote_camera_page.rs phone page missing: ${needle}`);
+}
+// The phone page's half of the envelope (specs/007): an embedded AES-256-GCM
+// (WebCrypto is secure-context-only, which plain LAN http is not), the key
+// from the QR's ?k= persisted for saved icons, sealed uploads/control
+// requests, the capability header on hellos, and decrypt failures routed to
+// the re-scan UX.
+for (const needle of [
+  'gcm-begin',
+  'gcm-end',
+  'camog-link-key',
+  'function loadLinkKey',
+  'function sealRecord',
+  'function openRecord',
+  'function envelopeFailed',
+  "sealRecord(new Uint8Array(buf))",
+  "'X-Link-Envelope': '1'",
+  "'X-Link-Key': '1'",
+  'X-Link-Envelope',
+]) {
+  assert(phonePage.includes(needle), `phone page missing envelope piece: ${needle}`);
+}
+// The link page (same source file) stores the key from a scanned QR
+// alongside the code.
+for (const needle of ["'camog-link-key'", 'LINK_CRYPTO_KEY']) {
+  assert(phonePage.includes(needle), `phone page missing transit key capture: ${needle}`);
 }
 // The phone page links the manifest and the home-screen icon.
 for (const needle of ['rel="manifest"', 'rel="apple-touch-icon"']) {
@@ -101,6 +146,10 @@ for (const needle of ['get_phone_link_remember', 'set_phone_link_remember']) {
 const linkDialog = read('../components/companion/phone-link-dialog.tsx');
 for (const needle of ['remember-link', 'setRemember']) {
   assert(linkDialog.includes(needle), `phone-link-dialog.tsx missing remember toggle: ${needle}`);
+}
+// The dialog copy states the envelope and the documented first-load window.
+for (const needle of ['encrypted', 'scanned', 'plain HTTP']) {
+  assert(linkDialog.includes(needle), `phone-link-dialog.tsx missing envelope copy: ${needle}`);
 }
 
 const capture = read('../components/camera/camera-capture.tsx');

@@ -78,7 +78,11 @@ Cloudflare Worker (`activation-server/`).
   channel (MSI + macOS + Store stay manual), signing keys only as GitHub
   secrets. spec.md records the details; the real-box update test on a
   Windows machine is still outstanding.
-- `specs/007-qr-keyed-link-crypto` — QR-delivered AES-256-GCM envelope for
-  phone-link payloads (QR scan off the desktop screen is the authenticated
-  key exchange). Tailscale path must not change. Ship as 0.13.0.
+- `specs/007-qr-keyed-link-crypto` — **SHIPPED as 0.13.0** (30 Oct):
+  AES-256-GCM transit envelope over every patient-data record on the phone
+  link, keyed from the QR's `?k=` (rotated with the pairing code). Two
+  platform-forced deviations, recorded in spec.md: no WebCrypto (embedded
+  JS GCM, OpenSSL cross-verified) and no service worker (ETag-revalidated
+  shell) — both are secure-context-only and the link is plain HTTP.
+  Tailscale path untouched.
 <!-- MANUAL ADDITIONS END -->

@@ -1,6 +1,86 @@
 # Spec 007 — QR-keyed transit encryption for the phone link
 
-Approved 30 Oct 2026. Ship as **0.13.0** (after 006; its own bake).
+Approved 30 Oct 2026. **Shipped as 0.13.0** (30 Oct 2026).
+
+## What shipped
+
+- **Key exchange rides the QR**: pairing URLs now end in `?k=<base64url 32
+  bytes>` on both the LAN and Tailscale QRs (the envelope is orthogonal to
+  the path; the discovery probes, bind, port and token mechanics are
+  untouched). The key persists beside the token as `phone-link-key`
+  (owner-only, hex), minted on demand for installs that paired before
+  0.13.0; `reset_pairing_token` (the dialog's "New code" AND the
+  account-switch rotation) deletes and re-mints it. The exchange's 303
+  carries the query into `/?k=…` once; the page stores the key in
+  localStorage (`camog-link-key`) so saved home-screen icons keep
+  decrypting. The server never serves the key.
+- **Envelope**: AES-256-GCM, `nonce(12) ‖ ciphertext‖tag` (the aes-gcm
+  crate's native layout), random 96-bit nonce per record. Encrypted:
+  library manifest, `img/*` bytes, case-report PDF down; photo uploads and
+  the `photo-review`/`report-request` JSON bodies up. Plaintext (per the
+  design): pairing handshake, `hello`/`link-code`, `library-wait`
+  (`{changed:…}` carries no patient data), logo/manifest static assets.
+- **Downgrade rules**: sensitive downloads are ALWAYS enveloped — no
+  plaintext fallback on the desktop. Uploads open enveloped bodies when the
+  `X-Link-Envelope: 1` header is present and pass plaintext through (a
+  stale cached page finishes its life capture-only); corrupt envelopes get
+  400, never a guess. A GET `/hello` without the `X-Link-Key: 1` capability
+  marker gets the dead-pairing 404 — which old cached pages already render
+  as the re-scan message, satisfying the version-skew requirement without
+  any raw error. In-page, an undecryptable record routes to the same
+  re-scan UX (`envelopeFailed`), and a live session with a stale key marks
+  the self-heal hop spent so it can't ping-pong.
+- **Rust tests** (100 green): envelope round-trip / wrong-key / tamper /
+  nonce-freshness / truncation; an 8 MB seal+open benchmark; key-file shape;
+  and three live-socket integration tests — the passive-capture equivalent
+  (raw transcript of a full session searched for the patient's name, the
+  manifest JSON and recognisable JPEG runs — nothing in the clear),
+  envelope upload acceptance + tampered/wrong-key refusal + plaintext
+  fallback, and the long-poll waking with the manifest verified to decrypt
+  exactly. `pairing_urls` tests assert the `?k=` suffix on both URL kinds.
+- **Phone page**: an embedded pure-JS AES-256-GCM (see deviation 1) whose
+  byte layout matches the Rust side, cross-verified against Node's OpenSSL
+  in `scripts/self-check-phone-crypto.mjs` (both directions, tamper,
+  wrong-key, truncation, determinism, 8 MB timing). `check-phone-page.mjs`
+  now drives the whole flow through OpenSSL-sealed manifests/photos/reports
+  and sealed uploads (65 checks green) — including wire assertions that
+  photos arrive sealed and decrypt to real JPEGs.
+- The camera `<input capture>` flow, pairing UX, idle close, POST meter,
+  AuthGuard and the Tailscale path behave exactly as before (`git diff`
+  shows the discovery/bind functions untouched; only `pairing_urls` gained
+  the `?k=` suffix).
+
+## Deviations (both forced by the platform, flagged during implementation)
+
+1. **No WebCrypto — an embedded JS AES-256-GCM instead.** The spec's
+   "Phone side: WebCrypto (AES-GCM is universal)" is not implementable on
+   this link: `crypto.subtle` is secure-context-only, and every non-
+   localhost phone-link address (LAN IP, phone hotspot, Tailscale 100.x) is
+   plain HTTP, where `crypto.subtle` is undefined. The page embeds a
+   compact AES-256-GCM (S-box generated, not tabulated; GHASH via 16×256
+   precomputed products so an 8 MB photo hashes in well under a second).
+   Correctness is not taken on trust: the self-check extracts the marked
+   `gcm` block and cross-verifies it against OpenSSL both ways, and the
+   phone-page check drives the real page against OpenSSL-sealed data.
+   Performance, measured: ~760 KB shrunk snaps seal in tens of
+   milliseconds; the 8 MB worst case is ~0.7 s in Node (the Rust side does
+   the same record in tens of milliseconds) — the regression-watch
+   benchmark lives in both test suites.
+2. **No service worker — the shell revalidates by ETag instead.** Service
+   workers are likewise secure-context-only; registration would silently
+   fail on every plain-HTTP address, so "cache-first after first load" as
+   written cannot exist on this link. Same mitigation, honest mechanism:
+   the shell serves `Cache-Control: no-cache` plus a version ETag
+   (`camog-page-<version>`), so loads revalidate — a 304 carries no bytes,
+   the page's JS rides the wire only when the app actually changed, and
+   stale-page skew (old cached page vs new server) is impossible by
+   construction. The documented residual window stands: the shell still
+   arrives over HTTP the first time (and whenever it actually changes);
+   everything patient-related is enveloped from the first byte.
+
+Also fixed while here: the request handler's eight loose parameters became
+a `LinkContext` struct to keep clippy green, and the report download's
+`Content-Disposition` header went with the plaintext route it served.
 
 ## Problem
 

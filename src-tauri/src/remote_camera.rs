@@ -31,6 +31,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine as _;
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -45,6 +47,75 @@ const REPORT_EVENT: &str = "companion-report-request";
 const MAX_BODY: usize = 25 * 1024 * 1024;
 // Phone control requests are tiny JSON ({"patientId":"<uuid>"}).
 const MAX_CONTROL_BODY: usize = 4 * 1024;
+
+// Transit envelope (specs/007): AES-256-GCM over every patient-data record —
+// library manifest and photos down, uploads and report up — keyed from the QR
+// URL the phone scanned off this screen. 96-bit nonces, one per record;
+// envelope = nonce ‖ ciphertext‖tag, exactly what the aes-gcm crate's
+// encrypt() produces and the phone page's JS decrypts.
+const ENVELOPE_OVERHEAD: usize = 12 + 16;
+
+fn envelope_seal(key: &[u8; 32], plaintext: &[u8]) -> Option<Vec<u8>> {
+  let cipher = Aes256Gcm::new(key.into());
+  let nonce_bytes: [u8; 12] = rand::random();
+  let mut envelope = Vec::with_capacity(ENVELOPE_OVERHEAD + plaintext.len());
+  envelope.extend_from_slice(&nonce_bytes);
+  envelope.extend_from_slice(&cipher.encrypt(Nonce::from_slice(&nonce_bytes), plaintext).ok()?);
+  Some(envelope)
+}
+
+/// None when the record was truncated, or the key (or a byte of the record)
+/// doesn't match — GCM authentication rejects all of them alike.
+fn envelope_open(key: &[u8; 32], envelope: &[u8]) -> Option<Vec<u8>> {
+  if envelope.len() < ENVELOPE_OVERHEAD {
+    return None;
+  }
+  let (nonce, ciphertext) = envelope.split_at(12);
+  Aes256Gcm::new(key.into())
+    .decrypt(Nonce::from_slice(nonce), ciphertext)
+    .ok()
+}
+
+fn envelope_header() -> Header {
+  Header::from_bytes(&b"X-Link-Envelope"[..], &b"1"[..]).expect("static header value")
+}
+
+/// Enveloped response body: the phone unwraps it before it can read anything.
+fn respond_enveloped(request: tiny_http::Request, key: &[u8; 32], body: Vec<u8>) {
+  match envelope_seal(key, &body) {
+    Some(envelope) => {
+      let _ = request.respond(
+        Response::from_data(envelope)
+          .with_header(content_type("application/octet-stream"))
+          .with_header(envelope_header()),
+      );
+    }
+    None => respond_text(request, 500, "Could not protect the response"),
+  }
+}
+
+/// Did this request come from a page that holds the transit key? The header
+/// rides every request the 0.13.0 phone page makes. It is a capability
+/// marker, not proof — the key itself is only ever proven by GCM
+/// authentication — but it is what lets an OLD cached page (which cannot
+/// decrypt anything) be answered with the same 404 as a dead pairing, so its
+/// existing error path shows the re-scan message instead of raw garbage.
+fn link_capability(request: &tiny_http::Request) -> bool {
+  request
+    .headers()
+    .iter()
+    .any(|h| h.field.equiv("X-Link-Key") && h.value.as_str().trim() == "1")
+}
+
+/// The body-level marker: this request's body is a sealed record. Distinct
+/// from link_capability on purpose — the capability rides hello's headers,
+/// this one rides the individual uploads it describes.
+fn envelope_request(request: &tiny_http::Request) -> bool {
+  request
+    .headers()
+    .iter()
+    .any(|h| h.field.equiv("X-Link-Envelope") && h.value.as_str().trim() == "1")
+}
 
 /// Which network a pairing address lives on — the pairing UI labels each
 /// candidate QR with this.
@@ -161,6 +232,10 @@ struct RemoteCamera {
   /// live routing table whenever anyone asks, so they survive network changes.
   port: u16,
   token: String,
+  /// The transit key the QR carries (?k=…); rotated only by
+  /// reset_pairing_token. Lives as long as the struct so remote_camera_active
+  /// can re-embed it into rebuilt URLs.
+  key: [u8; 32],
   /// Live phone sessions. In-memory by design: it lives and dies with the
   /// link, so stopping the listener revokes every phone — "End session"
   /// signs them all out without rotating the pairing code, and a desktop
@@ -558,6 +633,61 @@ fn pairing_token(app: &AppHandle) -> Result<String, String> {
   Ok(token)
 }
 
+/// The transit key (specs/007): a 256-bit AES-GCM key for the link's
+/// patient-data records. It reaches the phone OUT OF BAND — embedded in the
+/// QR URL (?k=…) that the phone scans live off this screen, a channel an
+/// on-path attacker can read but never alter — and is never served over the
+/// link itself. Persisted beside the pairing token so a phone's saved
+/// home-screen icon keeps decrypting across restarts (the phone stores its
+/// copy when it scans), minted on demand for installs that paired before
+/// 0.13.0, and rotated with the code by reset_pairing_token. Owner-only
+/// file, like the token.
+fn pairing_key(app: &AppHandle) -> Result<[u8; 32], String> {
+  let dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("could not resolve the app data dir: {e}"))?;
+  let path = dir.join("phone-link-key");
+  if let Ok(text) = std::fs::read_to_string(&path) {
+    if let Some(key) = parse_link_key(text.trim()) {
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+      }
+      return Ok(key);
+    }
+  }
+  let key: [u8; 32] = rand::random();
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+  std::fs::write(&path, &hex).map_err(|e| e.to_string())?;
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+  }
+  Ok(key)
+}
+
+/// 64 hex chars → the 32 key bytes (same strict shape the token uses).
+fn parse_link_key(text: &str) -> Option<[u8; 32]> {
+  if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+    return None;
+  }
+  let mut key = [0u8; 32];
+  for (i, byte) in key.iter_mut().enumerate() {
+    *byte = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).ok()?;
+  }
+  Some(key)
+}
+
+/// The QR-URL form of the key: unpadded base64url (43 chars, the phone-side
+/// shape check matches this exactly).
+fn link_key_param(key: &[u8; 32]) -> String {
+  base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key)
+}
+
 /// The tether port sits next to the token (phone-link-port) so the whole
 /// pairing URL — IP, port and token — is stable across restarts. Without a
 /// pinned port every launch would bind an ephemeral one and the phone's
@@ -738,12 +868,18 @@ fn is_cgnat(ip: Ipv4Addr) -> bool {
 
 /// The pairing URLs worth offering right now: the default-route address a
 /// same-network phone uses, then the Tailscale address for a phone reaching
-/// over the tailnet. Loopback/link-local fallbacks never get a QR.
+/// over the tailnet. Loopback/link-local fallbacks never get a QR. Both
+/// embed the transit key (specs/007): scanning the QR off this screen is the
+/// key exchange — the code is the capability, the ?k= value is what
+/// decrypts what the code lets you fetch. Tailscale addresses get the same
+/// envelope (their tunnel is already encrypted; the envelope is orthogonal
+/// and identical on every path).
 fn pairing_urls(
   default_route: IpAddr,
   tunnel: Option<IpAddr>,
   port: u16,
   token: &str,
+  key: &[u8; 32],
 ) -> Vec<RemoteCameraUrl> {
   let usable = |ip: IpAddr| match ip {
     IpAddr::V4(v4)
@@ -753,11 +889,12 @@ fn pairing_urls(
     }
     _ => None,
   };
+  let suffix = format!("/t/{token}/?k={}", link_key_param(key));
   let mut urls = Vec::new();
   let primary = usable(default_route);
   if let Some(v4) = primary {
     urls.push(RemoteCameraUrl {
-      url: format!("http://{v4}:{port}/t/{token}/"),
+      url: format!("http://{v4}:{port}{suffix}"),
       kind: if is_cgnat(v4) {
         LinkKind::Tailscale
       } else {
@@ -767,7 +904,7 @@ fn pairing_urls(
   }
   if let Some(v4) = tunnel.and_then(usable).filter(|v4| Some(*v4) != primary) {
     urls.push(RemoteCameraUrl {
-      url: format!("http://{v4}:{port}/t/{token}/"),
+      url: format!("http://{v4}:{port}{suffix}"),
       kind: LinkKind::Tailscale,
     });
   }
@@ -804,10 +941,6 @@ fn content_type(value: &str) -> Header {
   Header::from_bytes(&b"Content-Type"[..], value.as_bytes()).expect("static header value")
 }
 
-fn content_disposition(value: &str) -> Header {
-  Header::from_bytes(&b"Content-Disposition"[..], value.as_bytes()).expect("static header value")
-}
-
 fn cache_control(value: &str) -> Header {
   Header::from_bytes(&b"Cache-Control"[..], value.as_bytes()).expect("static header value")
 }
@@ -832,17 +965,18 @@ fn respond_json(request: tiny_http::Request, status: u16, body: String) {
   );
 }
 
-fn handle_library(request: tiny_http::Request) {
+fn handle_library(request: tiny_http::Request, key: &[u8; 32]) {
+  // Patient names and ids ride this manifest — enveloped without exception.
   let manifest = LIBRARY
     .lock()
     .unwrap()
     .as_ref()
     .map(|lib| lib.manifest_json.clone())
     .unwrap_or_else(|| "{\"viewing\":false}".to_string());
-  respond_json(request, 200, manifest);
+  respond_enveloped(request, key, manifest.into_bytes());
 }
 
-fn handle_image(request: tiny_http::Request, filename: &str) {
+fn handle_image(request: tiny_http::Request, filename: &str, key: &[u8; 32]) {
   // The whitelist is the authority; the charset check just keeps any weird
   // bytes from ever reaching the filesystem layer.
   let allowed = LIBRARY.lock().unwrap().as_ref().is_some_and(|lib| {
@@ -862,20 +996,18 @@ fn handle_image(request: tiny_http::Request, filename: &str) {
     return;
   };
   // Photo files are AES-GCM encrypted at rest; legacy plaintext passes
-  // through unchanged (photo_crypto::decrypt_or_plain).
+  // through unchanged (photo_crypto::decrypt_or_plain) — and then the
+  // transit envelope wraps the result either way (specs/007).
   match std::fs::read(&path)
     .map_err(|e| e.to_string())
     .and_then(|raw| crate::photo_crypto::decrypt_or_plain(&raw))
   {
     Ok(bytes) => {
-      let _ = request.respond(
-        Response::from_data(bytes)
-          .with_header(content_type("image/jpeg"))
-          // Clinical images: keep them out of shared/proxy caches; an hour of
-          // private caching smooths library browsing without disk trails
-          // beyond the phone's own (private-mode-invisible) cache.
-          .with_header(cache_control("private, max-age=3600")),
-      );
+      // Clinical images: keep them out of shared/proxy caches; an hour of
+      // private caching smooths library browsing without disk trails beyond
+      // the phone's own (private-mode-invisible) cache. What gets cached is
+      // the envelope, not the pixels.
+      respond_enveloped(request, key, bytes);
     }
     Err(e) => {
       crate::diagnostics::record(
@@ -909,6 +1041,34 @@ fn try_claim_awaiting_report(
   true
 }
 
+/// Read a request body under the cap. Enveloped uploads (X-Link-Envelope: 1)
+/// are opened with the session key; a plaintext body passes through so a
+/// page cached from before the envelope still works. A corrupt envelope is
+/// refused, never guessed — GCM authentication rejects tampered and
+/// wrong-keyed records alike.
+fn request_body(
+  request: &mut tiny_http::Request,
+  key: &[u8; 32],
+  cap: usize,
+) -> Result<Vec<u8>, ()> {
+  let max = cap + ENVELOPE_OVERHEAD;
+  if request.body_length().is_some_and(|len| len > max) {
+    return Err(());
+  }
+  let mut body = Vec::new();
+  let read = request
+    .as_reader()
+    .take(max as u64 + 1)
+    .read_to_end(&mut body);
+  if read.is_err() {
+    return Err(());
+  }
+  if envelope_request(request) {
+    return envelope_open(key, &body).ok_or(());
+  }
+  Ok(body)
+}
+
 /// Shared tail of the report control request: read the small JSON body, gate
 /// the patient against the shared manifest, and relay it to the webview as a
 /// Tauri event. The actual work happens webview-side through the normal
@@ -920,19 +1080,11 @@ fn handle_patient_request<R: Runtime>(
   mut request: tiny_http::Request,
   event: &str,
   session: Option<[u8; 16]>,
+  key: &[u8; 32],
 ) {
   let outcome = (|| -> Result<(), (u16, &'static str)> {
-    if request.body_length().is_some_and(|len| len > MAX_CONTROL_BODY) {
-      return Err((413, "Request too large"));
-    }
-    let mut body = Vec::new();
-    let read = request
-      .as_reader()
-      .take(MAX_CONTROL_BODY as u64 + 1)
-      .read_to_end(&mut body);
-    if read.is_err() {
-      return Err((400, "Bad request"));
-    }
+    let body = request_body(&mut request, key, MAX_CONTROL_BODY)
+      .map_err(|_| (400, "Bad request"))?;
     let parsed: PatientRequest =
       serde_json::from_slice(&body).map_err(|_| (400, "Bad request"))?;
     let allowed = LIBRARY
@@ -969,19 +1121,11 @@ fn handle_patient_request<R: Runtime>(
 fn handle_photo_review_request<R: Runtime>(
   app: &AppHandle<R>,
   mut request: tiny_http::Request,
+  key: &[u8; 32],
 ) {
   let outcome = (|| -> Result<(), (u16, &'static str)> {
-    if request.body_length().is_some_and(|len| len > MAX_CONTROL_BODY) {
-      return Err((413, "Request too large"));
-    }
-    let mut body = Vec::new();
-    let read = request
-      .as_reader()
-      .take(MAX_CONTROL_BODY as u64 + 1)
-      .read_to_end(&mut body);
-    if read.is_err() {
-      return Err((400, "Bad request"));
-    }
+    let body = request_body(&mut request, key, MAX_CONTROL_BODY)
+      .map_err(|_| (400, "Bad request"))?;
     let parsed: PhotoReviewRequest =
       serde_json::from_slice(&body).map_err(|_| (400, "Bad request"))?;
     let allowed = LIBRARY
@@ -1003,7 +1147,7 @@ fn handle_photo_review_request<R: Runtime>(
   }
 }
 
-fn handle_report_download(request: tiny_http::Request, session: Option<[u8; 16]>) {
+fn handle_report_download(request: tiny_http::Request, session: Option<[u8; 16]>, key: &[u8; 32]) {
   let staged = STAGED_REPORT.lock().unwrap().clone();
   let Some(path) = staged_report_for(&staged, session, now_ms()) else {
     respond_json(request, 404, "{\"ready\":false}".to_string());
@@ -1011,12 +1155,8 @@ fn handle_report_download(request: tiny_http::Request, session: Option<[u8; 16]>
   };
   match std::fs::read(&path) {
     Ok(bytes) => {
-      let _ = request.respond(
-        Response::from_data(bytes)
-          .with_header(content_type("application/pdf"))
-          .with_header(content_disposition("inline; filename=\"camog-case-report.pdf\""))
-          .with_header(cache_control("no-store")),
-      );
+      // The PDF is a patient's document: enveloped like everything else.
+      respond_enveloped(request, key, bytes);
     }
     Err(_) => respond_json(request, 404, "{\"ready\":false}".to_string()),
   }
@@ -1032,13 +1172,20 @@ fn is_public_asset(url: &str) -> bool {
   url == "/logo.png"
 }
 
+/// Everything the per-request handler needs about the live link, shared with
+/// every request thread as one Arc.
+struct LinkContext {
+  token: String,
+  key: [u8; 32],
+  sessions: Arc<SessionStore>,
+  last_seen_ms: Arc<AtomicU64>,
+  guard: Arc<AuthGuard>,
+  shutdown: Arc<AtomicBool>,
+}
+
 fn handle_request<R: Runtime>(
   app: &AppHandle<R>,
-  token: &str,
-  sessions: &SessionStore,
-  last_seen_ms: &AtomicU64,
-  guard: &AuthGuard,
-  shutdown: &AtomicBool,
+  ctx: &LinkContext,
   mut request: tiny_http::Request,
 ) {
   let url = request.url().to_string();
@@ -1068,16 +1215,16 @@ fn handle_request<R: Runtime>(
   let action = classify_auth(
     &url,
     cookie_header,
-    token,
-    sessions,
-    guard,
+    &ctx.token,
+    &ctx.sessions,
+    &ctx.guard,
     source_ip,
     Instant::now(),
   );
   // Any request presenting a valid credential (code or cookie) proves the
   // phone is live; photo grabs included.
   if !matches!(action, AuthAction::Rejected { .. }) {
-    last_seen_ms.store(now_ms(), Ordering::Relaxed);
+    ctx.last_seen_ms.store(now_ms(), Ordering::Relaxed);
   }
   // The authenticated session, when the request carries a live cookie — the
   // report routes key staged PDFs to it and the POST meter consumes from it.
@@ -1088,7 +1235,15 @@ fn handle_request<R: Runtime>(
     // icons and old QR photos follow to this day; the Set-Cookie rides
     // along (or is skipped when the request already carried a live one).
     AuthAction::Exchange { fresh } => {
-      let mut response = Response::empty(303).with_header(location_header("/"));
+      // Carry the query (the transit key ?k=… from the QR URL) into the
+      // token-less root — it is how the page first learns the key. The key
+      // only ever travels in the QR and this one redirect echo; nothing
+      // else serves it.
+      let target = match url.split_once('?') {
+        Some((_, query)) if !query.is_empty() => format!("/?{query}"),
+        _ => "/".to_string(),
+      };
+      let mut response = Response::empty(303).with_header(location_header(&target));
       if let Some(id) = &fresh {
         response = response.with_header(session_cookie_header(id));
       }
@@ -1104,7 +1259,7 @@ fn handle_request<R: Runtime>(
         && matches!(url.strip_prefix('/'), Some("photo" | "photo-review" | "report-request"));
       if limited_post {
         let allowed = session
-          .map(|s| sessions.allow_post(s, now_ms()))
+          .map(|s| ctx.sessions.allow_post(s, now_ms()))
           .unwrap_or(true);
         if !allowed {
           respond_text(request, 429, "Too many requests");
@@ -1160,17 +1315,42 @@ fn handle_request<R: Runtime>(
   };
 
   if method == Method::Get && (path.is_empty() || path == "index.html") {
-    let _ = request.respond(
-      Response::from_string(PAGE_HTML).with_header(content_type("text/html; charset=utf-8")),
-    );
+    // The shell revalidates instead of refetching (specs/007's mitigation
+    // for the plain-HTTP app shell): no-cache + a version ETag means the
+    // page's JS rides the wire only when the app actually changed — 304s
+    // carry nothing. No service worker: SWs are secure-context-only, which
+    // plain LAN http is not.
+    let etag = format!("\"camog-page-{}\"", env!("CARGO_PKG_VERSION"));
+    let matches = request.headers().iter().any(|h| {
+      h.field.equiv("If-None-Match") && h.value.as_str().contains(&etag)
+    });
+    if matches {
+      let _ = request.respond(Response::empty(304).with_header(cache_control("no-cache")));
+    } else {
+      let _ = request.respond(
+        Response::from_string(PAGE_HTML)
+          .with_header(content_type("text/html; charset=utf-8"))
+          .with_header(cache_control("no-cache"))
+          .with_header(
+            Header::from_bytes(&b"ETag"[..], etag.as_bytes()).expect("static header value"),
+          ),
+      );
+    }
   } else if method == Method::Get && path == "logo.png" {
     let _ = request.respond(
       Response::from_data(LOGO_PNG.to_vec()).with_header(content_type("image/png")),
     );
   } else if method == Method::Get && path == "manifest.webmanifest" {
-    respond_json(request, 200, web_manifest(token));
+    respond_json(request, 200, web_manifest(&ctx.token));
   } else if method == Method::Get && path == "hello" {
-    // Phone page pings on load so the desktop knows pairing succeeded.
+    // Phone page pings on load so the desktop knows pairing succeeded. A
+    // page that cannot prove it holds the transit key (a cached page from
+    // before 0.13.0) gets the dead-pairing 404 — which its own error path
+    // already renders as the re-scan message, never a raw error.
+    if !link_capability(&request) {
+      respond_text(request, 404, "Not found");
+      return;
+    }
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: true });
     respond_text(request, 200, "ok");
   } else if method == Method::Get && path == "link-code" {
@@ -1178,47 +1358,48 @@ fn handle_request<R: Runtime>(
     // heal itself through the saved /t/<code>/ URL (and the link page can
     // offer Restore). Session-gated: a live session is the same class of
     // credential as the code, so this hands nothing to a new principal.
-    respond_json(request, 200, format!("{{\"code\":\"{token}\"}}"));
+    respond_json(request, 200, format!("{{\"code\":\"{}\"}}", ctx.token));
   } else if method == Method::Get && path == "library" {
-    handle_library(request);
+    handle_library(request, &ctx.key);
   } else if method == Method::Get && path == "library-wait" {
     // Long-poll: hold until the shared library changes (desktop publish or
     // share-off clear), the link shuts down, or the cap elapses. The phone
     // re-opens this the moment it answers, so manifest updates ride events —
-    // review dates, new photos — instead of refresh timers.
-    let changed = wait_for_library_change(shutdown, Duration::from_secs(25));
+    // review dates, new photos — instead of refresh timers. The answer
+    // carries no patient data ({changed:…}), so it stays plaintext.
+    let changed = wait_for_library_change(&ctx.shutdown, Duration::from_secs(25));
     respond_json(request, 200, format!(r#"{{"changed":{changed}}}"#));
   } else if method == Method::Get && path.starts_with("img/") {
-    handle_image(request, &path["img/".len()..]);
+    handle_image(request, &path["img/".len()..], &ctx.key);
   } else if method == Method::Get && path == "report" {
-    handle_report_download(request, session);
+    handle_report_download(request, session, &ctx.key);
   } else if method == Method::Post && path == "bye" {
     // Phone page beacons on hide/unload so the desktop can clear the
     // "connected" indicator instead of showing it forever.
     let _ = app.emit(STATUS_EVENT, RemoteCameraStatus { connected: false });
     respond_text(request, 200, "ok");
   } else if method == Method::Post && path == "photo-review" {
-    handle_photo_review_request(app, request);
+    handle_photo_review_request(app, request, &ctx.key);
   } else if method == Method::Post && path == "report-request" {
-    handle_patient_request(app, request, REPORT_EVENT, session);
+    handle_patient_request(app, request, REPORT_EVENT, session, &ctx.key);
   } else if method == Method::Post && path == "photo" {
-    if request.body_length().is_some_and(|len| len > MAX_BODY) {
-      respond_text(request, 413, "Photo too large");
-      return;
-    }
-    let mut body = Vec::new();
-    let read = request
-      .as_reader()
-      .take(MAX_BODY as u64 + 1)
-      .read_to_end(&mut body);
-    if read.is_err() || body.is_empty() {
-      respond_text(request, 400, "Bad request");
-      return;
-    }
-    if body.len() > MAX_BODY {
-      respond_text(request, 413, "Photo too large");
-      return;
-    }
+    let photo_result = (|| -> Result<Vec<u8>, ()> {
+      if request.body_length().is_some_and(|len| len > MAX_BODY + ENVELOPE_OVERHEAD) {
+        return Err(());
+      }
+      request_body(&mut request, &ctx.key, MAX_BODY)
+    })();
+    let body = match photo_result {
+      Ok(body) if !body.is_empty() && body.len() <= MAX_BODY => body,
+      Ok(_) => {
+        respond_text(request, 413, "Photo too large");
+        return;
+      }
+      Err(()) => {
+        respond_text(request, 400, "Bad request");
+        return;
+      }
+    };
 
     let capture_id = capture_id_from_headers(request.headers());
     let patient_id = LIBRARY.lock().unwrap().as_ref().and_then(|lib| {
@@ -1261,27 +1442,19 @@ fn handle_request<R: Runtime>(
 fn spawn_handler<R: Runtime>(
   app: AppHandle<R>,
   server: Arc<Server>,
-  token: String,
-  sessions: Arc<SessionStore>,
-  last_seen_ms: Arc<AtomicU64>,
-  shutdown: Arc<AtomicBool>,
-  guard: Arc<AuthGuard>,
+  ctx: Arc<LinkContext>,
 ) -> JoinHandle<()> {
   std::thread::spawn(move || {
-    while !shutdown.load(Ordering::Relaxed) {
+    while !ctx.shutdown.load(Ordering::Relaxed) {
       match server.recv() {
         Ok(request) => {
           // One thread per request: the library long-poll holds its
           // connection open for up to 25s and must not starve photo
           // uploads, hello, or anything else behind the sequential recv.
           let app = app.clone();
-          let token = token.clone();
-          let sessions = Arc::clone(&sessions);
-          let last_seen_ms = Arc::clone(&last_seen_ms);
-          let shutdown = Arc::clone(&shutdown);
-          let guard = Arc::clone(&guard);
+          let ctx = Arc::clone(&ctx);
           std::thread::spawn(move || {
-            handle_request(&app, &token, &sessions, &last_seen_ms, &guard, &shutdown, request);
+            handle_request(&app, &ctx, request);
           });
         }
         // stop_remote_camera() unblocks the listener to wake us up.
@@ -1337,7 +1510,8 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
     }
   };
   let token = pairing_token(&app)?;
-  let urls = pairing_urls(lan_ip(), tailscale_ip(), port, &token);
+  let key = pairing_key(&app)?;
+  let urls = pairing_urls(lan_ip(), tailscale_ip(), port, &token, &key);
   let server = Arc::new(server);
   let last_seen_ms = Arc::new(AtomicU64::new(now_ms()));
 
@@ -1350,11 +1524,14 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   let thread = spawn_handler(
     app,
     Arc::clone(&server),
-    token.clone(),
-    Arc::clone(&sessions),
-    Arc::clone(&last_seen_ms),
-    Arc::clone(&shutdown),
-    Arc::clone(&guard),
+    Arc::new(LinkContext {
+      token: token.clone(),
+      key,
+      sessions: Arc::clone(&sessions),
+      last_seen_ms: Arc::clone(&last_seen_ms),
+      guard: Arc::clone(&guard),
+      shutdown: Arc::clone(&shutdown),
+    }),
   );
 
   *REMOTE_CAMERA.lock().unwrap() = Some(RemoteCamera {
@@ -1363,6 +1540,7 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
     thread: Some(thread),
     port,
     token,
+    key,
     sessions,
     last_seen_ms,
   });
@@ -1422,7 +1600,9 @@ pub async fn stop_remote_camera() {
 /// link, forget the persisted token, start again on the same pinned port.
 /// The previous code stops working the moment the server restarts — a phone
 /// still holding it sees 404s and drops to its reconnecting screen until the
-/// new QR is scanned once. The shared library is untouched by the restart,
+/// new QR is scanned once. The transit key rotates with it (specs/007): a
+/// code that was shared or photographed must not leave behind a key that
+/// still opens anything. The shared library is untouched by the restart,
 /// so a re-paired phone picks it straight back up.
 #[tauri::command]
 pub async fn reset_pairing_token(app: AppHandle) -> Result<RemoteCameraInfo, String> {
@@ -1432,11 +1612,17 @@ pub async fn reset_pairing_token(app: AppHandle) -> Result<RemoteCameraInfo, Str
     .app_data_dir()
     .map_err(|e| format!("could not resolve the app data dir: {e}"))?;
   // A failure here must surface, not fall through to start: a token file we
-  // failed to delete would silently keep the old code alive.
+  // failed to delete would silently keep the old code alive (same reasoning
+  // for the key file).
   match std::fs::remove_file(dir.join("phone-link-token")) {
     Ok(()) => {}
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
     Err(e) => return Err(format!("could not remove the old pairing code: {e}")),
+  }
+  match std::fs::remove_file(dir.join("phone-link-key")) {
+    Ok(()) => {}
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+    Err(e) => return Err(format!("could not remove the old transit key: {e}")),
   }
   crate::diagnostics::record(
     crate::diagnostics::Level::Info,
@@ -1459,7 +1645,7 @@ pub fn remote_camera_active() -> Option<RemoteCameraInfo> {
     .unwrap()
     .as_ref()
     .map(|rc| RemoteCameraInfo {
-      urls: pairing_urls(lan_ip(), tailscale_ip(), rc.port, &rc.token),
+      urls: pairing_urls(lan_ip(), tailscale_ip(), rc.port, &rc.token, &rc.key),
     })
 }
 
@@ -1632,16 +1818,22 @@ mod tests {
   }
 
   // The companion viewer surface: library tab, patient rows, viewer, and the
-  // manifest fetch that switches both on.
+  // manifest fetch that switches both on. Photos decrypt through the
+  // envelope-aware loader (specs/007) — no raw img/ src anywhere.
   #[test]
   fn phone_page_carries_library_viewer() {
     assert!(PAGE_HTML.contains(r#"fetch('library')"#));
     assert!(PAGE_HTML.contains("screen-patient"));
     assert!(PAGE_HTML.contains("screen-viewer"));
-    assert!(PAGE_HTML.contains(r#"'img/' + e.p.id + '.thumb.jpg'"#));
-    assert!(PAGE_HTML.contains(r#"'img/' + e.p.id + '.jpg'"#));
+    assert!(PAGE_HTML.contains(r#"setPhotoSrc(img, e.p.id + '.thumb.jpg')"#));
+    assert!(PAGE_HTML.contains(r#"setPhotoSrc(img, entry.p.id + '.jpg')"#));
     assert!(PAGE_HTML.contains("Review overdue"));
     assert!(PAGE_HTML.contains("No consent on record"));
+    // The loader decrypts before any <img> sees a URL, and no img/src
+    // assignment may bypass it.
+    assert!(PAGE_HTML.contains("function photoObjectUrl"));
+    assert!(PAGE_HTML.contains("function setPhotoSrc"));
+    assert!(!PAGE_HTML.contains(".src = 'img/"));
   }
 
   // Attachment indicator: photos carrying attached documents (result files)
@@ -1873,6 +2065,37 @@ mod tests {
     assert!(!is_public_asset("/manifest.webmanifest"));
     assert!(!is_public_asset("/t/1234/"));
     assert!(!is_public_asset("/logo.png/extra"));
+  }
+
+  // specs/007 needles: the page embeds the AES-256-GCM block (extractable
+  // by the self-checks), loads the transit key from the QR's ?k= (storing it
+  // for saved icons), seals uploads and control requests, and routes every
+  // undecryptable record to the re-scan UX instead of an error. The link
+  // page's scan stores the key alongside the code.
+  #[test]
+  fn phone_page_carries_transit_envelope() {
+    // Extractable, self-contained crypto block (self-check cross-verifies
+    // against OpenSSL).
+    assert!(PAGE_HTML.contains("gcm-begin") && PAGE_HTML.contains("gcm-end"));
+    assert!(PAGE_HTML.contains("function expandKey"));
+    assert!(PAGE_HTML.contains("function buildTables"));
+    assert!(PAGE_HTML.contains("WebCrypto's crypto.subtle only") || PAGE_HTML.contains("secure-context-only"));
+    // Key loading: ?k= from the QR URL, persisted for saved icons.
+    assert!(PAGE_HTML.contains("'camog-link-key'"));
+    assert!(PAGE_HTML.contains("function loadLinkKey"));
+    assert!(PAGE_HTML.contains(r#"/(?:^|\?|&)k=([\w-]{43})(?:&|$)/"#));
+    // Uploads and control requests are sealed; hellos carry the marker.
+    assert!(PAGE_HTML.contains("function sealRecord"));
+    assert!(PAGE_HTML.contains("function openRecord"));
+    assert!(PAGE_HTML.contains("'X-Link-Envelope': '1'"));
+    assert!(PAGE_HTML.contains("'X-Link-Key': '1'"));
+    // Manifest + photos + report all decrypt; a failure is the re-scan UX.
+    assert!(PAGE_HTML.contains("X-Link-Envelope"));
+    assert!(PAGE_HTML.contains("function envelopeFailed"));
+    assert!(PAGE_HTML.contains("pairingExpired();"));
+    // The link page's scan path captures the key from the QR URL.
+    assert!(LINK_HTML.contains("'camog-link-key'"));
+    assert!(LINK_HTML.contains("LINK_CRYPTO_KEY"));
   }
 
   // The link page handed to rejected requests: the phone's way back in
@@ -2208,7 +2431,10 @@ mod tests {
   // wiring the live app uses (mock runtime — no window, real sockets). This
   // is the curl checklist from the plan, kept as a regression net: it sees
   // the header plumbing (Cookie lookup, Set-Cookie on the 303, Location)
-  // that the classify_auth unit tests cannot.
+  // that the classify_auth unit tests cannot — plus the specs/007 pieces:
+  // the exchange carries the transit key's query into the redirect, the
+  // shell revalidates by ETag, and a page that cannot present the transit
+  // capability gets the dead-pairing 404.
   #[test]
   fn http_exchange_and_cookie_protocol() {
     use super::{AuthGuard, SessionStore, spawn_handler};
@@ -2219,6 +2445,7 @@ mod tests {
 
     let app = test::mock_app();
     let token = "0123456789abcdef";
+    let key = [0x42u8; 32];
     let listener = super::bind_listener("127.0.0.1".parse().unwrap(), 0).expect("test bind");
     let port = listener.local_addr().unwrap().port();
     let server = Arc::new(Server::from_listener(listener, None).expect("test server"));
@@ -2228,21 +2455,25 @@ mod tests {
     let thread = spawn_handler(
       app.handle().clone(),
       Arc::clone(&server),
-      token.to_string(),
-      Arc::clone(&sessions),
-      Arc::clone(&last_seen_ms),
-      Arc::clone(&shutdown),
-      Arc::new(AuthGuard::new()),
+      Arc::new(super::LinkContext {
+        token: token.to_string(),
+        key,
+        sessions: Arc::clone(&sessions),
+        last_seen_ms: Arc::clone(&last_seen_ms),
+        guard: Arc::new(AuthGuard::new()),
+        shutdown: Arc::clone(&shutdown),
+      }),
     );
 
-    let get = |path: &str, cookie: Option<&str>| -> String {
+    let get = |path: &str, cookie: Option<&str>, caps: bool| -> String {
       let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
       let cookie_line = cookie
         .map(|c| format!("Cookie: {c}\r\n"))
         .unwrap_or_default();
+      let caps_line = if caps { "X-Link-Key: 1\r\n" } else { "" };
       write!(
         stream,
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{cookie_line}Connection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{cookie_line}{caps_line}Connection: close\r\n\r\n"
       )
       .expect("write");
       let mut response = String::new();
@@ -2253,14 +2484,20 @@ mod tests {
     // Unauthenticated root: still a 404 (that status is how the page tells
     // "credential dead" from "server gone"), but the body is the link page
     // — the way back in — rather than a bare dead end.
-    let res = get("/", None);
+    let res = get("/", None, true);
     assert!(res.starts_with("HTTP/1.1 404"), "no-cookie root must 404: {res}");
     assert!(res.contains("Restore saved link"), "rejected GET must serve the link page: {res}");
 
-    // The exchange: valid code → 303 to / plus the session cookie.
-    let res = get(&format!("/t/{token}/"), None);
+    // The exchange: valid code → 303 to / plus the session cookie, carrying
+    // the transit key's query along so the page first learns it there.
+    let res = get(&format!("/t/{token}/"), None, true);
     assert!(res.starts_with("HTTP/1.1 303"), "exchange must 303: {res}");
-    assert!(res.contains("\r\nLocation: /\r\n"), "exchange must point at /: {res}");
+    assert!(res.contains("\r\nLocation: /\r\n"), "exchange without a query points at /: {res}");
+    let res = get(&format!("/t/{token}/?k=AbC_-43chars"), None, true);
+    assert!(
+      res.contains("\r\nLocation: /?k=AbC_-43chars\r\n"),
+      "the transit key's query must ride the redirect: {res}"
+    );
     let set_cookie = res
       .lines()
       .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
@@ -2275,24 +2512,49 @@ mod tests {
       .expect("name=value pair");
 
     // The cookie authenticates token-less paths…
-    let res = get("/hello", Some(session));
+    let res = get("/hello", Some(session), true);
     assert!(res.starts_with("HTTP/1.1 200"), "cookie must authenticate: {res}");
-    // …and serves the page at /.
-    let res = get("/", Some(session));
+    // …and the page at / revalidates by ETag (no refetch while unchanged).
+    let res = get("/", Some(session), true);
     assert!(res.starts_with("HTTP/1.1 200"), "cookie must serve the page: {res}");
     assert!(res.contains("Camog"));
+    let etag = res
+      .lines()
+      .find(|l| l.to_ascii_lowercase().starts_with("etag:"))
+      .expect("page carries a version ETag")
+      .split_once(':')
+      .expect("header split")
+      .1
+      .trim()
+      .to_string();
+    assert!(!etag.is_empty());
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    write!(
+      stream,
+      "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\nIf-None-Match: {etag}\r\nConnection: close\r\n\r\n"
+    )
+    .expect("write");
+    let mut res = String::new();
+    stream.read_to_string(&mut res).expect("read");
+    assert!(res.starts_with("HTTP/1.1 304"), "matching ETag must 304: {res}");
+
+    // A page that cannot present the transit capability (a cached page from
+    // before the envelope) gets the dead-pairing 404 — the input to its
+    // re-scan UX — even with a live cookie.
+    let res = get("/hello", Some(session), false);
+    assert!(res.starts_with("HTTP/1.1 404"), "capability-less hello must 404: {res}");
 
     // A dead cookie is unauthenticated, and counts toward the throttle.
     let dead = "camog_session=ffffffffffffffffffffffffffffffff";
-    let res = get("/hello", Some(dead));
+    let res = get("/hello", Some(dead), true);
     assert!(res.starts_with("HTTP/1.1 404"), "dead cookie must 404: {res}");
     // Wrong code, same story.
-    let res = get("/t/feedfacefeedface/", None);
+    let res = get("/t/feedfacefeedface/", None, true);
     assert!(res.starts_with("HTTP/1.1 404"), "wrong code must 404: {res}");
 
     // An exchange from a holder of the live cookie reuses it: 303 with no
     // fresh Set-Cookie (old pages sitting on /t/<code>/ URLs).
-    let res = get(&format!("/t/{token}/hello"), Some(session));
+    let res = get(&format!("/t/{token}/hello"), Some(session), true);
     assert!(res.starts_with("HTTP/1.1 303"), "re-exchange must 303: {res}");
     assert!(
       !res.to_ascii_lowercase().contains("set-cookie:"),
@@ -2304,14 +2566,13 @@ mod tests {
     let _ = thread.join();
   }
 
-  // Bilateral sync: a held library long-poll must wake the moment the
-  // desktop publishes (this is the whole phone update channel — review
-  // dates and new photos ride it instead of refresh timers), wake on a
-  // share-off clear as well, and answer changed:false when the link shuts
-  // down. Runs over real HTTP through the same spawn_handler wiring.
+  // The passive-capture acceptance test (specs/007): a full session over
+  // real sockets — exchange, manifest, photo down, photo up — where the raw
+  // wire bytes are searched for patient data. Nothing readable may cross:
+  // not the patient's name, not the JPEG bytes, not the manifest JSON.
   #[test]
-  fn http_library_wait_wakes_on_publish() {
-    use super::{AuthGuard, SessionStore, spawn_handler};
+  fn http_wire_carries_no_patient_data_in_the_clear() {
+    use super::{AuthGuard, SessionStore, spawn_handler, update_remote_library};
     use std::io::{Read, Write};
     use std::sync::Arc;
     use tauri::test;
@@ -2319,6 +2580,7 @@ mod tests {
 
     let app = test::mock_app();
     let token = "0123456789abcdef";
+    let key = [0x5Au8; 32];
     let listener = super::bind_listener("127.0.0.1".parse().unwrap(), 0).expect("test bind");
     let port = listener.local_addr().unwrap().port();
     let server = Arc::new(Server::from_listener(listener, None).expect("test server"));
@@ -2328,11 +2590,272 @@ mod tests {
     let thread = spawn_handler(
       app.handle().clone(),
       Arc::clone(&server),
-      token.to_string(),
-      Arc::clone(&sessions),
-      Arc::clone(&last_seen_ms),
-      Arc::clone(&shutdown),
-      Arc::new(AuthGuard::new()),
+      Arc::new(super::LinkContext {
+        token: token.to_string(),
+        key,
+        sessions: Arc::clone(&sessions),
+        last_seen_ms: Arc::clone(&last_seen_ms),
+        guard: Arc::new(AuthGuard::new()),
+        shutdown: Arc::clone(&shutdown),
+      }),
+    );
+
+    let manifest = r#"{"viewing":true,"patients":[{"id":"p1","name":"Margot Whitfield"}]}"#;
+    update_remote_library(
+      manifest.to_string(),
+      ".".to_string(),
+      vec!["ph1.jpg".to_string()],
+      vec!["p1".to_string()],
+    )
+    .expect("publish");
+
+    // A distinctive 2 KB "JPEG" whose bytes would be trivially recognisable
+    // in the wire capture if they ever travelled in the clear.
+    let jpeg = vec![0xA7u8; 2048];
+
+    let exchange = |path: &str| -> String {
+      let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+      write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+      )
+      .expect("write");
+      let mut res = String::new();
+      stream.read_to_string(&mut res).expect("read");
+      res
+    };
+    let session = exchange(&format!("/t/{token}/?k=x"))
+      .lines()
+      .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
+      .expect("exchange sets a cookie")
+      .strip_prefix("Set-Cookie: ")
+      .expect("server-sent header case")
+      .split(';')
+      .next()
+      .expect("name=value pair")
+      .to_string();
+
+    let mut transcript = Vec::new();
+    let get = |path: &str, transcript: &mut Vec<u8>| -> Vec<u8> {
+      let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+      write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\nX-Link-Key: 1\r\nConnection: close\r\n\r\n"
+      )
+      .expect("write");
+      let mut raw = Vec::new();
+      stream.read_to_end(&mut raw).expect("read");
+      transcript.extend_from_slice(&raw);
+      // Strip the head (status + headers) to get the body bytes.
+      raw.splitn(2, |b: &u8| *b == b'\n').nth(1).map(|b| b.to_vec()).unwrap_or_default()
+      // note: splitn on first \n leaves headers cut at the first line only;
+      // the search below is on the whole transcript anyway.
+    };
+    let _ = get("/library", &mut transcript);
+    let _ = get("/img/ph1.jpg", &mut transcript);
+
+    // Photo up: seal a "snap" the way the phone page does.
+    let sealed = super::envelope_seal(&key, &jpeg).expect("seal upload");
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    write!(
+      stream,
+      "POST /photo HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\nX-Link-Key: 1\r\nX-Link-Envelope: 1\r\nX-Capture-Id: wire-test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      sealed.len()
+    )
+    .expect("write");
+    stream.write_all(&sealed).expect("write body");
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("read");
+    assert!(raw.starts_with(b"HTTP/1.1 200"), "sealed upload must be accepted: {}", String::from_utf8_lossy(&raw));
+    transcript.extend_from_slice(&raw);
+
+    // The passive capture: neither the patient's name, nor the manifest
+    // JSON, nor a single recognisable run of the JPEG may appear anywhere.
+    let wire = String::from_utf8_lossy(&transcript).to_lowercase();
+    assert!(!wire.contains("margot"), "patient name crossed in the clear");
+    assert!(!wire.contains("whitfield"), "patient name crossed in the clear");
+    assert!(!wire.contains("viewing"), "manifest JSON crossed in the clear");
+    assert!(!transcript.windows(16).any(|w| w == &jpeg[..16]), "JPEG bytes crossed in the clear");
+    // And the delivered records still decrypt to exactly the originals.
+    let lib_raw = {
+      let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+      write!(
+        stream,
+        "GET /library HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\nX-Link-Key: 1\r\nConnection: close\r\n\r\n"
+      )
+      .expect("write");
+      let mut raw = Vec::new();
+      stream.read_to_end(&mut raw).expect("read");
+      let body = raw.windows(4).position(|w| w == b"\r\n\r\n").map(|i| &raw[i + 4..]).expect("body");
+      body.to_vec()
+    };
+    assert_eq!(
+      super::envelope_open(&key, &lib_raw).as_deref(),
+      Some(manifest.as_bytes()),
+      "the manifest must survive the envelope intact"
+    );
+
+    shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+    server.unblock();
+    let _ = thread.join();
+  }
+
+  // Upload envelope mechanics: a sealed snap is accepted and relayed, a
+  // tampered one is refused (GCM auth), and a plaintext body (a page cached
+  // from before the envelope) still passes through for its capture-only
+  // lifetime.
+  #[test]
+  fn http_photo_upload_envelope_and_plaintext_fallback() {
+    use super::{AuthGuard, SessionStore, spawn_handler};
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use tauri::test;
+    use tiny_http::Server;
+
+    let app = test::mock_app();
+    let token = "0123456789abcdef";
+    let key = [0x63u8; 32];
+    let listener = super::bind_listener("127.0.0.1".parse().unwrap(), 0).expect("test bind");
+    let port = listener.local_addr().unwrap().port();
+    let server = Arc::new(Server::from_listener(listener, None).expect("test server"));
+    let last_seen_ms = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sessions = Arc::new(SessionStore::new());
+    let thread = spawn_handler(
+      app.handle().clone(),
+      Arc::clone(&server),
+      Arc::new(super::LinkContext {
+        token: token.to_string(),
+        key,
+        sessions: Arc::clone(&sessions),
+        last_seen_ms: Arc::clone(&last_seen_ms),
+        guard: Arc::new(AuthGuard::new()),
+        shutdown: Arc::clone(&shutdown),
+      }),
+    );
+
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    write!(
+      stream,
+      "GET /t/{token}/ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .expect("write");
+    let mut res = String::new();
+    stream.read_to_string(&mut res).expect("read");
+    let session = res
+      .lines()
+      .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
+      .expect("exchange sets a cookie")
+      .strip_prefix("Set-Cookie: ")
+      .expect("server-sent header case")
+      .split(';')
+      .next()
+      .expect("name=value pair")
+      .to_string();
+
+    // The page's real header set marks only the body (X-Link-Envelope); the
+    // capability header is hello's, not the upload's. The `caps` flag here
+    // sends BOTH so the envelope is also proven to open when the marker is
+    // accompanied by unrelated headers.
+    let post = |envelope: Option<&[u8]>, plaintext: &[u8]| -> String {
+      let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+      let body = envelope.unwrap_or(plaintext);
+      let caps = if envelope.is_some() { "X-Link-Envelope: 1\r\nX-Link-Key: 1\r\n" } else { "" };
+      write!(
+        stream,
+        "POST /photo HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\n{caps}Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+      )
+      .expect("write");
+      stream.write_all(body).expect("write body");
+      let mut raw = Vec::new();
+      stream.read_to_end(&mut raw).expect("read");
+      String::from_utf8_lossy(&raw).to_string()
+    };
+
+    // Sealed upload: accepted (the webview event delivery is exercised by
+    // the capture flow; the HTTP layer's contract is acceptance + decrypt).
+    let snap = vec![0x5Cu8; 1024];
+    let sealed = super::envelope_seal(&key, &snap).expect("seal");
+    let res = post(Some(&sealed), &[]);
+    assert!(res.starts_with("HTTP/1.1 200"), "sealed upload must pass: {res}");
+
+    // The phone page's exact header set: the envelope marker on the body,
+    // no capability header (that rides hello). Must open just the same —
+    // the gate is the marker, not the capability.
+    let sealed = super::envelope_seal(&key, &snap).expect("seal");
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    write!(
+      stream,
+      "POST /photo HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\nX-Link-Envelope: 1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      sealed.len()
+    )
+    .expect("write");
+    stream.write_all(&sealed).expect("write body");
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("read");
+    assert!(
+      raw.starts_with(b"HTTP/1.1 200"),
+      "marker-only envelope (the page's real header set) must open: {}",
+      String::from_utf8_lossy(&raw)
+    );
+
+    // Tampered: one flipped byte, refused.
+    let mut tampered = sealed.clone();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 0x08;
+    let res = post(Some(&tampered), &[]);
+    assert!(res.starts_with("HTTP/1.1 400"), "tampered upload must be refused: {res}");
+
+    // A wrong-key envelope is refused the same way.
+    let forged = super::envelope_seal(&[1u8; 32], &snap).expect("forged");
+    let res = post(Some(&forged), &[]);
+    assert!(res.starts_with("HTTP/1.1 400"), "wrong-key upload must be refused: {res}");
+
+    // Legacy plaintext (pre-envelope cached page): accepted.
+    let res = post(None, &snap);
+    assert!(res.starts_with("HTTP/1.1 200"), "plaintext fallback must pass: {res}");
+
+    shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+    server.unblock();
+    let _ = thread.join();
+  }
+
+  // Bilateral sync: a held library long-poll must wake the moment the
+  // desktop publishes (this is the whole phone update channel — review
+  // dates and new photos ride it instead of refresh timers), wake on a
+  // share-off clear as well, and answer changed:false when the link shuts
+  // down. Runs over real HTTP through the same spawn_handler wiring. The
+  // manifest itself arrives enveloped — the test opens it with the session
+  // key and checks the plaintext never rides the wire.
+  #[test]
+  fn http_library_wait_wakes_on_publish() {
+    use super::{AuthGuard, SessionStore, envelope_open, spawn_handler};
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use tauri::test;
+    use tiny_http::Server;
+
+    let app = test::mock_app();
+    let token = "0123456789abcdef";
+    let key = [0x71u8; 32];
+    let listener = super::bind_listener("127.0.0.1".parse().unwrap(), 0).expect("test bind");
+    let port = listener.local_addr().unwrap().port();
+    let server = Arc::new(Server::from_listener(listener, None).expect("test server"));
+    let last_seen_ms = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sessions = Arc::new(SessionStore::new());
+    let thread = spawn_handler(
+      app.handle().clone(),
+      Arc::clone(&server),
+      Arc::new(super::LinkContext {
+        token: token.to_string(),
+        key,
+        sessions: Arc::clone(&sessions),
+        last_seen_ms: Arc::clone(&last_seen_ms),
+        guard: Arc::new(AuthGuard::new()),
+        shutdown: Arc::clone(&shutdown),
+      }),
     );
 
     // Exchange the pairing code for a session cookie.
@@ -2355,16 +2878,21 @@ mod tests {
       .expect("name=value pair")
       .to_string();
 
-    let get = |path: &str| -> String {
+    let get_raw = |path: &str| -> Vec<u8> {
       let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
       write!(
         stream,
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {session}\r\nX-Link-Key: 1\r\nConnection: close\r\n\r\n"
       )
       .expect("write");
-      let mut response = String::new();
-      stream.read_to_string(&mut response).expect("read");
-      response
+      // The body is envelope ciphertext — read bytes, not UTF-8.
+      let mut raw = Vec::new();
+      stream.read_to_end(&mut raw).expect("read");
+      raw
+    };
+    let open_manifest = |raw: &[u8]| -> Option<Vec<u8>> {
+      let i = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
+      envelope_open(&key, &raw[i + 4..])
     };
 
     // A held wait answers changed:true as soon as a publish lands.
@@ -2397,6 +2925,22 @@ mod tests {
       "held long-poll must wake on publish: {res}"
     );
 
+    // The published manifest arrives enveloped: opens under the session key,
+    // and the raw wire never carries the plaintext.
+    let raw = get_raw("/library");
+    let res = String::from_utf8_lossy(&raw);
+    assert!(res.starts_with("HTTP/1.1 200"), "library must 200: {res}");
+    assert!(
+      res.to_ascii_lowercase().contains("x-link-envelope"),
+      "library must be enveloped: {res}"
+    );
+    assert!(!res.contains("viewing"), "manifest must not ride in the clear: {res}");
+    assert_eq!(
+      open_manifest(&raw).as_deref(),
+      Some(r#"{"viewing":true}"#.as_bytes()),
+      "manifest must decrypt exactly"
+    );
+
     // A share-off clear wakes the next wait too (the phone reverts to
     // camera-only without being asked).
     let waiter = wait(&session);
@@ -2407,10 +2951,16 @@ mod tests {
       res.contains(r#"{"changed":true}"#),
       "held long-poll must wake on clear: {res}"
     );
-    let res = get("/library");
+    let raw = get_raw("/library");
+    let res = String::from_utf8_lossy(&raw);
     assert!(
-      res.contains(r#"{"viewing":false}"#),
-      "library must degrade after clear: {res}"
+      !res.contains("viewing"),
+      "degraded manifest must not ride in the clear either: {res}"
+    );
+    assert_eq!(
+      open_manifest(&raw).as_deref(),
+      Some(r#"{"viewing":false}"#.as_bytes()),
+      "library must degrade after clear"
     );
 
     // With nothing publishing, the wait ends only when the link shuts down.
@@ -2475,17 +3025,24 @@ mod tests {
   // Multi-network pairing: the same-network address is offered first, the
   // Tailscale (CGNAT) address alongside it, and probes that merely echoed the
   // LAN address (no Tailscale) or fell back to loopback never mint a QR.
+  // Both URLs embed the transit key (specs/007) — the QR is the key
+  // exchange — and the Tailscale URL is byte-identical to the LAN one apart
+  // from the address: the envelope is orthogonal to the path.
   #[test]
   fn pairing_urls_offer_lan_then_tailscale() {
     use super::{pairing_urls, LinkKind};
     let lan: std::net::IpAddr = "192.168.1.5".parse().unwrap();
     let ts: std::net::IpAddr = "100.101.102.103".parse().unwrap();
-    let urls = pairing_urls(lan, Some(ts), 8080, "0123456789abcdef");
+    let key = [0xABu8; 32];
+    let urls = pairing_urls(lan, Some(ts), 8080, "0123456789abcdef", &key);
     assert_eq!(urls.len(), 2);
-    assert_eq!(urls[0].url, "http://192.168.1.5:8080/t/0123456789abcdef/");
+    let suffix = format!("/t/0123456789abcdef/?k={}", super::link_key_param(&key));
+    assert_eq!(urls[0].url, format!("http://192.168.1.5:8080{suffix}"));
     assert_eq!(urls[0].kind, LinkKind::Lan);
-    assert_eq!(urls[1].url, "http://100.101.102.103:8080/t/0123456789abcdef/");
+    assert_eq!(urls[1].url, format!("http://100.101.102.103:8080{suffix}"));
     assert_eq!(urls[1].kind, LinkKind::Tailscale);
+    // The key parameter is well-formed base64url of 32 bytes (43 chars).
+    assert_eq!(super::link_key_param(&key).len(), 43);
   }
 
   // The common no-Tailscale case: the CGNAT probe just returns the default
@@ -2495,9 +3052,10 @@ mod tests {
   fn pairing_urls_without_tailscale_stay_single() {
     use super::{pairing_urls, LinkKind};
     let lan: std::net::IpAddr = "172.20.10.7".parse().unwrap();
-    let urls = pairing_urls(lan, Some(lan), 9000, "0123456789abcdef");
+    let key = [1u8; 32];
+    let urls = pairing_urls(lan, Some(lan), 9000, "0123456789abcdef", &key);
     assert_eq!(urls.len(), 1);
-    assert_eq!(urls[0].url, "http://172.20.10.7:9000/t/0123456789abcdef/");
+    assert_eq!(urls[0].url, format!("http://172.20.10.7:9000/t/0123456789abcdef/?k={}", super::link_key_param(&key)));
     assert_eq!(urls[0].kind, LinkKind::Lan);
   }
 
@@ -2507,11 +3065,80 @@ mod tests {
   fn pairing_urls_skip_loopback_and_duplicate_tunnel() {
     use super::{pairing_urls, LinkKind};
     let lo: std::net::IpAddr = "127.0.0.1".parse().unwrap();
-    assert!(pairing_urls(lo, None, 8080, "0123456789abcdef").is_empty());
+    let key = [2u8; 32];
+    assert!(pairing_urls(lo, None, 8080, "0123456789abcdef", &key).is_empty());
     let ts: std::net::IpAddr = "100.101.102.103".parse().unwrap();
-    let urls = pairing_urls(ts, Some(ts), 8080, "0123456789abcdef");
+    let urls = pairing_urls(ts, Some(ts), 8080, "0123456789abcdef", &key);
     assert_eq!(urls.len(), 1);
     assert_eq!(urls[0].kind, LinkKind::Tailscale);
+  }
+
+  // The transit envelope's core contract (specs/007): a record round-trips,
+  // a wrong key (or a rotated one) opens nothing, one flipped byte is
+  // rejected, and the same plaintext never seals to the same bytes (fresh
+  // 96-bit nonce per record).
+  #[test]
+  fn envelope_round_trip_wrong_key_nonce_and_tamper() {
+    use super::{envelope_open, envelope_seal};
+    let key = [7u8; 32];
+    let manifest = br#"{"viewing":true,"patients":[{"id":"p1","name":"Margot Whitfield"}]}"#;
+
+    let sealed = envelope_seal(&key, manifest).expect("seal");
+    assert_eq!(sealed.len(), manifest.len() + 12 + 16, "envelope = nonce ‖ ct ‖ tag");
+    assert_eq!(envelope_open(&key, &sealed).as_deref(), Some(&manifest[..]));
+
+    // A different key — a rotated one, or an eavesdropper's guess — is
+    // indistinguishable from tampering: GCM auth fails either way.
+    assert_eq!(envelope_open(&[8u8; 32], &sealed), None);
+
+    // Flipping one ciphertext byte must reject the record.
+    let mut tampered = sealed.clone();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 0x40;
+    assert_eq!(envelope_open(&key, &tampered), None);
+    // …and so must flipping a nonce byte.
+    let mut tampered = sealed.clone();
+    tampered[0] ^= 0x01;
+    assert_eq!(envelope_open(&key, &tampered), None);
+
+    // Fresh nonce per record: identical plaintext, two envelopes, two
+    // distinct nonces and ciphertexts.
+    let again = envelope_seal(&key, manifest).expect("seal again");
+    assert_ne!(sealed[..12], again[..12], "nonce reuse would be fatal");
+    assert_ne!(sealed, again);
+    assert_eq!(envelope_open(&key, &again).as_deref(), Some(&manifest[..]));
+
+    // Truncated envelopes refuse outright.
+    assert_eq!(envelope_open(&key, &sealed[..20]), None);
+  }
+
+  // The persisted key file: strict shape (64 hex chars), corrupt content
+  // mints a fresh key rather than failing the link.
+  #[test]
+  fn link_key_file_shape() {
+    use super::parse_link_key;
+    let hex: String = "a".repeat(64);
+    assert_eq!(parse_link_key(&hex), Some([0xaa; 32]));
+    assert_eq!(parse_link_key(&"a".repeat(63)), None);
+    assert_eq!(parse_link_key(&"g".repeat(64)), None);
+    assert_eq!(parse_link_key(""), None);
+  }
+
+  // Envelope cost on full-size phone photos is negligible (GCM is
+  // hardware-fast; this is the regression-watch benchmark, debug-build).
+  #[test]
+  fn envelope_seal_of_an_8mb_photo_is_fast() {
+    use super::{envelope_open, envelope_seal};
+    use std::time::Instant;
+    let jpeg = vec![0xd7u8; 8 * 1024 * 1024]; // one 8 MP JPEG of noise
+    let started = Instant::now();
+    let sealed = envelope_seal(&[9u8; 32], &jpeg).expect("seal");
+    let opened = envelope_open(&[9u8; 32], &sealed).expect("round trip");
+    let elapsed = started.elapsed();
+    assert_eq!(opened.len(), jpeg.len());
+    // Debug builds run AES without hardware intrinsics everywhere; a few
+    // seconds is already orders of magnitude below anything a consult feels.
+    assert!(elapsed < std::time::Duration::from_secs(10), "8 MB seal+open took {elapsed:?}");
   }
 
   // The pinned-port promise: an app quit leaves TIME_WAIT sockets on the

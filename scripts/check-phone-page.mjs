@@ -9,11 +9,33 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import crypto from 'node:crypto';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// The transit envelope (specs/007): the real server encrypts every
+// patient-data record with the QR-delivered AES-256-GCM key, and the page
+// decrypts it with its own pure-JS implementation — which must interoperate
+// with OpenSSL, or nothing here will render. Sealing in this mock drives the
+// page's ghash/CTR path; unsealing its uploads drives the rest.
+const LINK_KEY = crypto.randomBytes(32);
+const LINK_KEY_PARAM = LINK_KEY.toString('base64url');
+function sealRecord(plaintext) {
+  const nonce = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', LINK_KEY, nonce);
+  const ct = Buffer.concat([c.update(plaintext), c.final()]);
+  return Buffer.concat([nonce, ct, c.getAuthTag()]);
+}
+function openRecord(envelope) {
+  const nonce = envelope.subarray(0, 12);
+  const tag = envelope.subarray(envelope.length - 16);
+  const d = crypto.createDecipheriv('aes-256-gcm', LINK_KEY, nonce);
+  d.setAuthTag(tag);
+  return Buffer.concat([d.update(envelope.subarray(12, envelope.length - 16)), d.final()]);
+}
 const outDir = '/tmp/camog-phone-check';
 mkdirSync(outDir, { recursive: true });
 
@@ -163,32 +185,76 @@ const LIBRARY_WAIT_CAP_MS = 1200;
 
 const server = createServer((req, res) => {
   const url = req.url;
-  if (url.endsWith('/') || url.endsWith('index.html')) {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+  // The pairing URL carries the transit key as a query (?k=…), so match the
+  // page's navigation on its path, not the raw URL.
+  const navPath = url.split('?')[0];
+  if (navPath.endsWith('/') || navPath.endsWith('index.html')) {
+    // The shell revalidates instead of refetching (specs/007): serve an
+    // ETag and answer a matching If-None-Match with a bare 304.
+    const etag = '"camog-page-check"';
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { 'Cache-Control': 'no-cache' });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/html',
+      'Cache-Control': 'no-cache',
+      ETag: etag,
+    });
     res.end(page);
   } else if (url.endsWith('/library')) {
     // Built per request: a photo-review POST mutates the photo in place and
     // the phone's refetch must see the flipped review state.
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ viewing: true, generatedAt: Date.now(), patients, photos }));
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'X-Link-Envelope': '1',
+    });
+    res.end(sealRecord(
+      Buffer.from(JSON.stringify({ viewing: true, generatedAt: Date.now(), patients, photos })),
+    ));
   } else if (url.endsWith('/photo') && req.method === 'POST') {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      let plain = null;
+      try {
+        plain = req.headers['x-link-envelope'] === '1' ? openRecord(body) : body;
+      } catch {
+        res.writeHead(400);
+        res.end();
+        return;
+      }
       photoPosts.push({
-        bytes: Buffer.concat(chunks).length,
+        bytes: body.length,
+        plainBytes: plain.length,
+        plainIsJpeg: plain[0] === 0xff && plain[1] === 0xd8,
         patientId: req.headers['x-patient-id'] ?? null,
       });
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
     });
   } else if (url.includes('/img/')) {
-    res.writeHead(200, { 'Content-Type': 'image/jpeg' });
-    res.end(jpeg);
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'X-Link-Envelope': '1',
+    });
+    res.end(sealRecord(jpeg));
   } else if (url.endsWith('/report')) {
-    res.writeHead(200, { 'Content-Type': 'application/pdf' });
-    res.end(pdf);
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'X-Link-Envelope': '1',
+    });
+    res.end(sealRecord(pdf));
   } else if (url.endsWith('/hello')) {
+    // A page that cannot present the transit key gets the dead-pairing 404
+    // (its cue for the re-scan UX), exactly like the real server.
+    if (req.headers['x-link-key'] !== '1') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('ok');
   } else if (url.endsWith('/manifest.webmanifest')) {
@@ -232,10 +298,13 @@ const server = createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'image/png' });
     res.end(jpeg);
   } else if (url.endsWith('/photo-review')) {
-    let body = '';
-    req.on('data', (c) => { body += c; });
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
-      const parsed = JSON.parse(body);
+      const raw = Buffer.concat(chunks);
+      const parsed = JSON.parse(
+        (req.headers['x-link-envelope'] === '1' ? openRecord(raw) : raw).toString(),
+      );
       const photo = photos.find((p) => p.id === parsed.photoId);
       if (!photo) {
         res.writeHead(404);
@@ -250,9 +319,12 @@ const server = createServer((req, res) => {
       res.end('ok');
     });
   } else if (url.endsWith('/report-request')) {
-    let body = '';
-    req.on('data', (c) => { body += c; });
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
+      const body = (req.headers['x-link-envelope'] === '1'
+        ? openRecord(Buffer.concat(chunks))
+        : Buffer.concat(chunks)).toString();
       if (!/"patientId"\s*:\s*"p1"/.test(body)) {
         res.writeHead(404);
         res.end('not found');
@@ -275,7 +347,10 @@ const server = createServer((req, res) => {
 
 await new Promise((resolve) => server.listen(0, resolve));
 const port = server.address().port;
-const base = `http://127.0.0.1:${port}/t/abc123/`;
+const base = `http://127.0.0.1:${port}/t/abc123/?k=${LINK_KEY_PARAM}`;
+// The link page (rejected requests) is keyed off the path only — the query
+// belongs to the paired page's transit key.
+const linkBase = `http://127.0.0.1:${port}/t/abc123/`;
 
 // 3. Drive the page in a phone-sized viewport.
 const { chromium } = await import('playwright');
@@ -624,7 +699,7 @@ const pickersSeeded = await pageC.evaluate(() => {
   // the link icon marks the series photo in the picker chrome.
   return l.includes('Left Hand') && !l.includes('Face mole') &&
     r.includes('Face mole') && !!rl && !rl.hidden && !!ll && ll.hidden &&
-    imgs.length === 2 && imgs[0] === 'img/ph1.jpg' && imgs[1] === 'img/ph3.jpg';
+    imgs.length === 2 && imgs[0].startsWith('blob:') && imgs[1].startsWith('blob:');
 });
 await pageC.click('#zoom-in');
 await pageC.click('#zoom-in');
@@ -931,7 +1006,7 @@ const autoHeal = await browser.newPage({ viewport: { width: 390, height: 844 } }
 await autoHeal.addInitScript(() => {
   localStorage.setItem('camog-link-code', '0123456789abcdef');
 });
-await autoHeal.goto(base + 'link', { waitUntil: 'commit' });
+await autoHeal.goto(linkBase + 'link', { waitUntil: 'commit' });
 await autoHeal.waitForSelector('#conn', { timeout: 8000 });
 const healedPath = new URL(autoHeal.url()).pathname;
 const healedCode = await autoHeal.evaluate(() => localStorage.getItem('camog-link-code'));
@@ -942,7 +1017,7 @@ await manualLink.addInitScript(() => {
   localStorage.setItem('camog-link-code', '0123456789abcdef');
   sessionStorage.setItem('camog-link-tried', '1');
 });
-await manualLink.goto(base + 'link', { waitUntil: 'load' });
+await manualLink.goto(linkBase + 'link', { waitUntil: 'load' });
 const restoreVisible = await manualLink.isVisible('#restore');
 const scanTracksSupport = await manualLink.evaluate(() =>
   document.getElementById('scan').hidden === !('BarcodeDetector' in window));
@@ -1066,18 +1141,19 @@ const checks = [
     cmpSameLeftPool === 9 && cmpSameRightPool === 9 &&
     cmpSamePatient.rightLabel.includes('Margot Whitfield') &&
     cmpSamePatient.partValue === 'all' && cmpSamePatient.seriesValue === 'all' &&
-    cmpSamePatient.imgs[0] === 'img/ph1.jpg' && cmpSamePatient.imgs[1] === 'img/ph3.jpg'],
+    cmpSamePatient.imgs[0].startsWith('blob:') && cmpSamePatient.imgs[1].startsWith('blob:')],
   ['compare tab state survives switching away and back',
     compareHiddenOnOtherTab === true && compareTabRestored.open &&
     compareTabRestored.leftPid === 'p1' && compareTabRestored.rightPid === 'p1'],
-  ['viewer opens the tapped photo, not the manifest-position one', lastSrc === 'img/ph18.jpg' && lastCount === '9 of 9'],
+  ['viewer opens the tapped photo, decrypted into an object URL', lastSrc.startsWith('blob:') && lastCount === '9 of 9'],
   ['viewer metadata no longer carries the diagram', viewerFigs === 0],
   ['blur toggle engages', blurred === true],
   ['light theme is the default and toggles to dark and back', lightDefault === true && darkOn === true && backToLight === true],
   ['report prepared + confirmed', reportStatus.includes('Report ready')],
   ['send-from-library reviews each picked photo', discardLabel === 'Discard' && sentLabel === 'Send more from library'],
-  ['picked photos POST down the capture pipeline',
-    photoPosts.length === 7 && photoPosts.every((p) => p.bytes > 0)],
+  ['picked photos POST down the capture pipeline, sealed end to end',
+    photoPosts.length === 7 && photoPosts.every((p) => p.bytes > 0) &&
+    photoPosts.every((p) => p.plainBytes > 0 && p.plainIsJpeg)],
   ['patient detail shows DOB, clinician and consent scope',
     ['DOB 12 Apr 1968', 'Dr Sarah Chen', 'Consent: Care team'].every((s) => patientDetail.includes(s))],
   ['photos tab lists every photo with patient names', allCells === 18 && allChips === 18 && allFigs > 0],

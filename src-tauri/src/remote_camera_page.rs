@@ -967,7 +967,21 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }
 
   function fetchLibrary() {
-    return fetch('library').then(function (res) { return res.json(); }).then(function (data) {
+    // The manifest carries patient names and ids — it arrives enveloped and
+    // is decrypted here, never rendered raw. A record the key can't open is
+    // the re-scan message, not garbage JSON.
+    return fetch('library').then(function (res) {
+      if (res.status === 404) { pairingExpired(); return null; }
+      if (!res.ok) throw new Error('status ' + res.status);
+      return res.arrayBuffer().then(function (buf) {
+        var bytes = res.headers.get('X-Link-Envelope')
+          ? openRecord(new Uint8Array(buf))
+          : new Uint8Array(buf);
+        if (!bytes) { envelopeFailed(); return null; }
+        return JSON.parse(new TextDecoder().decode(bytes));
+      });
+    }).then(function (data) {
+      if (!data) return null;
       lib = data.viewing ? data : null;
       show($('tab-lib'), !!lib);
       show($('tab-all'), !!lib);
@@ -1025,6 +1039,45 @@ const PAGE_HTML: &str = r##"<!doctype html>
     });
   }
 
+  // ---- Photos on the wire (specs/007) --------------------------------------
+  // Image bytes are enveloped like every other record: fetch, decrypt into
+  // an in-memory object URL, hand that to the <img>. The browser's cache
+  // keeps only ciphertext; the object URLs are capped so a long session
+  // cannot hoard blobs — the oldest are revoked past the cap.
+  var PHOTO_URL_CAP = 240;
+  var photoUrls = {};
+  var photoOrder = [];
+  function photoObjectUrl(name) {
+    var hit = photoUrls[name];
+    if (hit) return Promise.resolve(hit);
+    return fetch('img/' + name).then(function (res) {
+      if (!res.ok) throw new Error('status ' + res.status);
+      return res.arrayBuffer().then(function (buf) {
+        var bytes = res.headers.get('X-Link-Envelope')
+          ? openRecord(new Uint8Array(buf))
+          : new Uint8Array(buf);
+        if (!bytes) { envelopeFailed(); throw new Error('envelope'); }
+        var url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
+        if (!photoUrls[name]) {
+          photoUrls[name] = url;
+          photoOrder.push(name);
+          while (photoOrder.length > PHOTO_URL_CAP) {
+            var oldest = photoOrder.shift();
+            if (oldest !== name) {
+              URL.revokeObjectURL(photoUrls[oldest]);
+              delete photoUrls[oldest];
+            }
+          }
+        }
+        return url;
+      });
+    });
+  }
+  function setPhotoSrc(img, name) {
+    photoObjectUrl(name).then(function (url) { img.src = url; })
+      .catch(function () { /* broken thumb beats a crashed grid */ });
+  }
+
   // ---- Tabs --------------------------------------------------------------
   function setTab(tab) {
     show($('screen-cam'), tab === 'cam');
@@ -1049,6 +1102,283 @@ const PAGE_HTML: &str = r##"<!doctype html>
   $('tab-lib').addEventListener('click', function () { setTab('lib'); });
   $('tab-all').addEventListener('click', function () { setTab('all'); });
   $('tab-cmp').addEventListener('click', function () { setTab('cmp'); });
+
+  // ---- AES-256-GCM transit envelope (specs/007) — begin -------------------
+  // gcm-begin (self-checks extract this block: scripts/self-check-phone-crypto.mjs)
+  // crypto.subtle is secure-context-only, which a plain LAN http:// origin
+  // is not — so the AES-256-GCM that every patient record travels in is
+  // implemented here, byte-compatible with the desktop's Rust side
+  // (aes-gcm crate): envelope = nonce(12) ‖ ciphertext ‖ tag(16), 96-bit
+  // random nonce per record. Node's OpenSSL cross-verifies this block in
+  // the self-check; check-phone-page.mjs drives it end to end.
+  var GCM = (function () {
+    'use strict';
+    // S-box generated from the GF(2^8) inverse + affine map rather than a
+    // 256-entry literal table to mistype.
+    var SBOX = new Uint8Array(256);
+    (function () {
+      var log = new Uint8Array(256), alog = new Uint8Array(256);
+      var a = 1;
+      for (var i = 0; i < 255; i++) {
+        alog[i] = a; log[a] = i;
+        a ^= ((a << 1) ^ ((a & 0x80) ? 0x11b : 0)) & 0xff; // multiply by 3
+      }
+      alog[255] = 1; // x^255 = 1 — the inverse lookup below reads this slot
+      for (var v = 1; v < 256; v++) {
+        var s = alog[255 - log[v]], r = s;
+        for (var b = 1; b <= 4; b++) {
+          var sh = s;
+          for (var t = 0; t < b; t++) sh = ((sh << 1) | (sh >>> 7)) & 0xff;
+          r ^= sh;
+        }
+        SBOX[v] = (r ^ 0x63) & 0xff;
+      }
+      SBOX[0] = 0x63;
+    })();
+
+    // AES-256: Nk=8, Nr=14, 60 key words.
+    var RCON = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40];
+    function expandKey(key) {
+      var w = [];
+      for (var i = 0; i < 8; i++) w.push([key[4 * i], key[4 * i + 1], key[4 * i + 2], key[4 * i + 3]]);
+      var rc = 0;
+      for (var i = 8; i < 60; i++) {
+        var t = w[i - 1].slice();
+        if (i % 8 === 0) {
+          t = [SBOX[t[1]], SBOX[t[2]], SBOX[t[3]], SBOX[t[0]]];
+          t[0] ^= RCON[rc++];
+        } else if (i % 8 === 4) {
+          t = [SBOX[t[0]], SBOX[t[1]], SBOX[t[2]], SBOX[t[3]]];
+        }
+        var p = w[i - 8];
+        w.push([p[0] ^ t[0], p[1] ^ t[1], p[2] ^ t[2], p[3] ^ t[3]]);
+      }
+      return w;
+    }
+
+    function xtime(a) { return ((a << 1) ^ ((a & 0x80) ? 0x11b : 0)) & 0xff; }
+    function encryptBlock(w, input) {
+      var s = new Uint8Array(input);
+      function addRoundKey(n) {
+        for (var c = 0; c < 4; c++) {
+          var word = w[4 * n + c];
+          s[c * 4] ^= word[0]; s[c * 4 + 1] ^= word[1]; s[c * 4 + 2] ^= word[2]; s[c * 4 + 3] ^= word[3];
+        }
+      }
+      function subShift() {
+        // SubBytes + ShiftRows (state is column-major; row r = indices r, r+4, r+8, r+12).
+        var t;
+        for (var i = 0; i < 16; i++) s[i] = SBOX[s[i]];
+        t = s[1]; s[1] = s[5]; s[5] = s[9]; s[9] = s[13]; s[13] = t;
+        t = s[2]; s[2] = s[10]; s[10] = t; t = s[6]; s[6] = s[14]; s[14] = t;
+        t = s[15]; s[15] = s[11]; s[11] = s[7]; s[7] = s[3]; s[3] = t;
+      }
+      function mixColumns() {
+        for (var c = 0; c < 4; c++) {
+          var i = c * 4;
+          var a0 = s[i], a1 = s[i + 1], a2 = s[i + 2], a3 = s[i + 3];
+          var x1 = xtime(a0), x2 = xtime(a1), x3 = xtime(a2), x4 = xtime(a3);
+          s[i]     = x1 ^ x2 ^ a1 ^ a2 ^ a3;       // 2·a0 ^ 3·a1 ^ a2 ^ a3
+          s[i + 1] = a0 ^ x2 ^ a2 ^ x3 ^ a3;       // a0 ^ 2·a1 ^ 3·a2 ^ a3
+          s[i + 2] = a0 ^ a1 ^ x3 ^ x4 ^ a3;       // a0 ^ a1 ^ 2·a2 ^ 3·a3
+          s[i + 3] = x1 ^ a0 ^ a1 ^ a2 ^ x4;       // 3·a0 ^ a1 ^ a2 ^ 2·a3
+        }
+      }
+      addRoundKey(0);
+      for (var round = 1; round < 14; round++) { subShift(); mixColumns(); addRoundKey(round); }
+      subShift();
+      addRoundKey(14);
+      return s;
+    }
+
+    // ---- GHASH (GCM's authenticator) ----------------------------------------
+    // v • x in GCM's reflected field (NIST SP 800-38D: leftmost bit of the
+    // block is x^0; reduction constant R = 0xE1 followed by zeros).
+    function xmul(v) {
+      var lsb = v[15] & 1;
+      var out = new Uint8Array(16);
+      for (var i = 15; i > 0; i--) out[i] = ((v[i] >>> 1) | (v[i - 1] << 7)) & 0xff;
+      out[0] = v[0] >>> 1;
+      if (lsb) out[0] ^= 0xe1;
+      return out;
+    }
+    // 16 byte-position tables of 256 products each: a full field multiply
+    // becomes a plain xor of 16 precomputed terms (each already reduced), so
+    // an 8 MB photo hashes in a fraction of a second instead of seconds.
+    function buildTables(h) {
+      var products = [h];
+      for (var i = 1; i < 128; i++) products.push(xmul(products[i - 1]));
+      var tables = new Uint8Array(16 * 256 * 16);
+      for (var pos = 0; pos < 16; pos++) {
+        for (var val = 0; val < 256; val++) {
+          var off = (pos * 256 + val) * 16;
+          for (var bit = 0; bit < 8; bit++) {
+            if ((val >> (7 - bit)) & 1) {
+              var p = products[pos * 8 + bit];
+              for (var k = 0; k < 16; k++) tables[off + k] ^= p[k];
+            }
+          }
+        }
+      }
+      return tables;
+    }
+    function gmulBlock(acc, tables) {
+      var out = new Uint8Array(16);
+      for (var j = 0; j < 16; j++) {
+        var off = (j * 256 + acc[j]) * 16;
+        for (var k = 0; k < 16; k++) out[k] ^= tables[off + k];
+      }
+      return out;
+    }
+    // GHASH over the ciphertext (AAD is always empty in this envelope) plus
+    // the trailing [len(A)]64 ‖ [len(C)]64 block the spec requires.
+    function ghash(tables, data, length) {
+      var y = new Uint8Array(16);
+      var full = length - (length % 16);
+      for (var off = 0; off < full; off += 16) {
+        for (var k = 0; k < 16; k++) y[k] ^= data[off + k];
+        y = gmulBlock(y, tables);
+      }
+      if (length % 16) {
+        for (var k2 = 0; k2 < length % 16; k2++) y[k2] ^= data[full + k2];
+        y = gmulBlock(y, tables);
+      }
+      var bits = length * 8;
+      var lenBlock = new Uint8Array(16);
+      lenBlock[12] = (bits >>> 24) & 0xff;
+      lenBlock[13] = (bits >>> 16) & 0xff;
+      lenBlock[14] = (bits >>> 8) & 0xff;
+      lenBlock[15] = bits & 0xff;
+      for (var k3 = 0; k3 < 16; k3++) y[k3] ^= lenBlock[k3];
+      return gmulBlock(y, tables);
+    }
+
+    // ---- CTR (both directions; GCM never decrypts blocks) --------------------
+    function keystream(w, nonce, length) {
+      var counter = new Uint8Array(16);
+      counter.set(nonce);
+      counter[15] = 1;
+      var out = new Uint8Array(length);
+      var filled = 0;
+      while (filled < length) {
+        counter[15] = (counter[15] + 1) & 0xff;
+        if (!counter[15]) {
+          for (var i = 14; i >= 12; i--) { counter[i] = (counter[i] + 1) & 0xff; if (counter[i]) break; }
+        }
+        var ks = encryptBlock(w, counter);
+        var n = Math.min(16, length - filled);
+        for (var k = 0; k < n; k++) out[filled + k] = ks[k];
+        filled += n;
+      }
+      return out;
+    }
+
+    // Per-key memo: the link session uses one key, so expand + tables are
+    // built once and reused across records.
+    var memoId = null, memoW = null, memoTables = null;
+    function ensure(key) {
+      var id = Array.prototype.join.call(key, ',');
+      if (id === memoId) return;
+      memoW = expandKey(key);
+      memoTables = buildTables(encryptBlock(memoW, new Uint8Array(16)));
+      memoId = id;
+    }
+    function mac(w, tables, nonce, ct) {
+      var s = ghash(tables, ct, ct.length);
+      var j0 = new Uint8Array(16);
+      j0.set(nonce); j0[15] = 1;
+      var ek0 = encryptBlock(w, j0);
+      var tag = new Uint8Array(16);
+      for (var k = 0; k < 16; k++) tag[k] = ek0[k] ^ s[k];
+      return tag;
+    }
+
+    return {
+      // seal(key, nonce12, plaintext) → nonce ‖ ciphertext ‖ tag
+      seal: function (key, nonce, plaintext) {
+        ensure(key);
+        var ct = keystream(memoW, nonce, plaintext.length);
+        for (var i = 0; i < plaintext.length; i++) ct[i] ^= plaintext[i];
+        var tag = mac(memoW, memoTables, nonce, ct);
+        var env = new Uint8Array(12 + ct.length + 16);
+        env.set(nonce); env.set(ct, 12); env.set(tag, 12 + ct.length);
+        return env;
+      },
+      // open(key, envelope) → plaintext, or null when the key (or any byte
+      // of the record) doesn't authenticate.
+      open: function (key, env) {
+        if (!env || env.length < 28) return null;
+        ensure(key);
+        var nonce = env.subarray(0, 12);
+        var ct = env.subarray(12, env.length - 16);
+        var tag = env.subarray(env.length - 16);
+        var expected = mac(memoW, memoTables, nonce, ct);
+        var diff = 0;
+        for (var k = 0; k < 16; k++) diff |= expected[k] ^ tag[k];
+        if (diff) return null;
+        var pt = keystream(memoW, nonce, ct.length);
+        for (var i = 0; i < ct.length; i++) pt[i] ^= ct[i];
+        return pt;
+      },
+    };
+  })();
+  // gcm-end
+
+  // ---- Transit key (the QR's ?k= value) ------------------------------------
+  // The key arrives ONLY in the QR the phone scans off the desktop screen —
+  // the server never serves it — and persists here so a saved home-screen
+  // icon keeps decrypting across restarts. A page without it (never paired
+  // since the envelope, private mode, cleared storage) simply cannot
+  // authenticate anything: probe()'s missing capability header makes the
+  // desktop answer 404, which renders as the re-scan message.
+  var LINK_CRYPTO_KEY = 'camog-link-key';
+  function b64urlToBytes(text) {
+    var b64 = String(text).replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    var bin;
+    try { bin = atob(b64); } catch (e) { return null; }
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.length === 32 ? out : null;
+  }
+  function loadLinkKey() {
+    var fromUrl = /(?:^|\?|&)k=([\w-]{43})(?:&|$)/.exec(location.search);
+    var b64 = fromUrl ? fromUrl[1] : null;
+    try {
+      if (b64) localStorage.setItem(LINK_CRYPTO_KEY, b64);
+      else b64 = localStorage.getItem(LINK_CRYPTO_KEY);
+    } catch (e) { /* private mode */ }
+    if (!b64 || !/^[\w-]{43}$/.test(b64)) return null;
+    return b64urlToBytes(b64);
+  }
+  var LINK_KEY_BYTES = loadLinkKey();
+  // Capability marker on every request this page makes (the desktop 404s
+  // header-less hellos so pre-envelope cached pages land on the re-scan UX).
+  var CAP_HEADERS = LINK_KEY_BYTES ? { 'X-Link-Key': '1' } : {};
+  function randomNonce12() {
+    var n = new Uint8Array(12);
+    if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(n);
+    else for (var i = 0; i < 12; i++) n[i] = (Math.random() * 256) | 0;
+    return n;
+  }
+  // Nothing patient-related moves without a seal. null = no key: callers
+  // fail closed to the re-scan message instead of sending plaintext.
+  function sealRecord(bytes) {
+    if (!LINK_KEY_BYTES) return null;
+    return GCM.seal(LINK_KEY_BYTES, randomNonce12(), bytes);
+  }
+  function openRecord(bytes) {
+    if (!LINK_KEY_BYTES) return null;
+    return GCM.open(LINK_KEY_BYTES, bytes);
+  }
+  // A live session whose key the desktop rejects (rotated key, tampered
+  // record): the self-heal hop only re-runs the exchange, which cannot
+  // re-key this page — so mark the hop spent and show the re-scan message
+  // straight away instead of ping-ponging.
+  function envelopeFailed() {
+    try { sessionStorage.setItem(TRIED_KEY, '1'); } catch (e) { /* private mode */ }
+    pairingExpired();
+  }
 
   // ---- Connect + initial data --------------------------------------------
   // All fetches are relative, so this source carries no URL or cookie
@@ -1076,8 +1406,9 @@ const PAGE_HTML: &str = r##"<!doctype html>
     // Statuses matter: a network failure is "cannot reach" (keep retrying),
     // but a 404 while the server still answers means this page's credential
     // is dead — the code was rotated, or the link restarted and sessions
-    // died with it. Only a re-scan recovers, so say so instead of retrying.
-    fetch('hello').then(function (res) {
+    // died with it, or this page predates the transit envelope (no key to
+    // present). Only a re-scan recovers, so say so instead of retrying.
+    fetch('hello', { headers: CAP_HEADERS }).then(function (res) {
       if (res.status === 404) { pairingExpired(); return; }
       if (!res.ok) throw new Error('stale pairing code');
       if (connTimer) { clearInterval(connTimer); connTimer = null; }
@@ -1101,7 +1432,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
     // Hidden pages are throttled anyway and the desktop counts them idle on
     // purpose, so only a visible page keeps the link warm.
     if (document.hidden) return;
-    fetch('hello').then(function (res) {
+    fetch('hello', { headers: CAP_HEADERS }).then(function (res) {
       if (res.status === 404) pairingExpired();
       else if (!res.ok) disconnected();
     }).catch(disconnected);
@@ -1322,27 +1653,37 @@ const PAGE_HTML: &str = r##"<!doctype html>
     var blob = pending;
     pending = null;
     fail('');
-    var headers = { 'X-Capture-Id': newCaptureId() };
-    // Capturing for a patient (the chip on the start screen): the desktop
-    // prefills the photo's metadata form from the id, so the snap arrives
-    // already addressed to their record.
-    if (capturePatientId) headers['X-Patient-Id'] = capturePatientId;
-    fetch('photo', {
-      method: 'POST',
-      headers: headers,
-      body: blob,
-    }).then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-      if (snapFollowUp) {
-        snapFollowUp = false;
-        $('sent-hint').textContent =
-          'Saving it on your computer links it into the reviewed photo\u2019s series.';
-      } else {
-        $('sent-hint').textContent = 'Check Camog on your computer to add details and save it.';
-      }
-      setConn(null); // the note has served; the next snap reads clean
-      if (flow === 'pick') advancePick();
-      else sentScreen();
+    // The snap travels sealed (specs/007): its bytes are the payload of the
+    // GCM envelope, so the wire shows ciphertext only. The id/patient
+    // headers stay outside the envelope — opaque ids, already gated
+    // server-side against the shared manifest.
+    blob.arrayBuffer().then(function (buf) {
+      var env = sealRecord(new Uint8Array(buf));
+      if (!env) { envelopeFailed(); return; }
+      var headers = { 'X-Capture-Id': newCaptureId(), 'X-Link-Envelope': '1' };
+      // Capturing for a patient (the chip on the start screen): the desktop
+      // prefills the photo's metadata form from the id, so the snap arrives
+      // already addressed to their record.
+      if (capturePatientId) headers['X-Patient-Id'] = capturePatientId;
+      return fetch('photo', {
+        method: 'POST',
+        headers: headers,
+        body: env,
+      }).then(function (res) {
+        // 400 = the desktop refused our envelope (rotated key): re-scan.
+        if (res.status === 400) { envelopeFailed(); return; }
+        if (!res.ok) throw new Error('status ' + res.status);
+        if (snapFollowUp) {
+          snapFollowUp = false;
+          $('sent-hint').textContent =
+            'Saving it on your computer links it into the reviewed photo\u2019s series.';
+        } else {
+          $('sent-hint').textContent = 'Check Camog on your computer to add details and save it.';
+        }
+        setConn(null); // the note has served; the next snap reads clean
+        if (flow === 'pick') advancePick();
+        else sentScreen();
+      });
     }).catch(function () {
       pending = blob;
       fail('Could not send the photo.\nMake sure Camog is still open, then try again.');
@@ -1752,7 +2093,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
       cell.type = 'button';
       cell.setAttribute('aria-label', e.p.bodyPartLabel + ', ' + fmtDate(e.p.capturedAt) + reviewAria(e.p) + attachAria(e.p));
       var img = document.createElement('img');
-      img.src = 'img/' + e.p.id + '.thumb.jpg';
+      setPhotoSrc(img, e.p.id + '.thumb.jpg');
       img.alt = '';
       img.loading = 'lazy';
       cell.appendChild(img);
@@ -1778,14 +2119,24 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }
 
   // ---- Case report (desktop does the work) --------------------------------
-  function postPatientRequest(path, patientId) {
+  // Control requests carry patient ids in their bodies, so they travel
+  // sealed like everything else (specs/007). A page that cannot seal
+  // refuses to send at all — plaintext ids never leave the phone.
+  function sendControl(path, json) {
+    var env = sealRecord(new TextEncoder().encode(json));
+    if (!env) return Promise.reject(new Error('not paired'));
     return fetch(path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ patientId: patientId }),
+      headers: { 'Content-Type': 'application/json', 'X-Link-Envelope': '1' },
+      body: env,
     }).then(function (res) {
+      if (res.status === 400) { envelopeFailed(); return; }
       if (!res.ok) throw new Error('status ' + res.status);
     });
+  }
+
+  function postPatientRequest(path, patientId) {
+    return sendControl(path, JSON.stringify({ patientId: patientId }));
   }
 
   // ---- Photo review (desktop-dialog parity) --------------------------------
@@ -1794,13 +2145,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
   // linked into the reviewed photo's lesion series when it is saved on the
   // computer — the desktop arms that link when the request carries snap.
   function postPhotoReview(photoId, snap) {
-    return fetch('photo-review', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ photoId: photoId, snap: snap }),
-    }).then(function (res) {
-      if (!res.ok) throw new Error('status ' + res.status);
-    });
+    return sendControl('photo-review', JSON.stringify({ photoId: photoId, snap: snap }));
   }
 
   // Banner pieces only (status chip + last-reviewed line). Unlike
@@ -1942,21 +2287,35 @@ const PAGE_HTML: &str = r##"<!doctype html>
   }
 
   function openReport() {
-    var standalone = window.matchMedia('(display-mode: standalone)').matches ||
-      window.navigator.standalone === true;
-    if (!standalone) {
-      var a = document.createElement('a');
-      a.href = 'report';
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      return Promise.resolve();
-    }
+    // The PDF arrives enveloped like every record (specs/007): fetch and
+    // decrypt first, then hand the plaintext only to the platform — a new
+    // tab where the browser can render it, the share sheet or a download
+    // where it cannot (standalone PWAs cannot spawn tabs, and iOS cannot
+    // open blob URLs in tabs either, so it rides the same delivery).
     return fetch('report').then(function (res) {
       if (!res.ok) throw new Error('not ready');
-      return res.blob();
+      return res.arrayBuffer().then(function (buf) {
+        var bytes = res.headers.get('X-Link-Envelope')
+          ? openRecord(new Uint8Array(buf))
+          : new Uint8Array(buf);
+        if (!bytes) { envelopeFailed(); throw new Error('envelope'); }
+        return new Blob([bytes], { type: 'application/pdf' });
+      });
     }).then(function (blob) {
+      var standalone = window.matchMedia('(display-mode: standalone)').matches ||
+        window.navigator.standalone === true;
+      var iosLike = /iP(?:hone|ad|od)/.test(navigator.userAgent);
+      if (!standalone && !iosLike) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+        return;
+      }
       var file = null;
       try {
         file = new File([blob], 'camog-case-report.pdf', { type: 'application/pdf' });
@@ -2054,7 +2413,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
         patientName(e.p.patientId) + ' \u2014 ' + e.p.bodyPartLabel + ', ' + fmtDate(e.p.capturedAt) + reviewAria(e.p) + attachAria(e.p),
       );
       var img = document.createElement('img');
-      img.src = 'img/' + e.p.id + '.thumb.jpg';
+      setPhotoSrc(img, e.p.id + '.thumb.jpg');
       img.alt = '';
       img.loading = 'lazy';
       cell.appendChild(img);
@@ -2164,7 +2523,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
         var text = $('cmp-' + t[0] + '-text');
         var link = $('cmp-' + t[0] + '-link');
         if (entry) {
-          thumb.src = 'img/' + entry.p.id + '.thumb.jpg';
+          setPhotoSrc(thumb, entry.p.id + '.thumb.jpg');
           text.textContent = cmpLabel(entry);
           show(link, !!cmpGroup(entry.p));
         } else {
@@ -2422,7 +2781,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
     pane.dataset.side = side;
     var img = document.createElement('img');
     img.dataset.side = side;
-    img.src = 'img/' + entry.p.id + '.jpg';
+    setPhotoSrc(img, entry.p.id + '.jpg');
     img.alt = 'Photo from ' + fmtDate(entry.p.capturedAt);
     img.draggable = false;
     pane.appendChild(img);
@@ -2465,7 +2824,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
       [left, right].forEach(function (entry, idx) {
         if (!entry) return;
         var img = document.createElement('img');
-        img.src = 'img/' + entry.p.id + '.jpg';
+        setPhotoSrc(img, entry.p.id + '.jpg');
         img.alt = '';
         img.draggable = false;
         img.dataset.side = idx === 0 ? 'left' : 'right';
@@ -2576,7 +2935,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
       cell.setAttribute('aria-pressed', e.i === selId ? 'true' : 'false');
       cell.setAttribute('aria-label', cmpLabel(e));
       var img = document.createElement('img');
-      img.src = 'img/' + e.p.id + '.thumb.jpg';
+      setPhotoSrc(img, e.p.id + '.thumb.jpg');
       img.alt = '';
       cell.appendChild(img);
       if (cmpGroup(e.p)) {
@@ -2721,12 +3080,12 @@ const PAGE_HTML: &str = r##"<!doctype html>
     if (!e) return;
     var img = $('viewer-img');
     $('stage').classList.remove('zoomed');
-    img.src = 'img/' + e.p.id + '.jpg';
+    setPhotoSrc(img, e.p.id + '.jpg');
     img.alt = e.p.bodyPartLabel + ' photo';
     // Preload neighbours so swiping feels instant.
     [viewer.idx - 1, viewer.idx + 1].forEach(function (i) {
       var n = viewer.photos[i];
-      if (n) { var pre = new Image(); pre.src = 'img/' + n.p.id + '.jpg'; }
+      if (n) photoObjectUrl(n.p.id + '.jpg').catch(function () { /* preload is best-effort */ });
     });
     $('viewer-count').textContent = (viewer.idx + 1) + ' of ' + viewer.photos.length;
     $('viewer-title').textContent =
@@ -2920,6 +3279,10 @@ const LINK_HTML: &str = r##"<!doctype html>
   'use strict';
   var LINK_KEY = 'camog-link-code';
   var TRIED_KEY = 'camog-link-tried';
+  // The transit key rides the QR URL (specs/007) — scanning the code off
+  // the desktop screen is the key exchange, so the scanned URL's ?k= value
+  // is stored alongside the code here too.
+  var LINK_CRYPTO_KEY = 'camog-link-key';
 
   function $(id) { return document.getElementById(id); }
   function show(el, on) { el.hidden = !on; }
@@ -2933,14 +3296,19 @@ const LINK_HTML: &str = r##"<!doctype html>
     }
   } catch (e) { /* private mode */ }
 
-  function go(code) {
-    code = String(code || '').trim().toLowerCase();
-    if (!/^[0-9a-f]{16}$/.test(code)) {
-      fail('That QR is not a Camog link.');
-      return;
-    }
+  function go(raw) {
+    var text = String(raw || '').trim();
+    // Accept the full pairing URL (what the 0.13.0 QR carries — code plus
+    // transit key) or a bare 16-hex code (older saved restores).
+    var m = /\/t\/([0-9a-fA-F]{16})\/(?:\?([^#\s]*))?/.exec(text);
+    var code, query;
+    if (m) { code = m[1].toLowerCase(); query = m[2] || ''; }
+    else if (/^[0-9a-fA-F]{16}$/.test(text)) { code = text.toLowerCase(); query = ''; }
+    else { fail('That QR is not a Camog link.'); return; }
     try {
       localStorage.setItem(LINK_KEY, code);
+      var k = /(?:^|&)k=([\w-]{43})(?:&|$)/.exec(query);
+      if (k) localStorage.setItem(LINK_CRYPTO_KEY, k[1]);
       sessionStorage.setItem(TRIED_KEY, '1');
     } catch (e) { /* private mode */ }
     location.href = '/t/' + code + '/';
@@ -2984,8 +3352,12 @@ const LINK_HTML: &str = r##"<!doctype html>
             timer = setInterval(function () {
               detector.detect(video).then(function (found) {
                 for (var i = 0; i < found.length; i++) {
-                  var m = /\/t\/([0-9a-fA-F]{16})\//.exec(found[i].rawValue || '');
-                  if (m) { stop(); go(m[1]); return; }
+                  // go() parses the full pairing URL — code and transit key.
+                  if (/\/t\/[0-9a-fA-F]{16}\//.test(found[i].rawValue || '')) {
+                    stop();
+                    go(found[i].rawValue);
+                    return;
+                  }
                 }
               }).catch(function () { /* frame not ready */ });
             }, 300);
