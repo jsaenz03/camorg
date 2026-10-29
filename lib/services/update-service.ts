@@ -70,7 +70,7 @@ export async function installUpdate(
       total = event.data.contentLength ?? null;
       received = 0;
     } else if (event.event === 'Progress') {
-      received += event.data.contentLength ?? 0;
+      received += event.data.chunkLength ?? 0;
     } else if (event.event === 'Finished') {
       received = total ?? received;
     }
