@@ -53,4 +53,29 @@ Cloudflare Worker (`activation-server/`).
   CARGO_PKG_VERSION, shown in Settings → Diagnostics; missing it ships an app
   that reports the previous version), commit, then publish a GitHub Release
   tagged `vX.Y.Z` — CI builds and attaches the installers to it.
+
+## Windows specifics
+
+- Any console child process (manage-bde, powershell, reg, …) spawned from the
+  GUI **must** set `CREATE_NO_WINDOW` — see the `silent()` helper in
+  `diagnostics.rs`. Without it each spawn flashes a console window over the
+  app.
+- Disk-encryption probe (`diagnostics.rs`): `manage-bde -status` works
+  unelevated on Pro/Enterprise; on **Windows Home no non-admin query exists
+  at all** (manage-bde demands elevation, the BitLocker cmdlet/WMI are
+  absent) — the probe returns the `home` state and the UI points at
+  Settings → Device encryption. Never return a guessed on/off.
+- Phone-link firewall: the inbound rule ("Camog phone link") is all-profiles
+  (Private + Public) by design, scoped to LocalSubnet + Tailscale's
+  100.64.0.0/10. Store installs / declined UAC get Windows' Private-only
+  dialog rule instead; `installers/repair-phone-link-firewall.ps1` (run as
+  admin) recreates the correct rule without a reinstall.
+
+## Approved roadmap
+
+- `specs/006-signed-update-channel` — tauri updater, Windows-first, manifest
+  only on stable `vX.Y.Z` releases, Store/MSIX excluded. Ship as 0.12.0.
+- `specs/007-qr-keyed-link-crypto` — QR-delivered AES-256-GCM envelope for
+  phone-link payloads (QR scan off the desktop screen is the authenticated
+  key exchange). Tailscale path must not change. Ship as 0.13.0.
 <!-- MANUAL ADDITIONS END -->
