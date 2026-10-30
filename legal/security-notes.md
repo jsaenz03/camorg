@@ -2,7 +2,7 @@
 
 Plain-language notes for practice IT reviewers on how the phone (companion)
 link works, what protects it, and what it deliberately does not do. Current
-as of Camog 0.4.9.
+as of Camog 0.13.4.
 
 ## What the link is
 
@@ -16,21 +16,29 @@ the link works; otherwise it does not.
 
 ## Access control
 
-- **Pairing code (exchange credential).** A 64-bit random hex code in the
-  QR's URL path. Opening it once exchanges the code for a per-device
-  session cookie; every later request authenticates by that cookie, so the
-  long-lived code no longer rides in the URL of each request. Requests
-  without a valid code or cookie get the same 404 as any unknown route —
-  neither the code nor the sessions are observable. The code persists across
-  restarts, and a phone's saved home-screen icon re-runs the exchange on its
-  own.
+- **Pairing code + transit key (exchange credentials).** A 64-bit random hex
+  code in the QR's URL path, travelling with a 256-bit transit encryption
+  key (the QR's `?k=` value) that seals every patient-data record on the
+  link (see *In transit*). Opening the URL once exchanges the code for a
+  per-device session cookie and stores the transit key; every later request
+  authenticates by that cookie, so the long-lived code and key no longer
+  ride in the URL of each request. Requests without a valid code or cookie
+  get the same 404 page as any unknown route — neither the code, the key nor
+  the sessions are observable. The code and key persist across restarts and
+  rotate together — *New code*, or a different clinician signing in —
+  instantly invalidating every previously saved link. Keys are stored per
+  origin (a phone pairing over both Wi-Fi and Tailscale scans each QR once),
+  and a phone that saves the link to its home screen keeps its copy of the
+  key in that phone's own browser storage — treat a paired phone as holding
+  a live credential.
 - **Session cookie.** A 128-bit random value, HttpOnly (invisible to page
   scripts), SameSite=Strict, session-scoped (no expiry — it dies with the
   browser session). Sessions live in the app's memory only: ending the link
   — *End session*, an app restart, or the 30-minute idle close — signs out
   every paired phone at once, without rotating the code. Phones recover by
   re-running the exchange from their saved URL; a page left open on a phone
-  whose cookie has died says to re-scan the code. A leaked pairing code
+  whose cookie has died shows the re-connect page, which accepts the current
+  link address pasted from the desktop dialog. A leaked pairing code
   still pairs until rotated — that has not changed; what has changed is that
   the code crosses the network once per pairing instead of per request, and
   sessions can be revoked server-side.
@@ -66,13 +74,18 @@ the link works; otherwise it does not.
   with the backup, so a restore works on any machine, and a lost passphrase
   means the backup cannot be opened. The live database and exported report
   PDFs are not encrypted at rest — protect the machine accordingly.
-- **In transit:** the link is plain HTTP — a deliberate trade-off, because
-  certificates cannot be issued for LAN addresses without installing a
-  private CA on every phone. On the same Wi-Fi this exposes photo traffic to
-  other devices on that network; the mitigations below bound who can reach
-  the link at all. An attacker who can sniff that traffic can capture the
-  one-off code exchange or the session cookie — Tailscale remains the
-  answer there. Over Tailscale (see below) the tunnel encrypts everything.
+- **In transit:** the link runs over plain HTTP — still a deliberate
+  trade-off, because certificates cannot be issued for LAN addresses without
+  installing a private CA on every phone — but since Camog 0.13 every
+  patient-data record that crosses it (photographs, reports, the pages the
+  phone renders) is sealed with **AES-256-GCM** under the transit key
+  exchanged at pairing, and the server rejects patient-data requests that do
+  not carry a valid envelope. What an attacker who can sniff the traffic can
+  still see: the one-off pairing exchange (the code and the transit key
+  itself), the session cookie, and request metadata — which pages the phone
+  asks for and how much data moves. Capturing the code, the key or the
+  cookie is the real risk, and Tailscale remains the answer there: over the
+  tunnel everything, including the pairing exchange, is encrypted.
   End the session when it is not needed.
 
 ## Network reach (the part IT controls)

@@ -27,13 +27,19 @@ Still to confirm with the lawyer:
 ## Also do
 
 - Have a qualified Australian lawyer review both documents when practical — the Microsoft Store release ships them without legal review.
-- Keep the documents accurate to the code (v1.4, with spec 005): the only outbound
-  connection the app ever makes is the **licence check** — one-time activation plus
+- Keep the documents accurate to the code (v1.5, with specs 005–007): the outbound
+  connections the app ever makes are the **licence check** — one-time activation plus
   an automatic seat re-check (normally at most once a day; failed attempts are
-  retried on a later launch; fail-open) against the same
-  activation server (licence key + random device identifier only — never patient
-  information, no telemetry, no analytics, no cloud backend, no in-app updater,
-  plain-HTTP LAN phone tether); photographs, thumbnails and result files **are**
+  retried on a later launch; fail-open) against the same activation server
+  (licence key + random device identifier only — never patient information) — and,
+  on Windows, the **update check** (normally at most once a day, plus on demand: a
+  single request to the GitHub-hosted signed-update channel; it only ever offers —
+  download, signature verification and install run on the user's click, and
+  Store-managed installs never run it). No telemetry, no analytics, no cloud
+  backend. The phone link is a plain-HTTP LAN tether whose patient-data records
+  are sealed in transit with AES-256-GCM under a QR-exchanged transit key that
+  rotates with the pairing code (specs/007) — the pairing exchange and session
+  cookie stay unencrypted; photographs, thumbnails and result files **are**
   encrypted at rest (AES-256-GCM, key in an owner-only photo-key file in the app
   data directory), backups are **passphrase-encrypted** (practice-chosen passphrase
   per backup; not recoverable if lost), while the **database and exported report

@@ -1,6 +1,6 @@
 # Camog — Terms of Service
 
-**Effective date:** 09/09/2026 · **Version:** 1.4
+**Effective date:** 31/10/2026 · **Version:** 1.5
 
 ---
 
@@ -19,7 +19,7 @@
 The following points are summaries only and do not replace the full clauses that follow:
 
 - Camog is a **clinical documentation tool only** — it is not a diagnostic device and does not provide medical advice (clause 6).
-- **Your patient data stays on your devices.** The Software has no telemetry, analytics or crash reporting; its only connection to us is the licence check — activation, plus an automatic seat re-check normally at most once a day — which never includes patient information (clause 7).
+- **Your patient data stays on your devices.** The Software has no telemetry, analytics or crash reporting; its connections to us are the licence check — activation, plus an automatic seat re-check normally at most once a day — and, on Windows, an update check (normally at most once a day) — neither of which ever includes patient information (clause 7).
 - **You are responsible for your privacy compliance** under the *Privacy Act 1988* (Cth), state and territory health records laws, and for obtaining patient consent to clinical photography (clause 7).
 - Our liability is limited as far as the law allows, but **your rights under the Australian Consumer Law are not excluded** (clauses 11–12).
 
@@ -51,7 +51,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 (b) the acts and omissions of your users;
 (c) physically and electronically securing the computers and networks on which the Software runs, including using full-disk encryption (for example, FileVault or BitLocker) on any device holding patient photographs;
 (d) taking and safely storing regular backups — the Software's backup feature creates a database snapshot in your configured storage folder, encrypted with a **backup passphrase your practice chooses**; you must record that passphrase — an encrypted backup cannot be restored without it, and the Software cannot recover it; and
-(e) using the **phone link** feature only on a trusted, private network you control. The phone link runs a small web server on your computer that a paired phone reaches over **unencrypted HTTP**. Access is controlled by a random pairing code that is exchanged once for a per-device session cookie, and — while library sharing is switched on — the phone can view the same access-filtered patient records the signed-in clinician can see. Do not use it on public or shared Wi-Fi; rotate the pairing code if it may have been seen, and end the session when you are done. The security notes distributed with the Software describe the controls and their limits in full.
+(e) using the **phone link** feature only on a trusted, private network you control. The phone link runs a small web server on your computer that a paired phone reaches over plain HTTP, with photographs and other patient data sealed **in transit with AES-256-GCM encryption** under a key exchanged when the phone pairs (the key rotates whenever the pairing code rotates). The pairing exchange and the per-device session cookie still cross the network unencrypted. Access is controlled by a random pairing code that is exchanged once for a per-device session cookie, and — while library sharing is switched on — the phone can view the same access-filtered patient records the signed-in clinician can see. Do not use it on public or shared Wi-Fi; rotate the pairing code if it may have been seen, and end the session when you are done. The security notes distributed with the Software describe the controls and their limits in full.
 
 5.3 The Software's idle privacy lock is a **privacy screen, not a security control or encryption**. It covers the screen but does not end the signed-in session.
 
@@ -67,7 +67,7 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 
 ## 7. Patient information and privacy
 
-7.1 The Software stores all patient information **locally on your computer** (a local database and image files on your device's storage, or a folder your administrator selects). The Software **does not transmit any patient information to us or to any third party**. It contains no telemetry, no analytics and no crash reporting. Its only outbound internet connection is the licence check described in clause 3.2 — activation, plus the automatic seat re-check (normally at most once a day) — which transmits only the licence key and a random device identifier and never any patient information.
+7.1 The Software stores all patient information **locally on your computer** (a local database and image files on your device's storage, or a folder your administrator selects). The Software **does not transmit any patient information to us or to any third party**. It contains no telemetry, no analytics and no crash reporting. Its outbound internet connections are (a) the licence check described in clause 3.2 — activation, plus the automatic seat re-check (normally at most once a day) — which transmits only the licence key and a random device identifier, and (b) on Windows, the update check described in clause 9.1 — a single web request that sends nothing beyond the ordinary request data. Neither connection ever carries patient information.
 
 7.2 As a health service provider, you are bound by the *Privacy Act 1988* (Cth) and the Australian Privacy Principles (health service providers cannot rely on the small business exemption). In New South Wales, Victoria and the Australian Capital Territory, private health service providers must also comply with state or territory health records legislation. **You, not we, are the operator of the patient records held in the Software.**
 
@@ -88,7 +88,7 @@ You must not use the Software:
 
 ## 9. Updates and availability
 
-9.1 Updates are distributed as installers through the **Microsoft Store** and as direct downloads from our distribution page, **https://camog-license.cliniciq.com.au**. The Software itself contains no updater. On the direct-download channel you choose whether and when to install an updated installer; on the **Microsoft Store** channel, Microsoft's Store may download and install updates automatically under its own update settings, and you can also check for updates manually in the Store's library.
+9.1 Updates are distributed as installers through the **Microsoft Store**, as direct downloads from our distribution page, **https://camog-license.cliniciq.com.au**, and — on Windows, for installations that are not Store-managed — through the Software's own updater. The updater checks our update channel for a newer version at most once a day, and whenever you choose **Check for updates** in Settings; the check is a single web request to the channel and sends nothing about you beyond the ordinary request data (such as your IP address and the Software's version, which every web request exposes). The updater only ever **offers** an update: it downloads the update, verifies its cryptographic signature and stages it only when you choose to install, and restarting the Software to apply it is a separate, explicit choice. On the direct-download channel without the updater you choose whether and when to install an updated installer; on the **Microsoft Store** channel, Microsoft's Store may download and install updates automatically under its own update settings, and you can also check for updates manually in the Store's library.
 
 9.2 We do not guarantee that updates will be released, or that any release will remain available, for any period. Because the Software runs entirely on your device, we give no uptime, availability or support commitments except as required by the Australian Consumer Law.
 
