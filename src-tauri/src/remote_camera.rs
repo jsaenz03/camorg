@@ -1254,9 +1254,16 @@ fn handle_request<R: Runtime>(
     // without the leading slash matches no route and 404s like any unknown
     // path.
     AuthAction::Authenticated => {
+      // The query is phone-side only (the page reads the transit key from
+      // location.search), and since 0.13.0 the exchange redirect lands on
+      // /?k=… — routing on path+query made every fresh pairing 404 on its
+      // own page load, so the query comes off before route matching. The
+      // POST meter keys off the same stripped path, or a query-bearing
+      // POST would slip past the meter.
+      let bare = url.split_once('?').map_or(url.as_str(), |(path, _)| path);
       // State-changing POSTs are metered per session (see SessionStore).
       let limited_post = method == Method::Post
-        && matches!(url.strip_prefix('/'), Some("photo" | "photo-review" | "report-request"));
+        && matches!(bare.strip_prefix('/'), Some("photo" | "photo-review" | "report-request"));
       if limited_post {
         let allowed = session
           .map(|s| ctx.sessions.allow_post(s, now_ms()))
@@ -1266,7 +1273,7 @@ fn handle_request<R: Runtime>(
           return;
         }
       }
-      url.strip_prefix('/').unwrap_or(&url)
+      bare.strip_prefix('/').unwrap_or(bare)
     }
     AuthAction::Rejected { noted } => {
       // Wrong code, or a missing/dead cookie. The same response for every
@@ -2522,6 +2529,15 @@ mod tests {
     // The cookie authenticates token-less paths…
     let res = get("/hello", Some(session), true);
     assert!(res.starts_with("HTTP/1.1 200"), "cookie must authenticate: {res}");
+    // …including the exchange redirect itself ("/?k=…"): routing used to
+    // match path+query, so every fresh pairing 404'd on its own first page
+    // load with a bare "Not found" — the QR flow was dead on arrival.
+    let res = get("/?k=AbC_-43chars", Some(session), true);
+    assert!(
+      res.starts_with("HTTP/1.1 200"),
+      "redirected page load must serve the page: {res}"
+    );
+    assert!(res.contains("Camog"));
     // …and the page at / revalidates by ETag (no refetch while unchanged).
     let res = get("/", Some(session), true);
     assert!(res.starts_with("HTTP/1.1 200"), "cookie must serve the page: {res}");

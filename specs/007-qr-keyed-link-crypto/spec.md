@@ -148,3 +148,20 @@ uses.
 - Envelope cost on 4–8 MB JPEGs is negligible (GCM ~GB/s) but benchmark the
   photo upload once.
 - Do not change the listener's bind/port/token mechanics in this spec.
+
+## Shipped fix (0.13.3)
+
+- Field report: every fresh QR scan since 0.13.0 minted the session (303 +
+  Set-Cookie) and then 404'd — the exchange redirect target `/?k=…` matched
+  no route because the router matched routes against path**+query**, so the
+  QR flow was dead on arrival and the phone saw bare "Not found". Diagnosed
+  live on 30 Oct with a logging bridge on a sibling port that captured the
+  chain end to end: perfect scan → 303 → redirected page load carrying the
+  *fresh* cookie → 404.
+- Fix: the Authenticated branch strips the query before route matching (the
+  server never needs it — the page reads the key from location.search); the
+  POST meter keys off the same stripped path so a query-bearing POST can't
+  slip past the 429.
+- Lesson pinned by test: verification must follow the redirect with the
+  minted cookie (exchange → GET /?k=… → 200 page), not hand-built bare-`/`
+  requests — bare-`/` checks passed all through 0.13.0–0.13.2.
