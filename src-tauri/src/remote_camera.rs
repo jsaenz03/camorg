@@ -3331,7 +3331,6 @@ mod tests {
     assert!(try_claim_awaiting_report(&mut slot, phone_a, 5_000));
   }
 
-    #[test]
     // A phone upgrading from a pre-0.13 pairing — its saved URL works as a
     // code but carries no transit key — must never dead-end: the saved icon
     // still exchanges (code unchanged), the keyless page gets the designed
