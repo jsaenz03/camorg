@@ -2096,6 +2096,14 @@ mod tests {
     // The link page's scan path captures the key from the QR URL.
     assert!(LINK_HTML.contains("'camog-link-key'"));
     assert!(LINK_HTML.contains("LINK_CRYPTO_KEY"));
+    // A keyless page (a pairing from before the envelope) says what actually
+    // reconnects it — the QR now carries the key — instead of the generic
+    // pairing-expired copy, and skips the futile self-heal hop.
+    assert!(PAGE_HTML.contains("'Camog was updated.'"));
+    assert!(PAGE_HTML.contains("if (!LINK_KEY_BYTES) {"));
+    assert!(
+      PAGE_HTML.contains(r"now encrypted. Scan the QR in Camog\u2019s Phone link dialog once")
+    );
   }
 
   // The link page handed to rejected requests: the phone's way back in
@@ -3275,6 +3283,91 @@ mod tests {
     slot = None;
     assert!(try_claim_awaiting_report(&mut slot, phone_a, 5_000));
   }
+
+    #[test]
+    // A phone upgrading from a pre-0.13 pairing — its saved URL works as a
+    // code but carries no transit key — must never dead-end: the saved icon
+    // still exchanges (code unchanged), the keyless page gets the designed
+    // capability 404, and one scan of the CURRENT QR (the only channel the
+    // key travels on) reconnects it for good on this origin.
+    #[test]
+    fn pre_envelope_phone_upgrade_flow() {
+        use super::{
+            bind_listener, link_key_param, spawn_handler, AuthGuard, LinkContext, SessionStore,
+        };
+        use std::io::{Read, Write};
+        use std::sync::Arc;
+        use tauri::test;
+        use tiny_http::Server;
+
+        let app = test::mock_app();
+        let token = "0123456789abcdef";
+        let key = [0xA1u8; 32];
+        let listener = bind_listener("127.0.0.1".parse().unwrap(), 0).expect("test bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = Arc::new(Server::from_listener(listener, None).expect("test server"));
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread = spawn_handler(
+            app.handle().clone(),
+            Arc::clone(&server),
+            Arc::new(LinkContext {
+                token: token.to_string(),
+                key,
+                sessions: Arc::new(SessionStore::new()),
+                last_seen_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                guard: Arc::new(AuthGuard::new()),
+                shutdown: Arc::clone(&shutdown),
+            }),
+        );
+
+        let get = |path: &str, cookie: Option<&str>, caps: bool| -> String {
+            let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+            let c = cookie.map(|x| format!("Cookie: {x}\r\n")).unwrap_or_default();
+            let k = if caps { "X-Link-Key: 1\r\n" } else { "" };
+            write!(s, "GET {path} HTTP/1.1\r\nHost: x\r\n{c}{k}Connection: close\r\n\r\n")
+                .expect("write");
+            let mut r = String::new();
+            s.read_to_string(&mut r).expect("read");
+            r
+        };
+
+        // The saved pre-0.13 icon still exchanges: the code was not rotated.
+        let res = get(&format!("/t/{token}/"), None, false);
+        assert!(res.starts_with("HTTP/1.1 303"), "saved icon must still exchange: {res}");
+        let cookie = res
+            .lines()
+            .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
+            .expect("exchange sets a cookie")
+            .strip_prefix("Set-Cookie: ")
+            .expect("server-sent header case")
+            .split(';')
+            .next()
+            .expect("name=value pair")
+            .to_string();
+
+        // The page serves fine, but the keyless phone cannot prove it holds
+        // the transit key: hello 404s — the input to the re-scan message.
+        let res = get("/", Some(&cookie), false);
+        assert!(res.starts_with("HTTP/1.1 200"), "page must load: {res}");
+        let res = get("/hello", Some(&cookie), false);
+        assert!(res.starts_with("HTTP/1.1 404"), "keyless hello must 404: {res}");
+
+        // One scan of the current QR: the key rides the redirect once, and
+        // the same session is fully live afterwards.
+        let k = link_key_param(&key);
+        let res = get(&format!("/t/{token}/?k={k}"), Some(&cookie), false);
+        assert!(res.starts_with("HTTP/1.1 303"), "re-scan must exchange: {res}");
+        assert!(
+            res.contains(&format!("Location: /?k={k}")),
+            "the key must ride the redirect: {res}"
+        );
+        let res = get("/hello", Some(&cookie), true);
+        assert!(res.starts_with("HTTP/1.1 200"), "keyed hello must pass: {res}");
+
+        shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        server.unblock();
+        let _ = thread.join();
+    }
 
   // The CGNAT window is Tailscale's 100.64.0.0/10, edges included; the
   // interface-scan fallback picks the tunnel address out of a mixed list

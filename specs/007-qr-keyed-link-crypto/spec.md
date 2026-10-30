@@ -82,6 +82,18 @@ Also fixed while here: the request handler's eight loose parameters became
 a `LinkContext` struct to keep clippy green, and the report download's
 `Content-Disposition` header went with the plaintext route it served.
 
+**0.13.2 follow-up (30 Oct, field report):** a phone paired before 0.13.0
+opening its saved link (over Tailscale or LAN) connects but cannot decrypt
+— the key only travels on the QR — so it lands on the keyless-page 404.
+That is the designed skew path, but the page's generic "Pairing expired"
+copy read as "broken" (the user's exact report: "says not found"). Now a
+keyless page (no stored key at all) shows "Camog was updated — scan the QR
+in Camog's Phone link dialog once…" and skips the futile self-heal hop;
+the pre-envelope upgrade flow is pinned end to end by
+`pre_envelope_phone_upgrade_flow` (saved icon still exchanges → keyless
+hello 404 → one `?k=` scan → fully live session). Note the key is stored
+per phone origin, so a phone that uses BOTH paths scans each QR once.
+
 ## Problem
 
 Phone-link traffic crosses the LAN as plaintext: the photo-library manifest

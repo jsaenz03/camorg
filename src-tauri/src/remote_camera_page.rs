@@ -1452,6 +1452,19 @@ const PAGE_HTML: &str = r##"<!doctype html>
   function pairingExpired() {
     if (beatTimer) { clearInterval(beatTimer); beatTimer = null; }
     if (connTimer) { clearInterval(connTimer); connTimer = null; }
+    // A page with no transit key at all — this phone paired before the
+    // envelope existed, or its storage was cleared. The pairing code still
+    // works, but the key only ever travels on the QR, so no restore hop can
+    // fix this: say exactly what reconnects the phone instead of burning
+    // the one-shot heal on a dead end.
+    if (!LINK_KEY_BYTES) {
+      $('conn').textContent = 'Camog was updated.';
+      $('conn').style.color = '';
+      fail('This link is now encrypted. Scan the QR in Camog\u2019s Phone link dialog once to reconnect \u2014 after that, your saved link works as before.');
+      show($('relink'), true);
+      reveal();
+      return;
+    }
     // The server is clearly alive (it answered 404), so the saved pairing
     // URL is worth one hop: sessions die with every desktop restart but the
     // code does not, and the exchange mints a fresh cookie silently. The

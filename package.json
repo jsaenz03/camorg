@@ -1,6 +1,6 @@
 {
   "name": "camog",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "private": true,
   "scripts": {
     "predev": "node scripts/sync-pdfjs-assets.mjs",
