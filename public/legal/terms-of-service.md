@@ -1,6 +1,6 @@
 # Camog — Terms of Service
 
-**Effective date:** 31/10/2026 · **Version:** 1.5
+**Effective date:** 31/10/2026 · **Version:** 1.6
 
 ---
 
@@ -50,8 +50,8 @@ Except where the *Copyright Act 1968* (Cth) or another law expressly permits you
 (a) keeping account passcodes confidential and using the session-timeout and idle privacy-lock settings appropriate to your clinic environment;
 (b) the acts and omissions of your users;
 (c) physically and electronically securing the computers and networks on which the Software runs, including using full-disk encryption (for example, FileVault or BitLocker) on any device holding patient photographs;
-(d) taking and safely storing regular backups — the Software's backup feature creates a database snapshot in your configured storage folder, encrypted with a **backup passphrase your practice chooses**; you must record that passphrase — an encrypted backup cannot be restored without it, and the Software cannot recover it; and
-(e) using the **phone link** feature only on a trusted, private network you control. The phone link runs a small web server on your computer that a paired phone reaches over plain HTTP, with photographs and other patient data sealed **in transit with AES-256-GCM encryption** under a key exchanged when the phone pairs (the key rotates whenever the pairing code rotates). The pairing exchange and the per-device session cookie still cross the network unencrypted. Access is controlled by a random pairing code that is exchanged once for a per-device session cookie, and — while library sharing is switched on — the phone can view the same access-filtered patient records the signed-in clinician can see. Do not use it on public or shared Wi-Fi; rotate the pairing code if it may have been seen, and end the session when you are done. The security notes distributed with the Software describe the controls and their limits in full.
+(d) taking and safely storing regular backups — the Software's backup feature creates a database snapshot in your configured storage folder, encrypted with a **backup passphrase your practice chooses** (while that passphrase is saved in the operating system's credential store, the Software also writes these snapshots automatically, at most once a day); you must record that passphrase — an encrypted backup cannot be restored without it, and the Software cannot recover it once it is gone from the credential store; and
+(e) using the **phone link** feature only on a trusted, private network you control. The phone link runs a small web server on your computer that a paired phone reaches over plain HTTP, with photographs and other patient data sealed **in transit with AES-256-GCM encryption** under a key exchanged when the phone pairs (the key rotates whenever the pairing code rotates). The pairing exchange and the per-device session cookie still cross the network unencrypted. Access is controlled by a random pairing code that is exchanged once for a per-device session cookie, and — while library sharing is switched on — the phone can view the same access-filtered patient records the signed-in clinician can see. Do not use it on public or shared Wi-Fi; rotate the pairing code if it may have been seen, and end the session when you are done. The security notes published with the Software's legal documents at https://camog-license.cliniciq.com.au/legal/security-notes.md describe the controls and their limits in full.
 
 5.3 The Software's idle privacy lock is a **privacy screen, not a security control or encryption**. It covers the screen but does not end the signed-in session.
 

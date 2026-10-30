@@ -70,9 +70,12 @@ the link works; otherwise it does not.
   in an owner-only photo-key file in the app data directory (cameras first
   launched on 0.4.6 or earlier have their key moved out of the OS credential
   store once, automatically). Database backups are encrypted with a
-  passphrase the practice chooses at each backup — the passphrase travels
-  with the backup, so a restore works on any machine, and a lost passphrase
-  means the backup cannot be opened. The live database and exported report
+  passphrase the practice chooses (saved in the operating system's credential
+  store, where it also switches on automatic backups — at most one a day,
+  with the oldest pruned past the ten most recent) — the passphrase is all
+  that travels with a backup, so a restore works on any machine, and a lost
+  passphrase means the backup cannot be opened. The live database and
+  exported report
   PDFs are not encrypted at rest — protect the machine accordingly.
 - **In transit:** the link runs over plain HTTP — still a deliberate
   trade-off, because certificates cannot be issued for LAN addresses without

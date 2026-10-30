@@ -100,6 +100,7 @@ const FOOTER = `
         <a href="/buy">Pricing and licences</a>
         <a href="/legal/terms-of-service.md">Terms</a>
         <a href="/legal/privacy-policy.md">Privacy policy</a>
+        <a href="/legal/security-notes.md">Security notes</a>
         <a href="mailto:admin@cliniciq.com.au">Support</a>
       </nav>
       <p>Camog is an independent product of ClinicIQ Solutions. Patient photographs never leave your computer, and ClinicIQ Solutions has no access to them.</p>
