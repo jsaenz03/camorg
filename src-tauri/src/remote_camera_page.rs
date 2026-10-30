@@ -1118,6 +1118,7 @@ const PAGE_HTML: &str = r##"<!doctype html>
   // the self-check; check-phone-page.mjs drives it end to end.
   var GCM = (function () {
     'use strict';
+
     // S-box generated from the GF(2^8) inverse + affine map rather than a
     // 256-entry literal table to mistype.
     var SBOX = new Uint8Array(256);
@@ -1141,65 +1142,86 @@ const PAGE_HTML: &str = r##"<!doctype html>
       SBOX[0] = 0x63;
     })();
 
-    // AES-256: Nk=8, Nr=14, 60 key words.
-    var RCON = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40];
+    function xt(a) { return ((a << 1) ^ ((a & 0x80) ? 0x1b : 0)) & 0xff; }
+
+    // ---- AES-256 block cipher, T-table form ---------------------------------
+    // TE0[x] = MixColumns([S[x],0,0,0]) as a big-endian word; TE1..TE3 are
+    // byte rotations of it. A round column becomes 4 lookups + 5 xors of
+    // words instead of ~40 byte ops with branchy xtime calls.
+    var TE = new Uint32Array(4 * 256);
+    for (var te = 0; te < 256; te++) {
+      var ts = SBOX[te], tx2 = xt(ts), tx3 = tx2 ^ ts;
+      var tw = (((tx2 << 24) | (ts << 16) | (ts << 8) | tx3)) >>> 0;
+      TE[te] = tw;
+      TE[256 + te] = ((tw >>> 8) | (tw << 24)) >>> 0;
+      TE[512 + te] = ((tw >>> 16) | (tw << 16)) >>> 0;
+      TE[768 + te] = ((tw >>> 24) | (tw << 8)) >>> 0;
+    }
+    var RCONW = new Uint32Array([0x01000000, 0x02000000, 0x04000000,
+      0x08000000, 0x10000000, 0x20000000, 0x40000000]);
+
+    // AES-256: Nk=8, Nr=14, 60 big-endian key words (same schedule the byte
+    // form builds, packed).
     function expandKey(key) {
-      var w = [];
-      for (var i = 0; i < 8; i++) w.push([key[4 * i], key[4 * i + 1], key[4 * i + 2], key[4 * i + 3]]);
+      var w = new Uint32Array(60);
+      for (var i = 0; i < 8; i++) {
+        w[i] = (((key[4 * i] << 24) | (key[4 * i + 1] << 16) |
+          (key[4 * i + 2] << 8) | key[4 * i + 3])) >>> 0;
+      }
       var rc = 0;
-      for (var i = 8; i < 60; i++) {
-        var t = w[i - 1].slice();
-        if (i % 8 === 0) {
-          t = [SBOX[t[1]], SBOX[t[2]], SBOX[t[3]], SBOX[t[0]]];
-          t[0] ^= RCON[rc++];
-        } else if (i % 8 === 4) {
-          t = [SBOX[t[0]], SBOX[t[1]], SBOX[t[2]], SBOX[t[3]]];
+      for (var j = 8; j < 60; j++) {
+        var tmp = w[j - 1];
+        if (j % 8 === 0) {
+          // SubWord(RotWord(t)) ^ Rcon: rot moves a0 to the far end.
+          tmp = (((SBOX[(tmp >>> 16) & 255] << 24) | (SBOX[(tmp >>> 8) & 255] << 16) |
+            (SBOX[tmp & 255] << 8) | SBOX[(tmp >>> 24) & 255])) >>> 0;
+          tmp = (tmp ^ RCONW[rc++]) >>> 0;
+        } else if (j % 8 === 4) {
+          tmp = (((SBOX[(tmp >>> 24) & 255] << 24) | (SBOX[(tmp >>> 16) & 255] << 16) |
+            (SBOX[(tmp >>> 8) & 255] << 8) | SBOX[tmp & 255])) >>> 0;
         }
-        var p = w[i - 8];
-        w.push([p[0] ^ t[0], p[1] ^ t[1], p[2] ^ t[2], p[3] ^ t[3]]);
+        w[j] = (w[j - 8] ^ tmp) >>> 0;
       }
       return w;
     }
 
-    function xtime(a) { return ((a << 1) ^ ((a & 0x80) ? 0x11b : 0)) & 0xff; }
-    function encryptBlock(w, input) {
-      var s = new Uint8Array(input);
-      function addRoundKey(n) {
-        for (var c = 0; c < 4; c++) {
-          var word = w[4 * n + c];
-          s[c * 4] ^= word[0]; s[c * 4 + 1] ^= word[1]; s[c * 4 + 2] ^= word[2]; s[c * 4 + 3] ^= word[3];
-        }
+    // Encrypts 16 bytes at input[off] into out[0..3] as big-endian words.
+    // The round tables consume the state as-is — each round's output already
+    // carries that round's key — so the only explicit key xors are ARK(0)
+    // here and the round key added after the tables each round.
+    function encryptBlock(w, input, off, out) {
+      var s0 = (((input[off] << 24) | (input[off + 1] << 16) | (input[off + 2] << 8) | input[off + 3])) >>> 0;
+      var s1 = (((input[off + 4] << 24) | (input[off + 5] << 16) | (input[off + 6] << 8) | input[off + 7])) >>> 0;
+      var s2 = (((input[off + 8] << 24) | (input[off + 9] << 16) | (input[off + 10] << 8) | input[off + 11])) >>> 0;
+      var s3 = (((input[off + 12] << 24) | (input[off + 13] << 16) | (input[off + 14] << 8) | input[off + 15])) >>> 0;
+      var n0, n1, n2, n3, k, r;
+      s0 = (s0 ^ w[0]) >>> 0; s1 = (s1 ^ w[1]) >>> 0; s2 = (s2 ^ w[2]) >>> 0; s3 = (s3 ^ w[3]) >>> 0;
+      for (r = 1; r < 14; r++) {
+        k = 4 * r;
+        // ShiftRows: output row r reads source row r one column over (c+r)%4,
+        // so each table picks its byte from a different neighbour word.
+        n0 = (TE[s0 >>> 24] ^ TE[256 + ((s1 >>> 16) & 255)] ^ TE[512 + ((s2 >>> 8) & 255)] ^ TE[768 + (s3 & 255)] ^ w[k]) >>> 0;
+        n1 = (TE[s1 >>> 24] ^ TE[256 + ((s2 >>> 16) & 255)] ^ TE[512 + ((s3 >>> 8) & 255)] ^ TE[768 + (s0 & 255)] ^ w[k + 1]) >>> 0;
+        n2 = (TE[s2 >>> 24] ^ TE[256 + ((s3 >>> 16) & 255)] ^ TE[512 + ((s0 >>> 8) & 255)] ^ TE[768 + (s1 & 255)] ^ w[k + 2]) >>> 0;
+        n3 = (TE[s3 >>> 24] ^ TE[256 + ((s0 >>> 16) & 255)] ^ TE[512 + ((s1 >>> 8) & 255)] ^ TE[768 + (s2 & 255)] ^ w[k + 3]) >>> 0;
+        s0 = n0; s1 = n1; s2 = n2; s3 = n3;
       }
-      function subShift() {
-        // SubBytes + ShiftRows (state is column-major; row r = indices r, r+4, r+8, r+12).
-        var t;
-        for (var i = 0; i < 16; i++) s[i] = SBOX[s[i]];
-        t = s[1]; s[1] = s[5]; s[5] = s[9]; s[9] = s[13]; s[13] = t;
-        t = s[2]; s[2] = s[10]; s[10] = t; t = s[6]; s[6] = s[14]; s[14] = t;
-        t = s[15]; s[15] = s[11]; s[11] = s[7]; s[7] = s[3]; s[3] = t;
-      }
-      function mixColumns() {
-        for (var c = 0; c < 4; c++) {
-          var i = c * 4;
-          var a0 = s[i], a1 = s[i + 1], a2 = s[i + 2], a3 = s[i + 3];
-          var x1 = xtime(a0), x2 = xtime(a1), x3 = xtime(a2), x4 = xtime(a3);
-          s[i]     = x1 ^ x2 ^ a1 ^ a2 ^ a3;       // 2·a0 ^ 3·a1 ^ a2 ^ a3
-          s[i + 1] = a0 ^ x2 ^ a2 ^ x3 ^ a3;       // a0 ^ 2·a1 ^ 3·a2 ^ a3
-          s[i + 2] = a0 ^ a1 ^ x3 ^ x4 ^ a3;       // a0 ^ a1 ^ 2·a2 ^ 3·a3
-          s[i + 3] = x1 ^ a0 ^ a1 ^ a2 ^ x4;       // 3·a0 ^ a1 ^ a2 ^ 2·a3
-        }
-      }
-      addRoundKey(0);
-      for (var round = 1; round < 14; round++) { subShift(); mixColumns(); addRoundKey(round); }
-      subShift();
-      addRoundKey(14);
-      return s;
+      // Final round: SubBytes + ShiftRows + AddRoundKey, no MixColumns. The
+      // byte terms are parenthesised into one word before the key xor.
+      k = 56;
+      out[0] = ((((SBOX[s0 >>> 24] << 24) | (SBOX[(s1 >>> 16) & 255] << 16) | (SBOX[(s2 >>> 8) & 255] << 8) | SBOX[s3 & 255])) ^ w[k]) >>> 0;
+      out[1] = ((((SBOX[s1 >>> 24] << 24) | (SBOX[(s2 >>> 16) & 255] << 16) | (SBOX[(s3 >>> 8) & 255] << 8) | SBOX[s0 & 255])) ^ w[k + 1]) >>> 0;
+      out[2] = ((((SBOX[s2 >>> 24] << 24) | (SBOX[(s3 >>> 16) & 255] << 16) | (SBOX[(s0 >>> 8) & 255] << 8) | SBOX[s1 & 255])) ^ w[k + 2]) >>> 0;
+      out[3] = ((((SBOX[s3 >>> 24] << 24) | (SBOX[(s0 >>> 16) & 255] << 16) | (SBOX[(s1 >>> 8) & 255] << 8) | SBOX[s2 & 255])) ^ w[k + 3]) >>> 0;
     }
 
     // ---- GHASH (GCM's authenticator) ----------------------------------------
-    // v • x in GCM's reflected field (NIST SP 800-38D: leftmost bit of the
-    // block is x^0; reduction constant R = 0xE1 followed by zeros).
-    function xmul(v) {
+    // v • x in GCM's reflected field (NIST SP 800-38D; R = 0xE1 followed by
+    // zeros). 16 byte-position tables of 256 big-endian-word products: a
+    // full multiply is a plain xor of 16 precomputed 4-word rows, with no
+    // per-block allocation (the byte form allocated one array per block —
+    // half a million for a large photo).
+    function xmulBytes(v) {
       var lsb = v[15] & 1;
       var out = new Uint8Array(16);
       for (var i = 15; i > 0; i--) out[i] = ((v[i] >>> 1) | (v[i - 1] << 7)) & 0xff;
@@ -1207,75 +1229,131 @@ const PAGE_HTML: &str = r##"<!doctype html>
       if (lsb) out[0] ^= 0xe1;
       return out;
     }
-    // 16 byte-position tables of 256 products each: a full field multiply
-    // becomes a plain xor of 16 precomputed terms (each already reduced), so
-    // an 8 MB photo hashes in a fraction of a second instead of seconds.
     function buildTables(h) {
       var products = [h];
-      for (var i = 1; i < 128; i++) products.push(xmul(products[i - 1]));
-      var tables = new Uint8Array(16 * 256 * 16);
+      for (var i = 1; i < 128; i++) products.push(xmulBytes(products[i - 1]));
+      var tables = new Uint32Array(16 * 256 * 4);
       for (var pos = 0; pos < 16; pos++) {
         for (var val = 0; val < 256; val++) {
-          var off = (pos * 256 + val) * 16;
+          var off = (pos * 256 + val) * 4;
+          var a0 = 0, a1 = 0, a2 = 0, a3 = 0;
           for (var bit = 0; bit < 8; bit++) {
             if ((val >> (7 - bit)) & 1) {
               var p = products[pos * 8 + bit];
-              for (var k = 0; k < 16; k++) tables[off + k] ^= p[k];
+              a0 ^= (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+              a1 ^= (p[4] << 24) | (p[5] << 16) | (p[6] << 8) | p[7];
+              a2 ^= (p[8] << 24) | (p[9] << 16) | (p[10] << 8) | p[11];
+              a3 ^= (p[12] << 24) | (p[13] << 16) | (p[14] << 8) | p[15];
             }
           }
+          tables[off] = a0 >>> 0; tables[off + 1] = a1 >>> 0;
+          tables[off + 2] = a2 >>> 0; tables[off + 3] = a3 >>> 0;
         }
       }
       return tables;
     }
-    function gmulBlock(acc, tables) {
-      var out = new Uint8Array(16);
-      for (var j = 0; j < 16; j++) {
-        var off = (j * 256 + acc[j]) * 16;
-        for (var k = 0; k < 16; k++) out[k] ^= tables[off + k];
-      }
-      return out;
-    }
-    // GHASH over the ciphertext (AAD is always empty in this envelope) plus
+    // GHASH over data[from..to) (AAD is always empty in this envelope) plus
     // the trailing [len(A)]64 ‖ [len(C)]64 block the spec requires.
-    function ghash(tables, data, length) {
-      var y = new Uint8Array(16);
-      var full = length - (length % 16);
-      for (var off = 0; off < full; off += 16) {
-        for (var k = 0; k < 16; k++) y[k] ^= data[off + k];
-        y = gmulBlock(y, tables);
+    function ghash(tables, data, from, to) {
+      var y0 = 0, y1 = 0, y2 = 0, y3 = 0;
+      var end = from + (((to - from) >> 4) << 4);
+      var off, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, vA, vB, vC, vD, vE, vF, j, base, o0, o1, o2, o3;
+      for (off = from; off < end; off += 16) {
+        y0 ^= (data[off] << 24) | (data[off + 1] << 16) | (data[off + 2] << 8) | data[off + 3];
+        y1 ^= (data[off + 4] << 24) | (data[off + 5] << 16) | (data[off + 6] << 8) | data[off + 7];
+        y2 ^= (data[off + 8] << 24) | (data[off + 9] << 16) | (data[off + 10] << 8) | data[off + 11];
+        y3 ^= (data[off + 12] << 24) | (data[off + 13] << 16) | (data[off + 14] << 8) | data[off + 15];
+        v0 = y0 >>> 24; v1 = (y0 >>> 16) & 255; v2 = (y0 >>> 8) & 255; v3 = y0 & 255;
+        v4 = y1 >>> 24; v5 = (y1 >>> 16) & 255; v6 = (y1 >>> 8) & 255; v7 = y1 & 255;
+        v8 = y2 >>> 24; v9 = (y2 >>> 16) & 255; vA = (y2 >>> 8) & 255; vB = y2 & 255;
+        vC = y3 >>> 24; vD = (y3 >>> 16) & 255; vE = (y3 >>> 8) & 255; vF = y3 & 255;
+        o0 = 0; o1 = 0; o2 = 0; o3 = 0;
+        base = v0 * 4;      o0 ^= tables[base];      o1 ^= tables[base + 1];      o2 ^= tables[base + 2];      o3 ^= tables[base + 3];
+        base = (256 + v1) * 4;   o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (512 + v2) * 4;   o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (768 + v3) * 4;   o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (1024 + v4) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (1280 + v5) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (1536 + v6) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (1792 + v7) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (2048 + v8) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (2304 + v9) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (2560 + vA) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (2816 + vB) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (3072 + vC) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (3328 + vD) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (3584 + vE) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        base = (3840 + vF) * 4;  o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        y0 = o0; y1 = o1; y2 = o2; y3 = o3;
       }
-      if (length % 16) {
-        for (var k2 = 0; k2 < length % 16; k2++) y[k2] ^= data[full + k2];
-        y = gmulBlock(y, tables);
+      if (to > off) {
+        // Padded tail block.
+        var pad = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        for (j = off; j < to; j++) pad[j - off] = data[j];
+        y0 ^= (pad[0] << 24) | (pad[1] << 16) | (pad[2] << 8) | pad[3];
+        y1 ^= (pad[4] << 24) | (pad[5] << 16) | (pad[6] << 8) | pad[7];
+        y2 ^= (pad[8] << 24) | (pad[9] << 16) | (pad[10] << 8) | pad[11];
+        y3 ^= (pad[12] << 24) | (pad[13] << 16) | (pad[14] << 8) | pad[15];
+        v0 = y0 >>> 24; v1 = (y0 >>> 16) & 255; v2 = (y0 >>> 8) & 255; v3 = y0 & 255;
+        v4 = y1 >>> 24; v5 = (y1 >>> 16) & 255; v6 = (y1 >>> 8) & 255; v7 = y1 & 255;
+        v8 = y2 >>> 24; v9 = (y2 >>> 16) & 255; vA = (y2 >>> 8) & 255; vB = y2 & 255;
+        vC = y3 >>> 24; vD = (y3 >>> 16) & 255; vE = (y3 >>> 8) & 255; vF = y3 & 255;
+        o0 = 0; o1 = 0; o2 = 0; o3 = 0;
+        var vs = [v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, vA, vB, vC, vD, vE, vF];
+        for (j = 0; j < 16; j++) {
+          base = (j * 256 + vs[j]) * 4;
+          o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+        }
+        y0 = o0; y1 = o1; y2 = o2; y3 = o3;
       }
-      var bits = length * 8;
-      var lenBlock = new Uint8Array(16);
-      lenBlock[12] = (bits >>> 24) & 0xff;
-      lenBlock[13] = (bits >>> 16) & 0xff;
-      lenBlock[14] = (bits >>> 8) & 0xff;
-      lenBlock[15] = bits & 0xff;
-      for (var k3 = 0; k3 < 16; k3++) y[k3] ^= lenBlock[k3];
-      return gmulBlock(y, tables);
+      // The trailing [len(A)]64 ‖ [len(C)]64 block: XOR it into y, then one
+      // final multiply of the whole accumulator.
+      var bits = ((to - from) * 8) >>> 0;
+      y3 = (y3 ^ bits) >>> 0;
+      v0 = y0 >>> 24; v1 = (y0 >>> 16) & 255; v2 = (y0 >>> 8) & 255; v3 = y0 & 255;
+      v4 = y1 >>> 24; v5 = (y1 >>> 16) & 255; v6 = (y1 >>> 8) & 255; v7 = y1 & 255;
+      v8 = y2 >>> 24; v9 = (y2 >>> 16) & 255; vA = (y2 >>> 8) & 255; vB = y2 & 255;
+      vC = y3 >>> 24; vD = (y3 >>> 16) & 255; vE = (y3 >>> 8) & 255; vF = y3 & 255;
+      o0 = 0; o1 = 0; o2 = 0; o3 = 0;
+      var vs = [v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, vA, vB, vC, vD, vE, vF];
+      for (j = 0; j < 16; j++) {
+        base = (j * 256 + vs[j]) * 4;
+        o0 ^= tables[base]; o1 ^= tables[base + 1]; o2 ^= tables[base + 2]; o3 ^= tables[base + 3];
+      }
+      return [o0 >>> 0, o1 >>> 0, o2 >>> 0, o3 >>> 0];
     }
 
     // ---- CTR (both directions; GCM never decrypts blocks) --------------------
-    function keystream(w, nonce, length) {
-      var counter = new Uint8Array(16);
-      counter.set(nonce);
-      counter[15] = 1;
-      var out = new Uint8Array(length);
+    var CTR = new Uint8Array(16);
+    var KS = new Uint32Array(4);
+    // Fills out[start .. start+length) with the counter keystream.
+    function fillKeystream(w, nonce, out, start, length) {
+      var i;
+      for (i = 0; i < 12; i++) CTR[i] = nonce[i];
+      CTR[12] = 0; CTR[13] = 0; CTR[14] = 0; CTR[15] = 1;
       var filled = 0;
       while (filled < length) {
-        counter[15] = (counter[15] + 1) & 0xff;
-        if (!counter[15]) {
-          for (var i = 14; i >= 12; i--) { counter[i] = (counter[i] + 1) & 0xff; if (counter[i]) break; }
+        CTR[15] = (CTR[15] + 1) & 0xff;
+        if (!CTR[15]) {
+          for (i = 14; i >= 12; i--) { CTR[i] = (CTR[i] + 1) & 0xff; if (CTR[i]) break; }
         }
-        var ks = encryptBlock(w, counter);
+        encryptBlock(w, CTR, 0, KS);
         var n = Math.min(16, length - filled);
-        for (var k = 0; k < n; k++) out[filled + k] = ks[k];
+        var at = start + filled;
+        if (n === 16) {
+          out[at] = KS[0] >>> 24; out[at + 1] = (KS[0] >>> 16) & 255; out[at + 2] = (KS[0] >>> 8) & 255; out[at + 3] = KS[0] & 255;
+          out[at + 4] = KS[1] >>> 24; out[at + 5] = (KS[1] >>> 16) & 255; out[at + 6] = (KS[1] >>> 8) & 255; out[at + 7] = KS[1] & 255;
+          out[at + 8] = KS[2] >>> 24; out[at + 9] = (KS[2] >>> 16) & 255; out[at + 10] = (KS[2] >>> 8) & 255; out[at + 11] = KS[2] & 255;
+          out[at + 12] = KS[3] >>> 24; out[at + 13] = (KS[3] >>> 16) & 255; out[at + 14] = (KS[3] >>> 8) & 255; out[at + 15] = KS[3] & 255;
+        } else {
+          for (var k = 0; k < n; k++) {
+            var word = KS[k >> 2];
+            var shift = 24 - 8 * (k & 3);
+            out[at + k] = (word >>> shift) & 255;
+          }
+        }
         filled += n;
       }
-      return out;
     }
 
     // Per-key memo: the link session uses one key, so expand + tables are
@@ -1285,28 +1363,47 @@ const PAGE_HTML: &str = r##"<!doctype html>
       var id = Array.prototype.join.call(key, ',');
       if (id === memoId) return;
       memoW = expandKey(key);
-      memoTables = buildTables(encryptBlock(memoW, new Uint8Array(16)));
+      // H = E_K(0^128)
+      var ZERO = new Uint8Array(16);
+      encryptBlock(memoW, ZERO, 0, KS);
+      var h = new Uint8Array(16);
+      h[0] = KS[0] >>> 24; h[1] = (KS[0] >>> 16) & 255; h[2] = (KS[0] >>> 8) & 255; h[3] = KS[0] & 255;
+      h[4] = KS[1] >>> 24; h[5] = (KS[1] >>> 16) & 255; h[6] = (KS[1] >>> 8) & 255; h[7] = KS[1] & 255;
+      h[8] = KS[2] >>> 24; h[9] = (KS[2] >>> 16) & 255; h[10] = (KS[2] >>> 8) & 255; h[11] = KS[2] & 255;
+      h[12] = KS[3] >>> 24; h[13] = (KS[3] >>> 16) & 255; h[14] = (KS[3] >>> 8) & 255; h[15] = KS[3] & 255;
+      memoTables = buildTables(h);
       memoId = id;
     }
-    function mac(w, tables, nonce, ct) {
-      var s = ghash(tables, ct, ct.length);
-      var j0 = new Uint8Array(16);
-      j0.set(nonce); j0[15] = 1;
-      var ek0 = encryptBlock(w, j0);
-      var tag = new Uint8Array(16);
-      for (var k = 0; k < 16; k++) tag[k] = ek0[k] ^ s[k];
-      return tag;
+    function mac(tables, nonce, data, from, to) {
+      // E_K(J0), J0 = nonce ‖ 0³¹ ‖ 1
+      CTR[0] = nonce[0]; CTR[1] = nonce[1]; CTR[2] = nonce[2]; CTR[3] = nonce[3];
+      CTR[4] = nonce[4]; CTR[5] = nonce[5]; CTR[6] = nonce[6]; CTR[7] = nonce[7];
+      CTR[8] = nonce[8]; CTR[9] = nonce[9]; CTR[10] = nonce[10]; CTR[11] = nonce[11];
+      CTR[12] = 0; CTR[13] = 0; CTR[14] = 0; CTR[15] = 1;
+      encryptBlock(memoW, CTR, 0, KS);
+      var s = ghash(tables, data, from, to);
+      return [KS[0] ^ s[0], KS[1] ^ s[1], KS[2] ^ s[2], KS[3] ^ s[3]];
     }
 
     return {
       // seal(key, nonce12, plaintext) → nonce ‖ ciphertext ‖ tag
       seal: function (key, nonce, plaintext) {
         ensure(key);
-        var ct = keystream(memoW, nonce, plaintext.length);
-        for (var i = 0; i < plaintext.length; i++) ct[i] ^= plaintext[i];
-        var tag = mac(memoW, memoTables, nonce, ct);
-        var env = new Uint8Array(12 + ct.length + 16);
-        env.set(nonce); env.set(ct, 12); env.set(tag, 12 + ct.length);
+        var len = plaintext.length;
+        var env = new Uint8Array(12 + len + 16);
+        var i;
+        for (i = 0; i < 12; i++) env[i] = nonce[i];
+        fillKeystream(memoW, nonce, env, 12, len);
+        for (i = 0; i < len; i++) env[12 + i] ^= plaintext[i];
+        var tag = mac(memoTables, nonce, env, 12, 12 + len);
+        env[12 + len] = (tag[0] >>> 24) & 255; env[13 + len] = (tag[0] >>> 16) & 255;
+        env[14 + len] = (tag[0] >>> 8) & 255; env[15 + len] = tag[0] & 255;
+        env[16 + len] = (tag[1] >>> 24) & 255; env[17 + len] = (tag[1] >>> 16) & 255;
+        env[18 + len] = (tag[1] >>> 8) & 255; env[19 + len] = tag[1] & 255;
+        env[20 + len] = (tag[2] >>> 24) & 255; env[21 + len] = (tag[2] >>> 16) & 255;
+        env[22 + len] = (tag[2] >>> 8) & 255; env[23 + len] = tag[2] & 255;
+        env[24 + len] = (tag[3] >>> 24) & 255; env[25 + len] = (tag[3] >>> 16) & 255;
+        env[26 + len] = (tag[3] >>> 8) & 255; env[27 + len] = tag[3] & 255;
         return env;
       },
       // open(key, envelope) → plaintext, or null when the key (or any byte
@@ -1315,14 +1412,22 @@ const PAGE_HTML: &str = r##"<!doctype html>
         if (!env || env.length < 28) return null;
         ensure(key);
         var nonce = env.subarray(0, 12);
-        var ct = env.subarray(12, env.length - 16);
-        var tag = env.subarray(env.length - 16);
-        var expected = mac(memoW, memoTables, nonce, ct);
-        var diff = 0;
-        for (var k = 0; k < 16; k++) diff |= expected[k] ^ tag[k];
+        var ctFrom = 12, ctTo = env.length - 16;
+        var expected = mac(memoTables, nonce, env, ctFrom, ctTo);
+        var tagAt = env.length - 16;
+        var diff = 0, k, word;
+        for (k = 0; k < 4; k++) {
+          word = expected[k];
+          diff |= (word >>> 24) ^ env[tagAt + 4 * k];
+          diff |= ((word >>> 16) & 255) ^ env[tagAt + 4 * k + 1];
+          diff |= ((word >>> 8) & 255) ^ env[tagAt + 4 * k + 2];
+          diff |= (word & 255) ^ env[tagAt + 4 * k + 3];
+        }
         if (diff) return null;
-        var pt = keystream(memoW, nonce, ct.length);
-        for (var i = 0; i < ct.length; i++) pt[i] ^= ct[i];
+        var len = ctTo - ctFrom;
+        var pt = new Uint8Array(len);
+        fillKeystream(memoW, nonce, pt, 0, len);
+        for (var i = 0; i < len; i++) pt[i] ^= env[12 + i];
         return pt;
       },
     };
