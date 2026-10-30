@@ -1102,6 +1102,11 @@ const PAGE_HTML: &str = r##"<!doctype html>
   $('tab-lib').addEventListener('click', function () { setTab('lib'); });
   $('tab-all').addEventListener('click', function () { setTab('all'); });
   $('tab-cmp').addEventListener('click', function () { setTab('cmp'); });
+  // The expired screens' way back in: the link page restores by paste (the
+  // one channel that reaches a standalone home-screen container, whose
+  // storage a scanned QR can never fill) or by saved link or scan where
+  // those work.
+  $('relink').addEventListener('click', function () { location.href = 'link'; });
 
   // ---- AES-256-GCM transit envelope (specs/007) — begin -------------------
   // gcm-begin (self-checks extract this block: scripts/self-check-phone-crypto.mjs)
@@ -1453,14 +1458,24 @@ const PAGE_HTML: &str = r##"<!doctype html>
     if (beatTimer) { clearInterval(beatTimer); beatTimer = null; }
     if (connTimer) { clearInterval(connTimer); connTimer = null; }
     // A page with no transit key at all — this phone paired before the
-    // envelope existed, or its storage was cleared. The pairing code still
-    // works, but the key only ever travels on the QR, so no restore hop can
-    // fix this: say exactly what reconnects the phone instead of burning
-    // the one-shot heal on a dead end.
+    // envelope existed, its storage was cleared, or it is a fresh
+    // home-screen container (standalone storage is separate from the
+    // browser's). The pairing code still works, but the key only ever
+    // travels on the QR, so no restore hop can fix this — say what
+    // reconnects the phone instead of burning the one-shot heal on a dead
+    // end. Where this page runs matters: in a browser tab a scan reaches
+    // it; in the standalone home-screen app a scan opens the browser
+    // instead, so there the way back in is the paste path behind Link
+    // options (the address copied in Camog's Phone link dialog carries
+    // code and key alike).
     if (!LINK_KEY_BYTES) {
       $('conn').textContent = 'Camog was updated.';
       $('conn').style.color = '';
-      fail('This link is now encrypted. Scan the QR in Camog\u2019s Phone link dialog once to reconnect \u2014 after that, your saved link works as before.');
+      var standalone = window.matchMedia('(display-mode: standalone)').matches ||
+        window.navigator.standalone === true;
+      fail(standalone
+        ? 'This link is now encrypted, and scanning opens your browser, not this home-screen app. Tap Link options and paste the address copied in Camog\u2019s Phone link dialog to reconnect.'
+        : 'This link is now encrypted. Scan the QR in Camog\u2019s Phone link dialog once to reconnect \u2014 after that, your saved link works as before.');
       show($('relink'), true);
       reveal();
       return;
@@ -3189,14 +3204,18 @@ const PAGE_HTML: &str = r##"<!doctype html>
 </html>
 "##;
 
-// The link page: served to any phone the auth gate rejects. A session that
-// died with a desktop restart is healed silently by the companion page (the
-// saved pairing URL re-mints it), but a rotated or lost link used to
-// dead-end on a bare 404 with nothing to do but leave and re-scan from the
-// camera app. This page is the way back in: restore the saved link with one
-// tap, or scan the desktop's QR from here. Static and secret-free — the
-// pairing code only ever arrives through the phone's own action — so it is
-// safe to hand to unauthenticated requests.
+// The link page: served to any phone the auth gate rejects, and by name at
+// /link (the companion's Link options button). A session that died with a
+// desktop restart is healed silently by the companion page (the saved
+// pairing URL re-mints it), but a rotated or lost link used to dead-end on
+// a bare 404 with nothing to do but leave and re-scan from the camera app.
+// This page is the way back in: restore the saved link with one tap, paste
+// an address copied from the Phone link dialog (the only channel that
+// reaches a standalone home-screen container — its storage stays empty no
+// matter how often the QR is scanned, because the scan opens the browser,
+// not the installed app), or scan the desktop's QR from here. Static and
+// secret-free — the pairing code only ever arrives through the phone's own
+// action — so it is safe to hand to unauthenticated requests.
 const LINK_HTML: &str = r##"<!doctype html>
 <html lang="en">
 <head>
@@ -3267,6 +3286,12 @@ const LINK_HTML: &str = r##"<!doctype html>
   #scanbox { width: 100%; max-width: 340px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
   #scanbox video { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
   #err { color: var(--error); }
+  #paste {
+    width: 100%; max-width: 340px; min-height: 48px; padding: 13px 16px;
+    border-radius: var(--radius); border: 1px solid var(--border);
+    background: var(--card); color: var(--fg); font: inherit; font-size: 16px;
+  }
+  #paste::placeholder { color: var(--muted); }
 </style>
 </head>
 <body class="light">
@@ -3278,13 +3303,15 @@ const LINK_HTML: &str = r##"<!doctype html>
         <div class="tagline">Phone link</div>
       </div>
     </header>
-    <p id="hint">Scan the QR code shown in Camog on your computer to link this phone.</p>
+    <p id="hint">Scan the QR code shown in Camog on your computer, or paste an address copied from its Phone link dialog.</p>
     <button type="button" class="btn btn-primary" id="scan" hidden>
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
       Scan QR code
     </button>
     <div id="scanbox" hidden><video id="video" autoplay playsinline muted></video></div>
     <button type="button" class="btn btn-secondary" id="restore" hidden>Restore saved link</button>
+    <input id="paste" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste a link copied from Camog">
+    <button type="button" class="btn btn-secondary" id="paste-go">Link with pasted address</button>
     <p id="err"></p>
   </main>
 <script>
@@ -3317,7 +3344,7 @@ const LINK_HTML: &str = r##"<!doctype html>
     var code, query;
     if (m) { code = m[1].toLowerCase(); query = m[2] || ''; }
     else if (/^[0-9a-fA-F]{16}$/.test(text)) { code = text.toLowerCase(); query = ''; }
-    else { fail('That QR is not a Camog link.'); return; }
+    else { fail('That is not a Camog link.'); return; }
     try {
       localStorage.setItem(LINK_KEY, code);
       var k = /(?:^|&)k=([\w-]{43})(?:&|$)/.exec(query);
@@ -3339,6 +3366,16 @@ const LINK_HTML: &str = r##"<!doctype html>
     try { tried = sessionStorage.getItem(TRIED_KEY); } catch (e) {}
     if (!tried) go(saved);
   }
+
+  // Paste: the address copied under a QR in Camog's Phone link dialog
+  // carries code and key alike — the one channel that reaches a standalone
+  // home-screen container, whose empty storage a scanned QR can never fill
+  // (the scan opens the browser, not the installed app). A rotated pasted
+  // code just re-renders this page: copy the current address and try again.
+  $('paste-go').addEventListener('click', function () { go($('paste').value); });
+  $('paste').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') go($('paste').value);
+  });
 
   // In-page QR scan where the engine can read codes itself (Android today;
   // iOS Safari has no BarcodeDetector, so there the button stays hidden and
@@ -3382,7 +3419,7 @@ const LINK_HTML: &str = r##"<!doctype html>
         });
     });
   } else {
-    $('hint').textContent = 'Scan this server\u2019s QR code with your camera app, or restore the link if this phone linked before.';
+    $('hint').textContent = 'Scan this server\u2019s QR code with your camera app, paste a copied link, or restore the saved link.';
   }
 })();
 </script>

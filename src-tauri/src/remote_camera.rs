@@ -1237,8 +1237,8 @@ fn handle_request<R: Runtime>(
     AuthAction::Exchange { fresh } => {
       // Carry the query (the transit key ?k=… from the QR URL) into the
       // token-less root — it is how the page first learns the key. The key
-      // only ever travels in the QR and this one redirect echo; nothing
-      // else serves it.
+      // travels in the QR, this one redirect echo, and the session-gated
+      // manifest's start_url; nothing else serves it.
       let target = match url.split_once('?') {
         Some((_, query)) if !query.is_empty() => format!("/?{query}"),
         _ => "/".to_string(),
@@ -1348,7 +1348,19 @@ fn handle_request<R: Runtime>(
       Response::from_data(LOGO_PNG.to_vec()).with_header(content_type("image/png")),
     );
   } else if method == Method::Get && path == "manifest.webmanifest" {
-    respond_json(request, 200, web_manifest(&ctx.token));
+    respond_json(request, 200, web_manifest(&ctx.token, &ctx.key));
+  } else if method == Method::Get && path == "link" {
+    // The link page by name: the companion's Link options button sends the
+    // user here while the page itself cannot navigate to a rejected URL
+    // (a dead cookie already lands any other navigation on this HTML via
+    // the 404 body, but a live cookie with a keyless page needs the route).
+    // Static and secret-free, same response as the rejected path minus the
+    // status code.
+    let _ = request.respond(
+      Response::from_string(LINK_HTML)
+        .with_status_code(200)
+        .with_header(content_type("text/html; charset=utf-8")),
+    );
   } else if method == Method::Get && path == "hello" {
     // Phone page pings on load so the desktop knows pairing succeeded. A
     // page that cannot prove it holds the transit key (a cached page from
@@ -1728,16 +1740,26 @@ const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
 // icon — old or new — opens through the one-time exchange: a live cookie is
 // reused, a dead one (desktop restart, idle auto-close, eviction) is
 // re-minted on the spot. The code therefore crosses the wire once per app
-// open, never per request. Scope "./" resolves to / where the manifest is
-// served. Android uses this; iOS home-screen icons come from the
-// apple-touch-icon link in the page head (and engines that save the current
-// page URL instead of start_url land on /, where a dead cookie shows the
-// re-scan message — the documented trade-off).
+// open, never per request. The transit key rides the start_url too: a
+// standalone home-screen container starts with storage empty (it never
+// shares it with the browser), so an icon minted without the ?k= value
+// boots keyless and the server's dead-pairing 404 renders forever — and
+// re-scanning cannot fix it, because a scanned QR opens the browser, never
+// the installed icon. With the key baked into the start URL the fresh
+// container runs the exchange on first open and persists the key itself.
+// The manifest stays session-gated, so the key still only reaches a phone
+// that holds a live session — the same credential class the exchange's 303
+// echo serves. Scope "./" resolves to / where the manifest is served.
+// Android uses this; iOS home-screen icons come from the apple-touch-icon
+// link in the page head (and engines that save the current page URL instead
+// of start_url land wherever the add happened — keyed if the page was
+// paired, otherwise healed by the link page's paste path).
 // ponytail: single 256px "any" icon — a dedicated maskable PNG would avoid
 // launcher cropping but we ship only the one logo asset.
-fn web_manifest(token: &str) -> String {
+fn web_manifest(token: &str, key: &[u8; 32]) -> String {
   format!(
-    r##"{{"name":"Camog · Clinical Photos","short_name":"Camog","start_url":"/t/{token}/","scope":"./","display":"standalone","background_color":"#f4f4f5","theme_color":"#f4f4f5","icons":[{{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}}]}}"##
+    r##"{{"name":"Camog · Clinical Photos","short_name":"Camog","start_url":"/t/{token}/?k={}","scope":"./","display":"standalone","background_color":"#f4f4f5","theme_color":"#f4f4f5","icons":[{{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}}]}}"##,
+    link_key_param(key)
   )
 }
 
@@ -2125,11 +2147,18 @@ mod tests {
     assert!(LINK_HTML.contains("BarcodeDetector"));
     assert!(LINK_HTML.contains("'/t/' + code + '/'"));
     assert!(LINK_HTML.contains("camog-link-tried"));
+    // The paste path: the only reconnect that reaches a standalone
+    // home-screen container (a scan opens the browser, never the icon).
+    assert!(LINK_HTML.contains(r#"id="paste""#));
+    assert!(LINK_HTML.contains(r#"id="paste-go""#));
     // The companion page's half of the handshake.
     assert!(PAGE_HTML.contains("fetch('link-code')"));
     assert!(PAGE_HTML.contains("rememberLink"));
     assert!(PAGE_HTML.contains("location.href = '/t/' + code + '/';"));
     assert!(PAGE_HTML.contains(r#"id="relink""#));
+    // Link options actually goes somewhere: the /link route serves the same
+    // page by name for pages that still hold a live cookie.
+    assert!(PAGE_HTML.contains("location.href = 'link';"));
   }
 
   // Trust boundary: only plain UUID-derived names may reach the filesystem.
@@ -3222,8 +3251,10 @@ mod tests {
     assert!(PAGE_HTML.contains(r##"<meta name="apple-mobile-web-app-capable" content="yes">"##));
     assert!(PAGE_HTML.contains(r##"<body class="light">"##));
     assert!(PAGE_HTML.contains(r##"localStorage.getItem(THEME_KEY) !== 'dark'"##));
-    let manifest = web_manifest("0123456789abcdef");
-    assert!(manifest.contains(r##""start_url":"/t/0123456789abcdef/""##));
+    let manifest = web_manifest("0123456789abcdef", &[0x42u8; 32]);
+    assert!(manifest.contains(
+      r##""start_url":"/t/0123456789abcdef/?k=QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI""##
+    ));
     assert!(manifest.contains(r##""icons":[{"src":"logo.png","sizes":"256x256","type":"image/png","purpose":"any"}]"##));
     assert!(manifest.contains(r##""display":"standalone""##));
   }
