@@ -161,7 +161,7 @@ const LICENCE_EMAIL_TEMPLATE = `<!doctype html>
               <td style="background:#36494e;padding:24px 36px;">
                 <table role="presentation" cellpadding="0" cellspacing="0">
                   <tr>
-                    <td style="padding-right:14px;"><img src="cid:cliniciq-logo" alt="ClinicIQ Solutions" width="44" height="44" style="display:block;border:0;" /></td>
+                    <td style="padding-right:14px;"><img src="cid:cliniciq-logo" alt="ClinicIQ Solutions" width="44" height="44" style="display:block;border:0;outline:none;width:44px;height:44px;" /></td>
                     <td>
                       <div style="font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:17px;font-weight:700;letter-spacing:-0.01em;color:#ffffff;">{{vendor}}</div>
                       <div style="margin-top:3px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12.5px;color:#a9cef4;">Licence delivery</div>
