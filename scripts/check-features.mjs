@@ -102,8 +102,8 @@ check(
   (read('lib/services/patient-service.ts').match(/await ensureWritable/g) || []).length === 7,
 );
 check(
-  'photo-service guards all 6 mutations',
-  (read('lib/services/photo-service.ts').match(/await ensureWritable/g) || []).length === 6,
+  'photo-service guards all 7 mutations',
+  (read('lib/services/photo-service.ts').match(/await ensureWritable/g) || []).length === 7,
 );
 
 // 9. Shipped legal docs (public/legal + the activation server's copies) must
