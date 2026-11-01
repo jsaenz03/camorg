@@ -24,6 +24,7 @@ import { BodyMapPicker } from '@/components/patient/body-map-picker';
 import { DobInput } from '@/components/patient/dob-input';
 import { ClinicalNotesField } from '@/components/photo/clinical-notes-field';
 import { SubpartInput } from '@/components/photo/subpart-suggestions';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -189,8 +190,17 @@ export function PhotoMetadataForm({
         {/* Fields scroll on their own; the action bar below stays pinned
             (same pattern as the photo detail dialog), so Save stays
             reachable mid-scroll in the capture dialog. In an unconstrained
-            container the region simply grows — no scrollbar appears. */}
-        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto">
+            container the region simply grows — no scrollbar appears.
+            ScrollArea draws its bar as an overlay: a native scrollbar would
+            steal ~15px of pane width and squish the fields each time it
+            appeared (classic scrollbars on Windows). */}
+        <ScrollArea className="min-h-0 flex-1">
+          {/* px-4 keeps the boxes clear of the scroll region's clip edges:
+              a focused input's ring paints 3px outside its box and the
+              viewport clips at x=0, so the left needs the same room as the
+              right — where the padding also keeps the 10px overlay bar off
+              the boxes. */}
+          <div className="space-y-6 px-4">
         {/* Patient Name */}
         <FormField
           control={form.control}
@@ -418,7 +428,8 @@ export function PhotoMetadataForm({
             </FormItem>
           )}
         />
-        </div>
+          </div>
+        </ScrollArea>
 
         {/* Actions */}
         <div className="flex shrink-0 justify-end gap-3 border-t pt-4">

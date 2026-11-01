@@ -28,6 +28,7 @@ import { toast } from 'sonner';
 import { useLicence } from '@/lib/licence/licence-context';
 import { CameraCapture } from '@/components/camera/camera-capture';
 import { PhotoMetadataForm, type PhotoMetadataFormValues } from '@/components/photo/photo-metadata-form';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { setCaptureScreenActive } from '@/components/companion/companion-provider';
 import type {
   CapturedPhoto,
@@ -829,8 +830,10 @@ function CaptureFlow({
           height, scrolling internally with its action bar pinned. */}
       <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-6 @3xl:grid-cols-2 @3xl:grid-rows-1">
         {/* Left: Camera or Captured Photo (scrolls only if its card outgrows
-            the space, e.g. a very short window). */}
-        <div className="min-h-0 overflow-y-auto">
+            the space, e.g. a very short window). ScrollArea draws its bar as
+            an overlay — a native scrollbar would narrow this column whenever
+            it appeared, independently of the form's, shifting the gutter. */}
+        <ScrollArea className="min-h-0">
           {!capturedPhoto ? (
             <CameraCapture onPhotoCaptured={handlePhotoCaptured} />
           ) : (
@@ -867,7 +870,7 @@ function CaptureFlow({
               </CardContent>
             </Card>
           )}
-        </div>
+        </ScrollArea>
 
         {/* Right: Metadata Form — the card fills the column so the form's
             own scroll region and pinned action bar (see PhotoMetadataForm)
