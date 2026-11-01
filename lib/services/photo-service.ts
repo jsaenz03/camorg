@@ -730,6 +730,63 @@ export class PhotoService implements IPhotoService {
   }
 
   /**
+   * Moves a photo to another patient — for the misfiled-capture case. Both
+   * the current and the destination patient must be manageable by the current
+   * clinician (admin or owner), the same guard as every other photo mutation:
+   * a share-viewer can't file photos into a record they can only read. The
+   * encrypted bytes stay put — filenames are patient-agnostic UUIDs — so
+   * this is a pure database update.
+   */
+  async movePhoto(id: string, newPatientId: string): Promise<PhotoRecord> {
+    await ensureWritable();
+    const db = await getDB();
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM photos WHERE id = $1',
+      [id]
+    );
+    if (!rows.length) throw new NotFoundError(`Photo not found: ${id}`);
+    const photo = rowToPhoto(rows[0]);
+    if (photo.patientId === newPatientId) return photo;
+    await accessService.assertCanManagePatient(photo.patientId);
+    await accessService.assertCanManagePatient(newPatientId);
+
+    // Names for the audit trail; also a hard existence check on the
+    // destination (getPatientById is access-filtered).
+    const target = await patientService.getPatientById(newPatientId);
+    if (!target) throw new NotFoundError(`Patient not found: ${newPatientId}`);
+    const source = await patientService.getPatientById(photo.patientId);
+
+    const nowMs = Date.now();
+    // Lesion series are patient-scoped — a moved photo would otherwise sit
+    // in a series invisible under its new patient. Review state and the
+    // body-map pin travel with the photo.
+    await db.execute(
+      `UPDATE photos SET patient_id = $1, lesion_group = NULL, updated_at = $2 WHERE id = $3`,
+      [newPatientId, nowMs, id]
+    );
+    // Result files copy the photo's patient_id (denormalised at insert) —
+    // keep every row consistent, soft-deleted included.
+    await db.execute(
+      `UPDATE result_files SET patient_id = $1, updated_at = $2 WHERE photo_id = $3`,
+      [newPatientId, nowMs, id]
+    );
+
+    await patientService.recountPhotos(photo.patientId);
+    await patientService.recountPhotos(newPatientId);
+    void auditService.record('photo.move', {
+      entityType: 'photo',
+      entityId: id,
+      patientId: newPatientId,
+      patientName: target.name,
+      detail: `Moved from ${source?.name ?? photo.patientId} to ${target.name}`,
+    });
+
+    notifyAttentionChanged();
+
+    return { ...photo, patientId: newPatientId, lesionGroup: null, updatedAt: new Date(nowMs) };
+  }
+
+  /**
    * Searches photos by clinical notes keyword. Only returns photos the current
    * clinician can see (parent patient is owned / shared / org-wide, or admin).
    */

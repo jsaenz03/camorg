@@ -23,6 +23,7 @@ import {
   ArchiveRestore,
   CalendarCheck,
   Camera,
+  FolderInput,
   Link2,
   Loader2,
   PenLine,
@@ -52,6 +53,7 @@ import { PhotoViewer } from './photo-viewer';
 import { ResultFilesSection } from './result-files-section';
 import { ClinicalNotesField } from './clinical-notes-field';
 import { SubpartInput } from './subpart-suggestions';
+import { PhotoMoveDialog } from './photo-move-dialog';
 import { BodyMapBadge } from '@/components/patient/body-map-badge';
 import { BodyMapPicker, PinMarker } from '@/components/patient/body-map-picker';
 import { PartDetailDiagram, hasPartDetail } from '@/components/patient/part-detail-diagram';
@@ -132,6 +134,7 @@ export function PhotoDetailDialog({
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const { reviewWarningDays } = useBranding();
   const { clinician } = useAuth();
 
@@ -735,35 +738,48 @@ export function PhotoDetailDialog({
               </p>
             )}
             <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
-              {photo.isDeleted ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleRestore}
-                  disabled={isSaving || isRestoring}
-                >
-                  {isRestoring ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <ArchiveRestore className="size-4" />
-                  )}
-                  Restore photo
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={handleDelete}
-                  disabled={isSaving || isDeleting}
-                >
-                  {isDeleting ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="size-4" />
-                  )}
-                  {confirmDelete ? 'Confirm delete' : 'Delete'}
-                </Button>
-              )}
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {photo.isDeleted ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleRestore}
+                    disabled={isSaving || isRestoring}
+                  >
+                    {isRestoring ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <ArchiveRestore className="size-4" />
+                    )}
+                    Restore photo
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={handleDelete}
+                      disabled={isSaving || isDeleting}
+                    >
+                      {isDeleting ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-4" />
+                      )}
+                      {confirmDelete ? 'Confirm delete' : 'Delete'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setMoveOpen(true)}
+                      disabled={isSaving || isDeleting}
+                    >
+                      <FolderInput className="size-4" />
+                      Move
+                    </Button>
+                  </>
+                )}
+              </div>
               <Button
                 type="submit"
                 form="photo-detail-form"
@@ -780,6 +796,20 @@ export function PhotoDetailDialog({
           </div>
           </form>
         </div>
+        {photo && (
+          <PhotoMoveDialog
+            photo={photo}
+            open={moveOpen}
+            onOpenChange={setMoveOpen}
+            onMoved={() => {
+              // The photo left this patient's record — close the detail view;
+              // galleries refresh on the attention event the service fires.
+              setMoveOpen(false);
+              onChanged();
+              onOpenChange(false);
+            }}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
