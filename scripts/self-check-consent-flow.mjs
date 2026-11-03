@@ -120,7 +120,7 @@ assert.match(specSrc, /pointer-events/, 'spec asserts the scroll lock releases')
 
 assert.match(
   uploadSrc,
-  /consentStatus\(patient\) !== 'valid'/,
+  /consentStatus\(owner\) !== 'valid'/,
   'upload checks consent after the batch',
 );
 assert.match(uploadSrc, /setIsConsentOpen\(true\)/, 'upload opens the dialog');

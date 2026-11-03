@@ -130,7 +130,7 @@ export function PatientList({ patients, isLoading, error, onSearch, dueByPatient
           description={
             searchTerm
               ? `No patients match "${searchTerm}"`
-              : 'Patients will appear here after capturing your first photo'
+              : 'Add a patient above, or capture their first photo, to start a file.'
           }
         />
       </div>

@@ -234,8 +234,11 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
+      {/* Bounded column (the capture and upload dialogs' pattern): the
+          header and footer stay put while the phase content scrolls between
+          them — the Import button never leaves the window on short screens. */}
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden p-4 sm:max-w-lg sm:p-6">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle className="flex items-center gap-2">
             <Upload className="size-4 text-primary" />
             Import photos
@@ -246,6 +249,15 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
           </DialogDescription>
         </DialogHeader>
 
+        {/* The phase panes scroll as one region. One minmax(0,1fr) grid row
+            makes the scroll region's height definite — a plain flex-1 child
+            of a max-height-clamped column leaves the viewport's h-full
+            indefinite and the pane clips without a scrollbar (the capture
+            dialog's grid uses the same mechanism). px-4 keeps focused
+            controls' rings clear of the scroll region's clip edges. */}
+        <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)]">
+          <ScrollArea className="min-h-0">
+            <div className="px-4">
         {phase === 'setup' && (
           <div className="space-y-4">
             <div className="space-y-2">
@@ -405,7 +417,11 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
           </div>
         )}
 
-        <DialogFooter>
+            </div>
+          </ScrollArea>
+        </div>
+
+        <DialogFooter className="shrink-0 border-t pt-4">
           {phase === 'setup' && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>

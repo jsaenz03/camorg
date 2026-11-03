@@ -10,20 +10,28 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { UserPlus } from 'lucide-react';
 import { PatientList } from '@/components/patient/patient-list';
+import { AddPatientDialog } from '@/components/patient/add-patient-dialog';
+import { PhotoUpload } from '@/components/photo/photo-upload';
 import { PageHeader } from '@/components/page-header';
 import { usePatients } from '@/lib/hooks/use-patients';
 import { useBranding } from '@/components/branding-boot';
 import { photoService } from '@/lib/services/photo-service';
 import { photoReviewStatus } from '@/lib/utils/photo-review';
 import { ATTENTION_CHANGED_EVENT } from '@/lib/services/attention-events';
+import type { Patient } from '@/types/patient';
 import type { DueReviewCounts } from '@/components/patient/photo-review-due-badge';
+import { Button } from '@/components/ui/button';
 
 export default function PatientsPage() {
-  const { patients, isLoading, error, search } = usePatients({
+  const router = useRouter();
+  const { patients, isLoading, error, search, refresh } = usePatients({
     includeArchived: false,
   });
   const { reviewWarningDays } = useBranding();
+  const [isAddOpen, setIsAddOpen] = useState(false);
   const [dueByPatient, setDueByPatient] = useState<Map<string, DueReviewCounts>>(
     () => new Map(),
   );
@@ -76,11 +84,35 @@ export default function PatientsPage() {
     [search]
   );
 
+  // A new patient is created from the header dialog; open their file so the
+  // next step (consent, capture or upload) is one click away.
+  const handlePatientCreated = useCallback(
+    (patient: Patient) => {
+      router.push(`/patients/view?id=${patient.id}`);
+    },
+    [router]
+  );
+
+  // Uploads can create the patient too — refresh so a new row appears at the
+  // top (most recent photo activity) without leaving the list.
+  const handleUploadSaved = useCallback(() => {
+    void refresh();
+  }, [refresh]);
+
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-10">
       <PageHeader
         title="Patients"
         description="Search and review patient photo timelines."
+        actions={
+          <>
+            <PhotoUpload label="Upload photos" onSaved={handleUploadSaved} />
+            <Button onClick={() => setIsAddOpen(true)}>
+              <UserPlus className="size-4" />
+              Add patient
+            </Button>
+          </>
+        }
       />
 
       <PatientList
@@ -89,6 +121,12 @@ export default function PatientsPage() {
         error={error}
         onSearch={handleSearch}
         dueByPatient={dueByPatient}
+      />
+
+      <AddPatientDialog
+        open={isAddOpen}
+        onOpenChange={setIsAddOpen}
+        onCreated={handlePatientCreated}
       />
     </div>
   );

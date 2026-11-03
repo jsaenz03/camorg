@@ -4,12 +4,14 @@
  * lib/photo/import-utils.ts (Node's type stripping loads the .ts directly,
  * so no mirror drift is possible) and asserts the trust-boundary rules:
  * extension allow-list, 20MB cap, future/invalid date clamps, and
- * skip-if-already-imported partitioning.
+ * skip-if-already-imported partitioning. Also pins the import dialog's
+ * bounded-column layout (pinned header/footer, scrolling panes).
  *
  * Run: node scripts/self-check-photo-import.mjs
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   IMPORT_MAX_BYTES,
   baseName,
@@ -85,4 +87,26 @@ assert.equal(
   'future custom date clamps',
 );
 
-console.log('photo-import self-check passed (6 rule groups).');
+// 7. The import dialog is a bounded column: header and footer pinned, the
+//    phase panes scroll between them. The scroll region sits in a
+//    minmax(0,1fr) grid row — a plain flex-1 child of a max-height-clamped
+//    dialog leaves the ScrollArea viewport's h-full indefinite, and the pane
+//    then clips its content without ever showing a scrollbar.
+const dialogSrc = readFileSync(new URL('../components/photo/import-photos-dialog.tsx', import.meta.url), 'utf8');
+assert.match(
+  dialogSrc,
+  /DialogContent className="flex max-h-\[95dvh\] flex-col overflow-hidden/,
+  'import dialog is height-bounded',
+);
+assert.match(
+  dialogSrc,
+  /grid min-h-0 flex-1 grid-rows-\[minmax\(0,1fr\)\]/,
+  'phase panes scroll inside a definite-height region',
+);
+assert.match(
+  dialogSrc,
+  /<DialogFooter className="shrink-0 border-t pt-4">/,
+  'footer stays pinned below the scroll region',
+);
+
+console.log('photo-import self-check passed (7 rule groups).');
