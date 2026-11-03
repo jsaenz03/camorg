@@ -8,7 +8,7 @@
  * bento grid of all photos. Clicking a photo opens the detail dialog.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Images, FilterX, Camera, Upload } from 'lucide-react';
 import { useAllPhotos } from '@/lib/hooks/use-all-photos';
 import { usePatients } from '@/lib/hooks/use-patients';
@@ -46,6 +46,10 @@ export default function PhotosPage() {
   const [activePhoto, setActivePhoto] = useState<PhotoRecord | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // ⌘/Ctrl multi-select feeding drag-the-selection linking (same as the
+  // patient timeline). Resolved against the rendered page so photos that
+  // scroll out via pagination drop out of the carry.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   // Filters run server-side (SQL) with the access scope, so the grid shows
   // the true filtered set instead of a client-side subset of the newest 500.
@@ -81,6 +85,32 @@ export default function PhotosPage() {
     setBodyPart('all');
     setPatientId('all');
     setAttachments('any');
+  }
+
+  const selection = useMemo(
+    () => photos.filter((p) => selectedIds.has(p.id)),
+    [photos, selectedIds],
+  );
+
+  // Escape deselects — the manual way out of a half-built link drop. An
+  // Escape already consumed by an open dialog (defaultPrevented) leaves the
+  // selection alone.
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) setSelectedIds(new Set());
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedIds.size]);
+
+  function toggleSelected(id: string, selected: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (selected) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   }
 
   function handlePhotoClick(photo: PhotoRecord) {
@@ -281,7 +311,19 @@ export default function PhotosPage() {
             />
           ) : (
             <>
-              <PhotoBento photos={photos} onPhotoClick={handlePhotoClick} />
+              <PhotoBento
+                photos={photos}
+                onPhotoClick={handlePhotoClick}
+                selection={selection}
+                onSelectionChange={(photo, selected) => toggleSelected(photo.id, selected)}
+                onSaved={() => setSelectedIds(new Set())}
+              />
+              {photos.length > 1 && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Tip: ⌘-click (Ctrl on Windows) photos to select several, then drag one onto
+                  another to link them all as one series.
+                </p>
+              )}
               {hasMore && (
                 <div className="mt-6 flex justify-center">
                   <Button variant="outline" onClick={loadMore} disabled={isLoading}>

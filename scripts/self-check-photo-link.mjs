@@ -6,8 +6,12 @@
 //  - self-drops, cross-patient drops and deleted photos are refused;
 //  - the target's series wins, else the dragged photo's, else no name yet;
 //  - only photos not already in the resolved series are updated;
+//  - a dragged ⌘/Ctrl selection files every tile into the target's series
+//    all-or-nothing (resolveMultiLink) — and when the selection's linkage
+//    matches the target's series, it unlinks them all instead;
 //  - a drop within the same series unlinks the dragged photo instead, and
-//    resolveUnlinkScope dissolves a series that would be left with one member;
+//    resolveUnlinkScope dissolves a series that would be left with one member
+//    (single photo or several leaving at once);
 //  - a photo saved without a body part inherits the other's part when the
 //    two are linked, whichever way the drop went (bilateral side included)
 //    — resolveLinkInheritance / resolveLinkInheritancePair.
@@ -18,6 +22,7 @@ import { readFileSync } from 'node:fs';
 import {
   resolveLinkInheritance,
   resolveLinkInheritancePair,
+  resolveMultiLink,
   resolvePhotoLink,
   resolveUnlinkScope,
 } from '../lib/utils/photo-link.ts';
@@ -101,6 +106,95 @@ assert.deepEqual(resolvePhotoLink(photo({ id: 'a' }), photo({ id: 'b' })), {
   photoIds: ['a', 'b'],
 });
 
+// ---- multi-link resolution (a dragged ⌘/Ctrl selection) ----
+
+// All-or-nothing: one cross-patient photo refuses the whole drop, and no
+// source may be soft-deleted. Multi-drag never unlinks, so there is no
+// unlink variant to pin here.
+assert.deepEqual(
+  resolveMultiLink(
+    [photo({ id: 'a' }), photo({ id: 'b', patientId: 'patient-2' })],
+    photo({ id: 'c' }),
+  ),
+  { ok: false, reason: 'cross-patient' },
+);
+assert.deepEqual(
+  resolveMultiLink([photo({ id: 'a' }), photo({ id: 'b', isDeleted: true })], photo({ id: 'c' })),
+  { ok: false, reason: 'deleted' },
+);
+assert.deepEqual(
+  resolveMultiLink([photo({ id: 'a' })], photo({ id: 'c', isDeleted: true })),
+  { ok: false, reason: 'deleted' },
+);
+
+// The target's series wins even when the sources share another one: every
+// source moves in, and the target (already there) is not updated.
+assert.deepEqual(
+  resolveMultiLink(
+    [photo({ id: 'a', lesionGroup: 'Series A' }), photo({ id: 'b', lesionGroup: 'Series A' })],
+    photo({ id: 'c', lesionGroup: 'Series B' }),
+  ),
+  { ok: true, action: 'link', seriesName: 'Series B', photoIds: ['a', 'b'] },
+);
+
+// No target series but the sources share one: the target joins theirs.
+assert.deepEqual(
+  resolveMultiLink(
+    [photo({ id: 'a', lesionGroup: 'Series A' }), photo({ id: 'b', lesionGroup: 'Series A' })],
+    photo({ id: 'c' }),
+  ),
+  { ok: true, action: 'link', seriesName: 'Series A', photoIds: ['c'] },
+);
+
+// Mixed source series and no target name: the plan carries no name — the
+// caller (link dialog) supplies one — and every photo including the target
+// is updated.
+assert.deepEqual(
+  resolveMultiLink(
+    [photo({ id: 'a', lesionGroup: 'Series A' }), photo({ id: 'b', lesionGroup: 'Series B' })],
+    photo({ id: 'c' }),
+  ),
+  { ok: true, action: 'link', seriesName: null, photoIds: ['c', 'a', 'b'] },
+);
+
+// Dropping a selection onto one of its own tiles is a normal drop — the
+// duplicated photo appears once in the update list.
+assert.deepEqual(
+  resolveMultiLink(
+    [photo({ id: 'a' }), photo({ id: 'b', lesionGroup: 'Series B' })],
+    photo({ id: 'b', lesionGroup: 'Series B' }),
+  ),
+  { ok: true, action: 'link', seriesName: 'Series B', photoIds: ['a'] },
+);
+
+// Photos already in the resolved series are skipped (the partial match is a
+// link of the stragglers, never an unlink).
+assert.deepEqual(
+  resolveMultiLink(
+    [photo({ id: 'a', lesionGroup: 'Series A' }), photo({ id: 'b' })],
+    photo({ id: 'c', lesionGroup: 'Series A' }),
+  ),
+  { ok: true, action: 'link', seriesName: 'Series A', photoIds: ['b'] },
+);
+
+// The plural unlink: the selection dropped on a tile of its own series —
+// linkage must match (every source in the target's series) to allow it.
+assert.deepEqual(
+  resolveMultiLink(
+    [photo({ id: 'a', lesionGroup: 'Series A' }), photo({ id: 'b', lesionGroup: 'Series A' })],
+    photo({ id: 'c', lesionGroup: 'Series A' }),
+  ),
+  { ok: true, action: 'unlink', seriesName: 'Series A', photoIds: ['a', 'b'] },
+);
+// The same but dropped onto one of the selection's own tiles.
+assert.deepEqual(
+  resolveMultiLink(
+    [photo({ id: 'a', lesionGroup: 'Series A' }), photo({ id: 'b', lesionGroup: 'Series A' })],
+    photo({ id: 'b', lesionGroup: 'Series A' }),
+  ),
+  { ok: true, action: 'unlink', seriesName: 'Series A', photoIds: ['a', 'b'] },
+);
+
 // ---- unlink resolution ----
 
 // Dropping a photo onto another tile from its own series unlinks the dragged
@@ -115,20 +209,33 @@ assert.deepEqual(
 
 // resolveUnlinkScope: with one other member left the series would be a name
 // with nothing linked to it — the drop dissolves it (both photos cleared).
-assert.deepEqual(resolveUnlinkScope(['a', 'b'], 'a'), {
+assert.deepEqual(resolveUnlinkScope(['a', 'b'], ['a']), {
   photoIds: ['a', 'b'],
   dissolve: true,
 });
 
 // A lone "series" (data oddity) dissolves too: only the member itself clears.
-assert.deepEqual(resolveUnlinkScope(['a'], 'a'), {
+assert.deepEqual(resolveUnlinkScope(['a'], ['a']), {
   photoIds: ['a'],
   dissolve: true,
 });
 
 // Three or more members: only the dragged photo leaves; the rest stay linked.
-assert.deepEqual(resolveUnlinkScope(['a', 'b', 'c'], 'a'), {
+assert.deepEqual(resolveUnlinkScope(['a', 'b', 'c'], ['a']), {
   photoIds: ['a'],
+  dissolve: false,
+});
+
+// Plural unlink: two of three leave — a single member would remain, so the
+// series dissolves with them.
+assert.deepEqual(resolveUnlinkScope(['a', 'b', 'c'], ['a', 'b']), {
+  photoIds: ['a', 'b', 'c'],
+  dissolve: true,
+});
+
+// Plural unlink with room to spare: only the leavers go.
+assert.deepEqual(resolveUnlinkScope(['a', 'b', 'c', 'd'], ['a', 'b']), {
+  photoIds: ['a', 'b'],
   dissolve: false,
 });
 

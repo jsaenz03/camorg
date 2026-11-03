@@ -8,7 +8,7 @@
 
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { Images, FilterX, Calendar as CalendarIcon } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
@@ -47,6 +47,10 @@ export function PhotoTimeline({
   const [seriesFilter, setSeriesFilter] = useState<string | 'all'>('all');
   const [attachmentsFilter, setAttachmentsFilter] = useState<'all' | 'with' | 'without'>('all');
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
+  // ⌘/Ctrl multi-select feeding drag-the-selection linking. Held as ids;
+  // resolved against the filtered set so filtered-out tiles drop out of the
+  // carry instead of silently linking from another filter's context.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   // Lesion series present in the (already access-filtered) photo set.
   const seriesOptions = useMemo(
@@ -71,6 +75,32 @@ export function PhotoTimeline({
       return true;
     });
   }, [photos, bodyPartFilter, seriesFilter, attachmentsFilter, selectedDate]);
+
+  const selection = useMemo(
+    () => filteredPhotos.filter((p) => selectedIds.has(p.id)),
+    [filteredPhotos, selectedIds],
+  );
+
+  // Escape deselects — the manual way out of a half-built link drop. An
+  // Escape already consumed by an open dialog (defaultPrevented) leaves the
+  // selection alone.
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) setSelectedIds(new Set());
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedIds.size]);
+
+  function toggleSelected(photoId: string, selected: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (selected) next.add(photoId);
+      else next.delete(photoId);
+      return next;
+    });
+  }
 
   if (photos.length === 0) {
     return (
@@ -141,7 +171,19 @@ export function PhotoTimeline({
           count={filteredPhotos.length}
         />
       )}
-      <PhotoBento photos={filteredPhotos} onPhotoClick={onPhotoClick} />
+      <PhotoBento
+        photos={filteredPhotos}
+        onPhotoClick={onPhotoClick}
+        selection={selection}
+        onSelectionChange={(photo, selected) => toggleSelected(photo.id, selected)}
+        onSaved={() => setSelectedIds(new Set())}
+      />
+      {filteredPhotos.length > 1 && (
+        <p className="text-xs text-muted-foreground">
+          Tip: ⌘-click (Ctrl on Windows) photos to select several, then drag one onto another to
+          link them all as one series.
+        </p>
+      )}
     </div>
   );
 }

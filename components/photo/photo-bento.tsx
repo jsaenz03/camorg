@@ -18,6 +18,15 @@ import { PhotoCard } from './photo-card';
 interface PhotoBentoProps {
   photos: PhotoRecord[];
   onPhotoClick?: (photo: PhotoRecord) => void;
+  /**
+   * Multi-select (⌘/Ctrl-click) for drag-the-selection linking: the selected
+   * subset of `photos`, plus the toggle callback. Derive the subset from the
+   * photos actually rendered so filtered-out tiles drop out of the carry.
+   */
+  selection?: PhotoRecord[];
+  onSelectionChange?: (photo: PhotoRecord, selected: boolean) => void;
+  /** Fired after a link or unlink saves from a drag that started on a selected tile. */
+  onSaved?: () => void;
   /** Index of the tile to feature (2×2). Defaults to 0 (newest). Set to -1 to disable. */
   featuredIndex?: number;
   className?: string;
@@ -26,10 +35,15 @@ interface PhotoBentoProps {
 export function PhotoBento({
   photos,
   onPhotoClick,
+  selection,
+  onSelectionChange,
+  onSaved,
   featuredIndex = 0,
   className,
 }: PhotoBentoProps) {
   if (photos.length === 0) return null;
+
+  const selectedIds = selection && selection.length > 0 ? new Set(selection.map((p) => p.id)) : null;
 
   return (
     <div
@@ -45,6 +59,12 @@ export function PhotoBento({
             key={photo.id}
             photo={photo}
             onClick={() => onPhotoClick?.(photo)}
+            isSelected={selectedIds?.has(photo.id) ?? false}
+            selection={selection}
+            onSelectionChange={
+              onSelectionChange ? (selected) => onSelectionChange(photo, selected) : undefined
+            }
+            onSaved={onSaved}
             fillContainer
             className={cn(
               'h-full',

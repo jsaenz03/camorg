@@ -1,14 +1,19 @@
 /**
  * PhotoLinkDialog
  *
- * Confirmation for drag-to-link and drag-to-unlink. Dropping one photo tile
- * onto another opens this with both thumbnails:
+ * Confirmation for drag-to-link and drag-to-unlink. Dropping photo tile(s)
+ * onto another opens this with the thumbnails:
  *  - different series (or either photo unlinked): the resolved series name is
  *    editable, with the patient's existing series as chips — the same
  *    vocabulary as the detail dialog's series field;
  *  - same series: the drop unlinks the dragged photo instead — the dialog
  *    shows what leaves, and dissolves a series that would be left with a
  *    single member (resolveUnlinkScope).
+ * A carried ⌘/Ctrl selection (sources.length > 1) links or unlinks as one:
+ * every source files into the resolved series — a part-less source takes the
+ * drop target's location, sources never donate to it — unless the linkage
+ * matches (all sources in the target's series), when the drop pulls the
+ * whole selection back out (resolveUnlinkScope may dissolve the series).
  * Save flows through photoService.updatePhoto; the attention event that
  * update fires already refreshes every open gallery, so no onChanged plumbing
  * is needed.
@@ -23,6 +28,7 @@ import type { PhotoRecord } from '@/types/photo';
 import { bodyPartDisplayLabel } from '@/types/body-part';
 import { normalizeLesionGroup, reviewSeriesName } from '@/lib/utils/lesion-group';
 import {
+  resolveLinkInheritance,
   resolveLinkInheritancePair,
   resolveUnlinkScope,
   type PhotoLinkPlan,
@@ -41,14 +47,31 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 
 interface PhotoLinkDialogProps {
-  source: PhotoRecord | null;
+  /** The dragged photo(s) — a carried selection leads with the grabbed tile. */
+  sources: PhotoRecord[];
   target: PhotoRecord | null;
   plan: PhotoLinkPlan | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Fired after a link or unlink save succeeds (not on cancel). The gallery
+   * uses it to clear the selection that fed the drop.
+   */
+  onSaved?: () => void;
 }
 
-export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: PhotoLinkDialogProps) {
+export function PhotoLinkDialog({
+  sources,
+  target,
+  plan,
+  open,
+  onOpenChange,
+  onSaved,
+}: PhotoLinkDialogProps) {
+  // Single-drag semantics (prefill, chips, unlink scope) read the grabbed
+  // tile; a selection only ever links, which needs the whole list.
+  const source = sources[0] ?? null;
+  const multi = sources.length > 1;
   const [seriesInput, setSeriesInput] = useState('');
   const [existingGroups, setExistingGroups] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -102,7 +125,9 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
       .then((members) => {
         if (!mounted) return;
         setMemberCount(members.length);
-        setScope(resolveUnlinkScope(members.map((m) => m.id), source.id));
+        // The leaving set is the plan's photoIds — the dragged photo alone,
+        // or the whole carried selection.
+        setScope(resolveUnlinkScope(members.map((m) => m.id), plan.photoIds));
       })
       .catch(() => {
         if (mounted) {
@@ -122,18 +147,33 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
   // Dragging between two different series only moves the dragged photo.
   const movingBetweenSeries =
     !!source.lesionGroup && !!target.lesionGroup && source.lesionGroup !== target.lesionGroup;
-  // Whichever photo lacks a body part takes the other's — the drop goes
-  // either way (a part-less snap filed under the photo that has one, or that
-  // photo dropped onto the part-less one).
-  const inheritances = unlinking ? null : resolveLinkInheritancePair(source, target);
+  // Whichever photo lacks a body part takes the other's — the single drop
+  // goes either way (a part-less snap filed under the photo that has one, or
+  // that photo dropped onto the part-less one). A carried selection is one
+  // way only: part-less sources take the target's location, never the
+  // reverse.
+  const inheritances = unlinking || multi ? null : resolveLinkInheritancePair(source, target);
   const inherited = inheritances?.source ?? inheritances?.target ?? null;
   // "Left hand — knuckle" for the hint and toast.
   const inheritedLabel = inherited
     ? `${bodyPartDisplayLabel(inherited.bodyPart, inherited.laterality)}${inherited.subpart ? ` — ${inherited.subpart}` : ''}`
     : null;
+  // Per-source location patches: the pair's dragged-photo side for a single
+  // drop, each part-less source against the target for a selection.
+  const sourcePatchById = new Map(
+    sources.flatMap((s) => {
+      const patch = multi
+        ? resolveLinkInheritance(s, target)
+        : (inheritances?.source ?? null);
+      return patch ? [[s.id, patch] as const] : [];
+    }),
+  );
+  // Multi hint: what part-less sources take, e.g. "Left hand — knuckle".
+  const targetLabel = multi && target.bodyPart
+    ? `${bodyPartDisplayLabel(target.bodyPart, target.laterality)}${target.subpart ? ` — ${target.subpart}` : ''}`
+    : null;
   // Ids captured while source/target are known non-null — handleConfirm's
   // closure doesn't keep that narrowing.
-  const sourceId = source.id;
   const targetId = target.id;
 
   async function handleConfirm() {
@@ -147,15 +187,18 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
             lesionGroup: normalised,
             // Each patch belongs to its own photo; a photo that already has
             // a body part is never touched.
-            ...(id === sourceId && inheritances?.source ? inheritances.source : {}),
             ...(id === targetId && inheritances?.target ? inheritances.target : {}),
+            ...(sourcePatchById.get(id) ?? {}),
           });
         }
         toast.success(
-          `Linked in series “${normalised}”${
-            inheritedLabel ? ` — location set to ${inheritedLabel}` : ''
-          }`,
+          multi
+            ? `Linked ${sources.length} photos in series “${normalised}”`
+            : `Linked in series “${normalised}”${
+                inheritedLabel ? ` — location set to ${inheritedLabel}` : ''
+              }`,
         );
+        onSaved?.();
         onOpenChange(false);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to link photos');
@@ -170,10 +213,15 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
           await photoService.updatePhoto(id, { lesionGroup: null });
         }
         toast.success(
-          scope.dissolve
-            ? `Series “${plan.seriesName}” dissolved`
-            : `Removed from series “${plan.seriesName}”`,
+          multi
+            ? scope.dissolve
+              ? `Series “${plan.seriesName}” dissolved`
+              : `Removed ${scope.photoIds.length} photos from series “${plan.seriesName}”`
+            : scope.dissolve
+              ? `Series “${plan.seriesName}” dissolved`
+              : `Removed from series “${plan.seriesName}”`,
         );
+        onSaved?.();
         onOpenChange(false);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to unlink photos');
@@ -204,17 +252,21 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
             ) : (
               <Link2 className="size-4" aria-hidden />
             )}
-            {unlinking ? 'Unlink photo' : 'Link photos'}
+            {unlinking ? (multi ? 'Unlink photos' : 'Unlink photo') : 'Link photos'}
           </DialogTitle>
           <DialogDescription>
             {unlinking
-              ? 'The dragged photo is already in this series — confirm to pull it back out.'
-              : 'Both photos will share one lesion series — they badge together in the timeline and can be filtered as one.'}
+              ? multi
+                ? 'The selected photos are already in this series — confirm to pull them back out.'
+                : 'The dragged photo is already in this series — confirm to pull it back out.'
+              : multi
+                ? `${sources.length} photos will share one lesion series — they badge together in the timeline and can be filtered as one.`
+                : 'Both photos will share one lesion series — they badge together in the timeline and can be filtered as one.'}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center justify-center gap-3">
-          <LinkThumb photo={source} />
+          <LinkThumb photo={source} count={multi ? sources.length : undefined} />
           {unlinking ? (
             <Link2Off className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           ) : (
@@ -240,13 +292,20 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
                 Couldn’t check the series — cancel and drop again.
               </p>
             )}
-            {scope && scope.dissolve && scope.photoIds.length === 2 && (
+            {scope && scope.dissolve && multi && (
+              <p className="text-xs text-muted-foreground">
+                {scope.photoIds.length === memberCount
+                  ? `All ${memberCount} photos leave the series — it dissolves.`
+                  : 'The photos leave — one member would remain, so the series dissolves with them.'}
+              </p>
+            )}
+            {scope && scope.dissolve && !multi && scope.photoIds.length === 2 && (
               <p className="text-xs text-muted-foreground">
                 Both photos will leave the series — with no other members, it
                 dissolves.
               </p>
             )}
-            {scope && scope.dissolve && scope.photoIds.length === 1 && (
+            {scope && scope.dissolve && !multi && scope.photoIds.length === 1 && (
               <p className="text-xs text-muted-foreground">
                 This photo is the series’ only member — removing it ends the
                 series.
@@ -254,8 +313,11 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
             )}
             {scope && !scope.dissolve && (
               <p className="text-xs text-muted-foreground">
-                The photo leaves the series — its other {memberCount - 1}{' '}
-                photos stay linked.
+                {multi
+                  ? `${scope.photoIds.length} photos leave the series — its other ${
+                      memberCount - scope.photoIds.length
+                    } photos stay linked.`
+                  : `The photo leaves the series — its other ${memberCount - 1} photos stay linked.`}
               </p>
             )}
           </div>
@@ -289,18 +351,33 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
                   ))}
               </div>
             )}
-            <p className="text-xs text-muted-foreground">
-              {movingBetweenSeries
-                ? 'Only the dragged photo moves — its previous series keeps any other photos.'
-                : plan.photoIds.length === 2
-                  ? 'Neither photo is in a series yet — this creates one.'
-                  : 'One photo joins an existing series.'}
-            </p>
-            {inherited && inheritedLabel && (
+            {!multi && (
+              <p className="text-xs text-muted-foreground">
+                {movingBetweenSeries
+                  ? 'Only the dragged photo moves — its previous series keeps any other photos.'
+                  : plan.photoIds.length === 2
+                    ? 'Neither photo is in a series yet — this creates one.'
+                    : 'One photo joins an existing series.'}
+              </p>
+            )}
+            {multi && sources.some((s) => s.lesionGroup && s.lesionGroup !== plan.seriesName) && (
+              <p className="text-xs text-muted-foreground">
+                Photos already in another series move in — their previous series keeps any other
+                photos.
+              </p>
+            )}
+            {!multi && inherited && inheritedLabel && (
               <p className="text-xs text-muted-foreground">
                 {inheritances?.source ? 'The dragged photo' : 'The photo you dropped onto'} has no
                 body part — it takes {inheritedLabel}
                 {inherited.pinX != null ? ', marked spot included,' : ''} from the other photo.
+              </p>
+            )}
+            {multi && targetLabel && sources.some((s) => !s.bodyPart) && (
+              <p className="text-xs text-muted-foreground">
+                Photos without a body part take {targetLabel}
+                {target.pinX != null ? ', marked spot included,' : ''} from the photo you dropped
+                onto.
               </p>
             )}
           </div>
@@ -334,9 +411,11 @@ export function PhotoLinkDialog({ source, target, plan, open, onOpenChange }: Ph
 
 /**
  * One side of the link: thumbnail + capture date, so the clinician can see
- * exactly which two shots are being joined before saving.
+ * exactly which two shots are being joined before saving. A carried
+ * selection shows its count on the dragged side — the other tiles ride
+ * along unnamed.
  */
-function LinkThumb({ photo }: { photo: PhotoRecord }) {
+function LinkThumb({ photo, count }: { photo: PhotoRecord; count?: number }) {
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -367,6 +446,11 @@ function LinkThumb({ photo }: { photo: PhotoRecord }) {
       <span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 text-center text-[9px] leading-3 text-white">
         {format(photo.capturedAt, 'd/M/yy')}
       </span>
+      {count != null && count > 1 && (
+        <span className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground shadow">
+          {count}
+        </span>
+      )}
     </span>
   );
 }

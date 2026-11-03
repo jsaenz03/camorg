@@ -6,9 +6,11 @@
  * Optional hover overlay reveals the full capture date and clinical notes.
  *
  * Press-drag onto another tile links the two into one lesion series (the
- * confirm dialog carries the series name). Like DashboardCanvas this is
- * pointer-event based, NOT HTML5 drag & drop: WKWebView (the Tauri shell)
- * cancels in-page drag sessions, so the native API never fires there.
+ * confirm dialog carries the series name). ⌘/Ctrl-clicked tiles drag as one
+ * selection — dropping it files every tile into the target's series. Like
+ * DashboardCanvas this is pointer-event based, NOT HTML5 drag & drop:
+ * WKWebView (the Tauri shell) cancels in-page drag sessions, so the native
+ * API never fires there.
  *
  * Used in: patient timeline, home dashboard.
  */
@@ -25,7 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { BodyMapBadge } from '@/components/patient/body-map-badge';
 import { useBranding } from '@/components/branding-boot';
 import { photoReviewStatus } from '@/lib/utils/photo-review';
-import { resolvePhotoLink, type PhotoLinkPlan } from '@/lib/utils/photo-link';
+import { resolveMultiLink, resolvePhotoLink, type PhotoLinkPlan } from '@/lib/utils/photo-link';
 import { photoService } from '@/lib/services/photo-service';
 import { formatCaptureDate, formatRelativeTime } from '@/lib/utils/date-formatting';
 import { cn } from '@/lib/utils';
@@ -44,17 +46,19 @@ const AUTOSCROLL_EDGE_PX = 60;
  */
 const dropTargets = new Map<HTMLElement, PhotoRecord>();
 const dragListeners = new Set<() => void>();
-const DRAG_IDLE: { sourceId: string | null; targetId: string | null } = {
-  sourceId: null,
+const DRAG_IDLE: { sourceIds: string[]; targetId: string | null } = {
+  sourceIds: [],
   targetId: null,
 };
 let dragSnapshot = DRAG_IDLE;
 
-function setDragSession(sourceId: string | null, targetId: string | null) {
-  const next = sourceId === null ? DRAG_IDLE : { sourceId, targetId };
+function setDragSession(sourceIds: string[], targetId: string | null) {
+  const next = sourceIds.length === 0 ? DRAG_IDLE : { sourceIds, targetId };
   if (
     next === dragSnapshot ||
-    (next.sourceId === dragSnapshot.sourceId && next.targetId === dragSnapshot.targetId)
+    (next.targetId === dragSnapshot.targetId &&
+      next.sourceIds.length === dragSnapshot.sourceIds.length &&
+      next.sourceIds.every((id, i) => dragSnapshot.sourceIds[i] === id))
   ) {
     return;
   }
@@ -95,6 +99,15 @@ interface PhotoCardProps {
   isSelected?: boolean;
   showCheckbox?: boolean;
   onSelectionChange?: (selected: boolean) => void;
+  /**
+   * The gallery's current multi-select (⌘/Ctrl-click). Press-dragging a tile
+   * that is part of it carries the whole selection onto the drop target;
+   * undefined or a single-photo selection drags this tile alone.
+   */
+  selection?: PhotoRecord[];
+  /** Fired after a link or unlink saves from a drag that started on a
+      selected tile — the gallery clears the consumed selection. */
+  onSaved?: () => void;
   /** Tone of the tile surface. Default uses card tokens. */
   className?: string;
   /**
@@ -110,6 +123,8 @@ export function PhotoCard({
   isSelected = false,
   showCheckbox = false,
   onSelectionChange,
+  selection,
+  onSaved,
   className,
   fillContainer = false,
 }: PhotoCardProps) {
@@ -125,12 +140,15 @@ export function PhotoCard({
   // snapshot (DRAG_IDLE, the same object the store rests at) keeps React's
   // SSR/prerender path happy — galleries render client-side only today.
   const dragVisual = useSyncExternalStore(subscribeDrag, () => dragSnapshot, () => DRAG_IDLE);
-  const isDragSource = dragVisual.sourceId === photo.id;
+  const isDragSource = dragVisual.sourceIds.includes(photo.id);
+  const isMultiDrag = dragVisual.sourceIds.length > 1;
   const isDropTarget = dragVisual.targetId === photo.id;
   const [linkRequest, setLinkRequest] = useState<{
-    source: PhotoRecord;
+    sources: PhotoRecord[];
     target: PhotoRecord;
     plan: PhotoLinkPlan;
+    /** The drag started on a selected tile — a saved link consumes the selection. */
+    fromSelection: boolean;
   } | null>(null);
   // A drag that just ended must not also open the detail dialog (the click
   // that trails a release over this same card).
@@ -163,6 +181,18 @@ export function PhotoCard({
     const bodySelectBefore = document.body.style.userSelect;
     const bodyCursorBefore = document.body.style.cursor;
     const sourcePhoto = photo;
+    // A press on a selected tile drags the whole selection (the grabbed tile
+    // leads the list); anything else drags just this photo as before.
+    const carrySelection =
+      selection && selection.length > 1 && selection.some((p) => p.id === photo.id)
+        ? [photo, ...selection.filter((p) => p.id !== photo.id)]
+        : null;
+    const sourceIds = carrySelection
+      ? carrySelection.map((p) => p.id)
+      : [sourcePhoto.id];
+    // Whether the drag started on a selected tile (a single-tile selection
+    // drags alone but still counts) — a saved link then consumes the selection.
+    const fromSelection = selection?.some((p) => p.id === photo.id) ?? false;
     let dragging = false;
     const hitTest = (x: number, y: number): PhotoRecord | null => {
       for (const [el, record] of dropTargets) {
@@ -193,7 +223,7 @@ export function PhotoCard({
       else if (ev.clientY > window.innerHeight - AUTOSCROLL_EDGE_PX) {
         window.scrollBy(0, 10);
       }
-      setDragSession(sourcePhoto.id, hitTest(ev.clientX, ev.clientY)?.id ?? null);
+      setDragSession(sourceIds, hitTest(ev.clientX, ev.clientY)?.id ?? null);
     };
 
     const onUp = (ev: PointerEvent) => {
@@ -201,7 +231,9 @@ export function PhotoCard({
         suppressClickRef.current = true;
         const target = hitTest(ev.clientX, ev.clientY);
         if (target) {
-          const plan = resolvePhotoLink(sourcePhoto, target);
+          const plan = carrySelection
+            ? resolveMultiLink(carrySelection, target)
+            : resolvePhotoLink(sourcePhoto, target);
           if (!plan.ok) {
             if (plan.reason === 'cross-patient') {
               toast.error('Can’t link — these photos belong to different patients.');
@@ -209,9 +241,15 @@ export function PhotoCard({
               toast.error('Deleted photos can’t be linked.');
             }
           } else {
-            // Link onto another series, or — dropped on its own series —
-            // unlink; either way the dialog confirms the change first.
-            setLinkRequest({ source: sourcePhoto, target, plan });
+            // Link onto another series, or — dropped within its own series —
+            // unlink (a carried selection unlinks only when its linkage
+            // matches the target's); the dialog confirms first either way.
+            setLinkRequest({
+              sources: carrySelection ?? [sourcePhoto],
+              target,
+              plan,
+              fromSelection,
+            });
           }
         }
       }
@@ -231,7 +269,7 @@ export function PhotoCard({
       document.body.style.userSelect = bodySelectBefore;
       document.body.style.cursor = bodyCursorBefore;
       teardownRef.current = null;
-      if (dragging) setDragSession(null, null);
+      if (dragging) setDragSession([], null);
     };
 
     window.addEventListener('pointermove', onMove);
@@ -266,11 +304,18 @@ export function PhotoCard({
     };
   }, [photo.id]);
 
-  const handleCardClick = () => {
+  const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
     // Consume the click that trails a drag release (same guard as the
     // dashboard canvas) — it must not open the detail dialog.
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
+      return;
+    }
+    // ⌘/Ctrl-click toggles multi-select — the other half of drag-the-
+    // selection linking. A trailing drag click never carries modifiers.
+    if (onSelectionChange && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      onSelectionChange(!isSelected);
       return;
     }
     if (showCheckbox && onSelectionChange) {
@@ -294,6 +339,11 @@ export function PhotoCard({
         ref={registerDropTarget}
         onPointerDown={handlePointerDown}
         onClick={handleCardClick}
+        onContextMenu={(e) => {
+          // Ctrl-click is the select toggle for Windows/Linux, but on macOS
+          // it opens the context menu — swallow it when selection is live.
+          if (e.ctrlKey && onSelectionChange) e.preventDefault();
+        }}
         aria-label={`Photo of ${bodyPartDisplayLabel(photo.bodyPart, photo.laterality)}${photo.subpart ? `, ${photo.subpart}` : ''}, captured ${formatCaptureDate(photo.capturedAt)}`}
         className={cn(
           'group relative flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all',
@@ -439,10 +489,11 @@ export function PhotoCard({
 
       {linkRequest && (
         <PhotoLinkDialog
-          source={linkRequest.source}
+          sources={linkRequest.sources}
           target={linkRequest.target}
           plan={linkRequest.plan}
           open
+          onSaved={linkRequest.fromSelection ? onSaved : undefined}
           onOpenChange={(next) => {
             if (!next) setLinkRequest(null);
           }}
@@ -480,6 +531,13 @@ export function PhotoCard({
             <span className="absolute -right-2 -top-2 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md">
               <Link2 className="size-3.5" />
             </span>
+            {/* Carrying a selection: the count rides the ghost so the drop's
+                scope is visible before the dialog opens. */}
+            {isMultiDrag && (
+              <span className="absolute -bottom-2 -right-2 flex h-6 min-w-6 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-primary-foreground shadow-md">
+                {dragVisual.sourceIds.length}
+              </span>
+            )}
           </div>,
           document.body,
         )}

@@ -19,6 +19,11 @@
  * out"). Whether the whole series dissolves with it depends on how many
  * members remain — resolveUnlinkScope, decided where the member list is
  * fetched (the confirm dialog).
+ *
+ * The plural gesture: ⌘/Ctrl-clicked tiles drag as one — resolveMultiLink
+ * files the whole selection into the target's series, and when every
+ * selected photo is already in the target's series it unlinks them instead
+ * (the single drop's own-series gesture, plural).
  */
 
 /** The fields of a photo the link decision reads. Body part/laterality use
@@ -112,20 +117,94 @@ export function resolvePhotoLink(
 }
 
 /**
- * Which photos leave the series when one photo is unlinked from it. A series
- * that would drop to a single member is a name with nothing linked to it, so
- * the whole series dissolves instead (every remaining member is cleared too).
- * Pure so the dialog's dissolve decision is pinned by the same self-check.
+ * A selection drop's plan. The same gestures as the single drop, plural: a
+ * selection whose photos all share the target's series unlinks (pulled out
+ * together); anything else files the selection into the resolved series.
+ */
+export type MultiLinkPlan =
+  | { ok: true; action: 'link'; seriesName: string | null; photoIds: string[] }
+  | { ok: true; action: 'unlink'; seriesName: string; photoIds: string[] }
+  | { ok: false; reason: 'cross-patient' | 'deleted' };
+
+/**
+ * The same decision as resolvePhotoLink for a whole dragged selection. The
+ * drop is all-or-nothing: one cross-patient or deleted photo refuses the
+ * drop, never a partial link.
+ *
+ * Unlink requires the linkage to match: every source must already be in the
+ * target's series, and then the drop pulls all of them out (the dialog
+ * widens this to a dissolve via resolveUnlinkScope). A partial match is
+ * never an unlink — the stragglers just file into the target's series.
+ *
+ * Link: the target's series wins; when the target has none, a single series
+ * shared by every source wins; mixed series and no target name leaves the
+ * choice to the caller (the link dialog). The target itself is included when
+ * it needs the update — dropping a selection onto one of its own tiles is a
+ * normal drop — and photos already in the resolved series are skipped.
+ * Pure + dependency-free for the Node self-check, like resolvePhotoLink.
+ */
+export function resolveMultiLink(
+  sources: LinkablePhoto[],
+  target: LinkablePhoto,
+): MultiLinkPlan {
+  if (target.isDeleted || sources.some((photo) => photo.isDeleted)) {
+    return { ok: false, reason: 'deleted' };
+  }
+  if (sources.some((photo) => photo.patientId !== target.patientId)) {
+    return { ok: false, reason: 'cross-patient' };
+  }
+
+  // Every source already in the target's series: the drop reads as "pull
+  // these out", same as the single drop on its own series.
+  if (
+    target.lesionGroup !== null &&
+    sources.length > 0 &&
+    sources.every((photo) => photo.lesionGroup === target.lesionGroup)
+  ) {
+    return {
+      ok: true,
+      action: 'unlink',
+      seriesName: target.lesionGroup,
+      photoIds: sources.map((photo) => photo.id),
+    };
+  }
+
+  const seriesName =
+    target.lesionGroup ??
+    (sources.every((photo) => photo.lesionGroup === sources[0]?.lesionGroup)
+      ? (sources[0]?.lesionGroup ?? null)
+      : null);
+  const needsUpdate = (photo: LinkablePhoto) =>
+    seriesName === null || photo.lesionGroup !== seriesName;
+
+  // The target can be one of the dropped tiles (a selection dropped onto one
+  // of its own) — dedupe by id, order doesn't matter for a patch loop. At
+  // least one photo always differs here (the unlink branch above took the
+  // all-matching case), so the list is never empty.
+  const seen = new Set<string>();
+  const photoIds = [target, ...sources]
+    .filter((photo) => needsUpdate(photo) && !seen.has(photo.id) && seen.add(photo.id))
+    .map((photo) => photo.id);
+  return { ok: true, action: 'link', seriesName, photoIds };
+}
+
+/**
+ * Which photos leave the series when one or more photos are unlinked from it.
+ * A series that would drop to a single member is a name with nothing linked
+ * to it, so the whole series dissolves instead (every remaining member is
+ * cleared too). Pure so the dialog's dissolve decision is pinned by the same
+ * self-check.
  */
 export function resolveUnlinkScope(
   memberIds: string[],
-  leavingId: string,
+  leavingIds: string[],
 ): { photoIds: string[]; dissolve: boolean } {
-  const rest = memberIds.filter((id) => id !== leavingId);
+  const leaving = new Set(leavingIds);
+  const rest = memberIds.filter((id) => !leaving.has(id));
   if (rest.length <= 1) {
-    return { photoIds: [leavingId, ...rest], dissolve: true };
+    return { photoIds: [...leavingIds, ...rest], dissolve: true };
   }
-  return { photoIds: [leavingId], dissolve: false };
+  return { photoIds: [...leavingIds], dissolve: false };
 }
 
 /**
