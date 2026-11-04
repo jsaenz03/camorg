@@ -52,7 +52,7 @@
     "react-day-picker": "^10.0.1",
     "react-dom": "^19.2.8",
     "react-hook-form": "^7.64.0",
-    "react-konva": "^19.2.5",
+    "react-konva": "^19.3.2",
     "react-pdf": "^10.5.0",
     "react-zoom-pan-pinch": "^3.7.0",
     "recharts": "^3.8.0",
