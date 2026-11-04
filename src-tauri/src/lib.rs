@@ -52,19 +52,61 @@ pub fn run() {
   // Grants the fs plugin runtime access to a user-chosen photo directory
   // (e.g. a cloud-synced folder outside the app data dir). Capability scopes
   // are static, so a persisted custom dir must be re-granted on every launch.
-  #[tauri::command]
-  fn grant_directory_access(app: tauri::AppHandle, path: String) -> Result<(), String> {
+  //
+  // Trust boundary: the webview supplies the path string. Since the
+  // disk-safety audit (compliance/disk-safety-audit.md M3), the folder
+  // dialog itself runs Rust-side (choose_photos_directory), which records
+  // the approved directory in an app-data file; the webview-callable
+  // command only honours paths that file already approves. A compromised
+  // webview can re-grant an approved folder (history capped at ten) but
+  // can never widen the scope to a new one. First launch after that change
+  // seeds the approval from the webview's persisted preference — the same
+  // validation the old command applied, so the one-time carry-over grants
+  // nothing the previous build didn't.
+  // ponytail: that single first-call seed still trusts the webview; after
+  // the approval file exists it is closed. Upgrade path: prompt existing
+  // custom-folder installs to re-pick once instead of seeding.
+  fn approved_photos_dirs_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app
+      .path()
+      .app_data_dir()
+      .map(|d| d.join("approved-photos-dirs"))
+      .map_err(|e| format!("could not resolve the app data dir: {e}"))
+  }
+
+  fn read_approved_photos_dirs(app: &tauri::AppHandle) -> Vec<String> {
+    match approved_photos_dirs_path(app) {
+      Ok(path) => std::fs::read_to_string(path)
+        .map(|text| {
+          text
+            .lines()
+            .map(str::to_string)
+            .filter(|line| !line.is_empty())
+            .collect()
+        })
+        .unwrap_or_default(),
+      Err(_) => Vec::new(),
+    }
+  }
+
+  fn write_approved_photos_dirs(app: &tauri::AppHandle, dirs: &[String]) -> Result<(), String> {
+    let path = approved_photos_dirs_path(app)?;
+    if let Some(dir) = path.parent() {
+      std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, dirs.join("\n")).map_err(|e| e.to_string())
+  }
+
+  fn photos_dir_deny(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
     // Every refusal is recorded so Settings → Diagnostics can explain why a
     // custom photos folder stopped working.
     let deny = |msg: String| -> Result<(), String> {
       diagnostics::record(diagnostics::Level::Error, "grant-directory", &msg, None);
       Err(msg)
     };
-    // Trust boundary: the webview supplies this string (normally via the
-    // native folder dialog). Refuse anything but an existing, non-root,
-    // non-home directory so a compromised webview can't hand the fs scope
-    // to the whole disk.
-    let p = Path::new(&path);
+    // Refuse anything but an existing, non-root, non-home directory so the
+    // fs scope can never be handed to the whole disk.
+    let p = Path::new(path);
     if !p.is_absolute() {
       return deny("Path must be absolute".into());
     }
@@ -85,14 +127,78 @@ pub fn run() {
     if !meta.is_dir() {
       return deny("Path is not a directory".into());
     }
+    Ok(())
+  }
+
+  fn allow_photos_dir(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
     app
       .fs_scope()
-      .allow_directory(&path, true)
+      .allow_directory(path, true)
       .map_err(|e| {
         let msg = format!("Could not grant access to the folder: {e}");
         diagnostics::record(diagnostics::Level::Error, "grant-directory", &msg, None);
         msg
       })
+  }
+
+  #[tauri::command]
+  fn grant_directory_access(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    photos_dir_deny(&app, &path)?;
+    let approved = read_approved_photos_dirs(&app);
+    if approved.contains(&path) {
+      return allow_photos_dir(&app, &path);
+    }
+    if !approved.is_empty() {
+      let msg = String::from(
+        "Folder is not an approved photos folder — re-select it in Settings → Storage",
+      );
+      diagnostics::record(diagnostics::Level::Error, "grant-directory", &msg, None);
+      return Err(msg);
+    }
+    // Seed: no approval file yet (first launch of this build, or a fresh
+    // install restoring a database that names a custom folder).
+    write_approved_photos_dirs(&app, std::slice::from_ref(&path))?;
+    diagnostics::record(
+      diagnostics::Level::Info,
+      "grant-directory",
+      "Approved the persisted photos folder (one-time carry-over)",
+      None,
+    );
+    allow_photos_dir(&app, &path)
+  }
+
+  /// The folder dialog itself runs here, not in the webview: the webview
+  /// can only ever receive a directory the user picked in the native
+  /// dialog, and the choice is recorded in the approval file the grant
+  /// command checks against. Returns the picked path (null when cancelled).
+  #[tauri::command]
+  fn choose_photos_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = app.dialog().file().blocking_pick_folder();
+    let Some(picked) = picked else {
+      return Ok(None);
+    };
+    let path = picked
+      .into_path()
+      .map_err(|e| format!("invalid folder selection: {e}"))?
+      .to_string_lossy()
+      .into_owned();
+    photos_dir_deny(&app, &path)?;
+    let mut approved = read_approved_photos_dirs(&app);
+    // Replacing the active custom folder drops its runtime scope (the
+    // entry stays in the approval history so the old-folder cleanup flow
+    // can still re-grant it).
+    if let Some(previous) = approved.first() {
+      if *previous != path {
+        let _ = app.fs_scope().forbid_directory(previous, true);
+      }
+    }
+    approved.retain(|p| *p != path);
+    approved.insert(0, path.clone());
+    approved.truncate(10);
+    write_approved_photos_dirs(&app, &approved)?;
+    allow_photos_dir(&app, &path)?;
+    Ok(Some(path))
   }
 
   /// Web-owned preference: hide to the tray on window close (default on).
@@ -345,6 +451,7 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       grant_directory_access,
+      choose_photos_directory,
       set_close_to_tray,
       update_tray_summary,
       updater_allowed,

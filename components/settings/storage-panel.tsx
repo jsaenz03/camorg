@@ -8,7 +8,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { open, confirm } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { FolderOpen, HardDrive, Loader2, RotateCcw } from 'lucide-react';
 
 import type { StorageInfo } from '@/lib/services/storage-service';
@@ -54,8 +55,12 @@ export function StoragePanel() {
 
   async function pickFolder() {
     try {
-      const picked = await open({ directory: true, multiple: false });
-      if (typeof picked !== 'string' || !picked) return;
+      // The folder dialog runs Rust-side (choose_photos_directory): the
+      // webview can only receive a directory the user picked in the native
+      // dialog, and the choice is recorded in the Rust-side approval file
+      // the grant command checks against (disk-safety audit M3).
+      const picked = await invoke<string | null>('choose_photos_directory');
+      if (!picked) return;
       if (info && picked === info.resolvedDir) return;
 
       const ok = await confirm(

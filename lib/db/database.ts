@@ -75,6 +75,16 @@ export async function getDB(): Promise<Database> {
       });
   }
 
+  // Fire-and-forget orphan sweep (disk-safety audit L5): reports encrypted
+  // files with no matching record — never deletes them — and removes only
+  // machine-local backup seal debris. Lazy import: storage-service imports
+  // this module.
+  void import('@/lib/services/storage-service')
+    .then(({ storageService }) => storageService.sweepOrphanedFiles())
+    .catch((err) => {
+      console.warn('[storage] orphan sweep failed:', err);
+    });
+
   return dbInstance;
 }
 

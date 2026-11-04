@@ -25,8 +25,10 @@ import {
 } from '@/lib/db/database';
 import { accessService } from '@/lib/services/access-service';
 import { auditService } from '@/lib/services/audit-service';
+import { recordDiagnostic } from '@/lib/diagnostics';
 import { photosDirSchema } from '@/lib/validators/schemas';
 import { canDeleteSourceFile } from '@/lib/storage/photo-file-name';
+import { planOrphanSweep } from '@/lib/storage/orphan-sweep';
 import {
   PermissionDeniedError,
   StorageUnavailableError,
@@ -121,6 +123,66 @@ export class StorageService {
       customDir,
       defaultDir: await join(await appDataDir(), 'photos'),
     };
+  }
+
+  /**
+   * Boot-time orphan sweep (disk-safety audit L5). Report-only for photo
+   * and result files: the photos folder may be a cloud-synced folder
+   * shared with a second machine whose database differs, so a file with no
+   * row on THIS machine is never deleted — it is counted into Settings →
+   * Diagnostics for a human to review. The only deletions are machine-
+   * local backup seal debris (*.db.tmp), which can exist solely when this
+   * machine crashed mid-seal. Counts only in the log — never names,
+   * matching the patient-free diagnostics policy.
+   */
+  async sweepOrphanedFiles(): Promise<void> {
+    const dir = await getPhotosDir();
+    const db = await getDB();
+    const photoDirFiles = (await readDir(dir))
+      .filter((entry) => entry.isFile)
+      .map((entry) => entry.name);
+    const resultsDir = await join(dir, 'results');
+    let resultDirFiles: string[] = [];
+    if (await exists(resultsDir)) {
+      resultDirFiles = (await readDir(resultsDir))
+        .filter((entry) => entry.isFile)
+        .map((entry) => entry.name);
+    }
+    const photoRows = await db.select<
+      { image_path: string; thumbnail_path: string }[]
+    >('SELECT image_path, thumbnail_path FROM photos');
+    const knownPhotoFileNames = new Set<string>();
+    for (const row of photoRows) {
+      // Rows store full paths; the sweep matches on the basename.
+      knownPhotoFileNames.add(row.image_path.split(/[\\/]/).pop() ?? '');
+      knownPhotoFileNames.add(row.thumbnail_path.split(/[\\/]/).pop() ?? '');
+    }
+    const resultRows = await db.select<{ stored_name: string }[]>(
+      'SELECT stored_name FROM result_files'
+    );
+    const knownResultFileNames = new Set(resultRows.map((r) => r.stored_name));
+
+    const plan = planOrphanSweep(
+      photoDirFiles,
+      resultDirFiles,
+      knownPhotoFileNames,
+      knownResultFileNames,
+    );
+
+    for (const name of plan.backupTmpDebris) {
+      await remove(await join(dir, name)).catch(() => undefined);
+    }
+
+    const orphanCount =
+      plan.orphanPhotoFiles.length + plan.orphanResultFiles.length;
+    if (orphanCount > 0) {
+      recordDiagnostic(
+        'warn',
+        'storage',
+        `${orphanCount} encrypted file${orphanCount === 1 ? '' : 's'} in the photos folder ` +
+          'have no matching record — left in place; review in Settings → Storage',
+      );
+    }
   }
 
   /**
