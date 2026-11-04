@@ -41,7 +41,7 @@ tiny_http = "0.12"
 socket2 = "0.6"
 # The app's only HTTP client: the one-shot licence activation call
 # (licence_activation.rs). Keep its scope that narrow.
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 base64 = "0.22"
 rand = "0.8"
 aes-gcm = "0.10"
