@@ -127,8 +127,10 @@ export function PhotoMoveDialog({ photo, open, onOpenChange, onMoved }: PhotoMov
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      {/* Bounded dialog: header and action bar stay put, the search results
+          scroll between them on short screens. */}
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden sm:max-w-md">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle>Move photo to another patient</DialogTitle>
           <DialogDescription>
             For a photo filed to the wrong patient. The photo, its notes, body
@@ -144,6 +146,7 @@ export function PhotoMoveDialog({ photo, open, onOpenChange, onMoved }: PhotoMov
             photos.
           </p>
         ) : (
+          <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
           <div className="space-y-4">
             {photo.lesionGroup && (
               <p className="text-xs text-muted-foreground">
@@ -200,10 +203,11 @@ export function PhotoMoveDialog({ photo, open, onOpenChange, onMoved }: PhotoMov
               )}
             </div>
           </div>
+          </div>
         )}
 
         {canManageSource && (
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t pt-4">
             <Button
               type="button"
               variant="outline"

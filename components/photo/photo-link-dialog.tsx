@@ -235,7 +235,9 @@ export function PhotoLinkDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      {/* Bounded dialog: header and action bar stay put, the middle scrolls
+          between them on short screens. */}
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden sm:max-w-md">
         {/* One form so Enter — in the series input or on the confirm button —
             confirms the drop instead of doing nothing. */}
         <form
@@ -243,9 +245,9 @@ export function PhotoLinkDialog({
             e.preventDefault();
             void handleConfirm();
           }}
-          className="grid gap-4"
+          className="flex min-h-0 flex-1 flex-col"
         >
-        <DialogHeader>
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle className="flex items-center gap-2">
             {unlinking ? (
               <Link2Off className="size-4" aria-hidden />
@@ -265,6 +267,8 @@ export function PhotoLinkDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* Full-bleed scroll region — px-6 restores the dialog's inset. */}
+        <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
         <div className="flex items-center justify-center gap-3">
           <LinkThumb photo={source} count={multi ? sources.length : undefined} />
           {unlinking ? (
@@ -382,8 +386,9 @@ export function PhotoLinkDialog({
             )}
           </div>
         )}
+        </div>
 
-        <div className="flex justify-end gap-2">
+        <div className="flex shrink-0 justify-end gap-2 border-t pt-4">
           <Button
             type="button"
             variant="outline"

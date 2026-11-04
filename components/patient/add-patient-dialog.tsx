@@ -119,8 +119,10 @@ export function AddPatientDialog({ open, onOpenChange, onCreated }: AddPatientDi
 
   return (
     <Dialog open={open} onOpenChange={(next) => !isSaving && onOpenChange(next)}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      {/* Bounded dialog: header and action bar stay put, the form scrolls
+          between them — the action never leaves the window on short screens. */}
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden sm:max-w-md">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle>Add patient</DialogTitle>
           <DialogDescription>
             Create a patient file. Capture or upload photos from their file once
@@ -129,7 +131,10 @@ export function AddPatientDialog({ open, onOpenChange, onCreated }: AddPatientDi
         </DialogHeader>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(handleSubmit)} className="flex min-h-0 flex-1 flex-col">
+            {/* Full-bleed scroll region — px-6 restores the dialog's inset. */}
+            <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+            <div className="space-y-4">
             <FormField
               control={form.control}
               name="name"
@@ -186,8 +191,10 @@ export function AddPatientDialog({ open, onOpenChange, onCreated }: AddPatientDi
                 </FormItem>
               )}
             />
+            </div>
+            </div>
 
-            <DialogFooter className="pt-2">
+            <DialogFooter className="shrink-0 border-t pt-4">
               <Button
                 type="button"
                 variant="outline"

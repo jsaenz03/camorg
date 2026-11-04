@@ -161,8 +161,10 @@ export function PatientAccessPanel() {
       </CardContent>
 
       <Dialog open={!!editing} onOpenChange={(o) => !o && (setEditing(null), setSharing(null))}>
-        <DialogContent>
-          <DialogHeader>
+        {/* Bounded dialog: header and action bar stay put, the sharing modes
+            scroll between them on short screens. */}
+        <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden">
+          <DialogHeader className="shrink-0 pr-8">
             <DialogTitle>Access: {editing?.name}</DialogTitle>
             <DialogDescription>
               Owner: {editing?.ownerName ?? 'Unknown'}. Choose one sharing mode.
@@ -170,6 +172,7 @@ export function PatientAccessPanel() {
           </DialogHeader>
 
           {sharing && (
+            <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
             <div className="space-y-4">
               {/* Org-wide toggle */}
               <div className="flex items-center justify-between rounded-md border p-3">
@@ -238,9 +241,10 @@ export function PatientAccessPanel() {
                 </ul>
               </div>
             </div>
+            </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t pt-4">
             <Button variant="outline" onClick={() => (setEditing(null), setSharing(null))}>
               Cancel
             </Button>

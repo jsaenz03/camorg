@@ -125,8 +125,10 @@ export function InvitationsPanel() {
               <Plus className="mr-1 size-4" /> New
             </Button>
           </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
+          {/* Bounded dialog: header and action bar stay put, the form scrolls
+              between them on short screens. */}
+          <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden">
+            <DialogHeader className="shrink-0 pr-8">
               <DialogTitle>Create invitation</DialogTitle>
               <DialogDescription>
                 Token invites let the user pick their own passcode. Precreated accounts use a
@@ -134,7 +136,10 @@ export function InvitationsPanel() {
               </DialogDescription>
             </DialogHeader>
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <form onSubmit={form.handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col">
+                {/* Full-bleed scroll region — px-6 restores the dialog's inset. */}
+                <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+                <div className="space-y-4">
                 <FormField
                   control={form.control}
                   name="kind"
@@ -156,7 +161,7 @@ export function InvitationsPanel() {
                     </FormItem>
                   )}
                 />
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <FormField
                     control={form.control}
                     name="displayName"
@@ -184,7 +189,7 @@ export function InvitationsPanel() {
                     )}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <FormField
                     control={form.control}
                     name="role"
@@ -243,7 +248,9 @@ export function InvitationsPanel() {
                     )}
                   />
                 )}
-                <DialogFooter>
+                </div>
+                </div>
+                <DialogFooter className="shrink-0 border-t pt-4">
                   <Button type="submit" disabled={form.formState.isSubmitting}>
                     {form.formState.isSubmitting && (
                       <Loader2 className="mr-2 size-4 animate-spin" />

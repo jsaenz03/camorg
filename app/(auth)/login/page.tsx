@@ -464,15 +464,18 @@ export default function LoginPage() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        {/* Bounded dialog: header and action bar stay put, the state's middle
+            scrolls between them on short screens. */}
+        <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden sm:max-w-md">
         {recoveryResult ? (
           <>
-            <DialogHeader>
+            <DialogHeader className="shrink-0 pr-8">
               <DialogTitle>Restore staged</DialogTitle>
               <DialogDescription>
                 Copy the temporary passcode now — it is shown only once.
               </DialogDescription>
             </DialogHeader>
+            <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
             <div className="space-y-3 text-sm">
               <p className="text-muted-foreground">
                 After the restart, sign in as{' '}
@@ -503,7 +506,8 @@ export default function LoginPage() {
                 </span>
               </label>
             </div>
-            <DialogFooter>
+            </div>
+            <DialogFooter className="shrink-0 border-t pt-4">
               <Button
                 variant="ghost"
                 disabled={recoveryBusy}
@@ -528,7 +532,7 @@ export default function LoginPage() {
           </>
         ) : (
           <>
-            <DialogHeader>
+            <DialogHeader className="shrink-0 pr-8">
               <DialogTitle>Locked out?</DialogTitle>
               <DialogDescription>
                 Passcodes are stored only as secure hashes on this device —
@@ -536,6 +540,8 @@ export default function LoginPage() {
                 to.
               </DialogDescription>
             </DialogHeader>
+            <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+            <div className="space-y-4">
             {recoveryBackups !== null && recoveryBackups.length > 0 && (
               <div className="space-y-3 rounded-md border p-3 text-sm">
                 <div>
@@ -624,7 +630,9 @@ export default function LoginPage() {
                 />
               </div>
             </div>
-            <DialogFooter>
+            </div>
+            </div>
+            <DialogFooter className="shrink-0 border-t pt-4">
               <Button variant="ghost" onClick={() => setForgotOpen(false)} disabled={resetting}>
                 Cancel
               </Button>

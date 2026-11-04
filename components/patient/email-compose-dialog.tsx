@@ -66,7 +66,9 @@ export function EmailComposeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+      {/* Bounded dialog: header and action bar stay put, the message scrolls
+          between them — Open email draft never leaves the window. */}
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden sm:max-w-2xl">
         {/* A form so Enter — from To or Subject — opens the draft, matching
             the app's other dialogs. The textarea keeps Enter as a newline. */}
         <form
@@ -74,9 +76,9 @@ export function EmailComposeDialog({
             e.preventDefault();
             if (!isSending) onSend(draft);
           }}
-          className="grid gap-4"
+          className="flex min-h-0 flex-1 flex-col"
         >
-          <DialogHeader>
+          <DialogHeader className="shrink-0 pr-8">
             <DialogTitle>Email case report</DialogTitle>
             <DialogDescription>
               Edit the message that opens in your email app alongside the
@@ -85,6 +87,8 @@ export function EmailComposeDialog({
             </DialogDescription>
           </DialogHeader>
 
+          {/* Full-bleed scroll region — px-6 restores the dialog's inset. */}
+          <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email-to">To</Label>
@@ -178,8 +182,9 @@ export function EmailComposeDialog({
               </Tabs>
             </div>
           </div>
+          </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t pt-4">
             <Button
               type="button"
               variant="outline"

@@ -132,8 +132,10 @@ export function StorageCleanupDialog({ cleanup, onClose }: StorageCleanupDialogP
 
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      {/* Bounded dialog: header and action bar stay put, the details scroll
+          between them on short screens. */}
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden sm:max-w-md">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle className="flex items-center gap-2 text-destructive">
             <Trash2 className="size-4" />
             Delete photos from the old folder?
@@ -145,6 +147,9 @@ export function StorageCleanupDialog({ cleanup, onClose }: StorageCleanupDialogP
           </DialogDescription>
         </DialogHeader>
 
+        {/* Full-bleed scroll region — px-6 restores the dialog's inset. */}
+        <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+        <div className="space-y-4">
         <p className="break-all rounded-md border p-2 font-mono text-xs text-muted-foreground">
           {cleanup.sourceDir}
         </p>
@@ -190,8 +195,10 @@ export function StorageCleanupDialog({ cleanup, onClose }: StorageCleanupDialogP
             />
           </div>
         )}
+        </div>
+        </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t pt-4">
           {busy ? (
             <Button variant="outline" onClick={stop} disabled={stopping}>
               {stopping ? 'Stopping…' : 'Stop'}

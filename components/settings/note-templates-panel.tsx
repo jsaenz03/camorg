@@ -207,8 +207,10 @@ export function NoteTemplatesPanel() {
       </CardContent>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
+        {/* Bounded dialog: header and action bar stay put, the form scrolls
+            between them on short screens. */}
+        <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden">
+          <DialogHeader className="shrink-0 pr-8">
             <DialogTitle>{editing ? 'Edit template' : 'New template'}</DialogTitle>
             <DialogDescription>
               Inserted from the “Quick text” menu on any clinical notes field.
@@ -217,7 +219,10 @@ export function NoteTemplatesPanel() {
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col">
+              {/* Full-bleed scroll region — px-6 restores the dialog's inset. */}
+              <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+              <div className="space-y-4">
               <FormField
                 control={form.control}
                 name="title"
@@ -270,7 +275,9 @@ export function NoteTemplatesPanel() {
                   </FormItem>
                 )}
               />
-              <DialogFooter>
+              </div>
+              </div>
+              <DialogFooter className="shrink-0 border-t pt-4">
                 <Button
                   type="button"
                   variant="outline"

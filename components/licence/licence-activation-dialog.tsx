@@ -18,6 +18,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -45,8 +46,10 @@ export function LicenceActivationDialog() {
 
   return (
     <Dialog open={activationOpen} onOpenChange={(open) => !open && closeActivation()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      {/* Bounded dialog: header and action stay put, the key and help text
+          scroll between them on short screens. */}
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden sm:max-w-md">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle className="flex items-center gap-2">
             <KeyRound className="size-4 text-primary" />
             Activate Camog
@@ -57,6 +60,8 @@ export function LicenceActivationDialog() {
               : 'Paste the licence key you received by email. Activation needs a one-time internet connection.'}
           </DialogDescription>
         </DialogHeader>
+        {/* Full-bleed scroll region — px-6 restores the dialog's inset. */}
+        <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
         <div className="space-y-3">
           <Textarea
             value={key}
@@ -85,11 +90,14 @@ export function LicenceActivationDialog() {
             No key yet, or renewing? <BuyLicenceLink /> — checkout is on our website and the key
             arrives by email.
           </p>
+        </div>
+        </div>
+        <DialogFooter className="shrink-0 border-t pt-4">
           <Button onClick={submit} disabled={submitting || !key.trim()} className="w-full">
             {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}
             Activate
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
