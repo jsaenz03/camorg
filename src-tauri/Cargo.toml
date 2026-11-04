@@ -43,7 +43,7 @@ socket2 = "0.6"
 # (licence_activation.rs). Keep its scope that narrow.
 ureq = { version = "2", features = ["json"] }
 base64 = "0.22"
-rand = "0.8"
+rand = "0.10"
 aes-gcm = "0.10"
 # The OS credential store: reads the 0.4.6 photo-key entry once for the
 # key-file migration, and holds the automatic-backup passphrase
