@@ -54,7 +54,7 @@ pub fn run() {
   // are static, so a persisted custom dir must be re-granted on every launch.
   //
   // Trust boundary: the webview supplies the path string. Since the
-  // disk-safety audit (compliance/disk-safety-audit.md M3), the folder
+  // internal disk-safety audit (finding M3), the folder
   // dialog itself runs Rust-side (choose_photos_directory), which records
   // the approved directory in an app-data file; the webview-callable
   // command only honours paths that file already approves. A compromised
