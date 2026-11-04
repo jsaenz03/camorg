@@ -21,7 +21,7 @@ export function TopNavHeader() {
   const badgeFor = useNavBadges();
 
   return (
-    <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+    <header className="print-hidden sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75">
       <div className="flex h-14 items-center gap-3 px-4">
         <Link
           href="/"

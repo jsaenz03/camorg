@@ -34,6 +34,9 @@ const IMAGE_H: f32 = 300.0;
 const CAPTION_X: f32 = MARGIN_X + IMAGE_W + 22.0;
 const CAPTION_W: f32 = PAGE_W - MARGIN_X - CAPTION_X;
 const ENTRY_GAP: f32 = 30.0;
+/// Vertical space claimed by a series-boundary hairline (see render_report):
+/// 4pt above the rule, 10pt between it and the heading/entry that follows.
+const SERIES_BOUNDARY_GAP: f32 = 14.0;
 
 // krilla surfaces use a top-left origin; all y values below are top-down.
 const FOOTER_RULE_Y: f32 = PAGE_H - 34.0;
@@ -1139,13 +1142,19 @@ fn render_report(
     let fig = Figure { pd, index: i + 1, total };
     let series = pd.photo.series_label.as_deref();
     let opens_series = series.is_some() && series != prev_series;
+    // A series block is separated from the unlabelled photos around it by a
+    // hairline — above the block's heading, and above an unlabelled entry
+    // that follows a block. Exactly one rule per boundary, so back-to-back
+    // series never stack two.
+    let after_series = series.is_none() && prev_series.is_some();
+    let boundary_gap = if opens_series || after_series { SERIES_BOUNDARY_GAP } else { 0.0 };
     // A series heading counts toward the entry's height and moves to the next
     // page with its first photo — never stranded at a page bottom.
     let heading_h = match (opens_series, series) {
       (true, Some(name)) => series_heading_height(name, series_member_count(photos, name), fonts),
       _ => 0.0,
     };
-    let h = heading_h + entry_height(pd, fonts);
+    let h = boundary_gap + heading_h + entry_height(pd, fonts);
     if y + h > CONTENT_BOTTOM {
       finish_page_footer(&mut surface, fonts, pages, total_pages);
       surface.finish();
@@ -1154,6 +1163,10 @@ fn render_report(
       surface = page.surface();
       pages += 1;
       y = draw_continuation_header(&mut surface, req, fonts);
+    }
+    if boundary_gap > 0.0 {
+      rule(&mut surface, MARGIN_X, PAGE_W - MARGIN_X, y + 4.0, hairline_color(), 0.75);
+      y += boundary_gap;
     }
     if let (true, Some(name)) = (opens_series, series) {
       y += draw_series_heading(&mut surface, y, name, series_member_count(photos, name), fonts);

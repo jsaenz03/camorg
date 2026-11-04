@@ -9,11 +9,12 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { format, isSameDay } from 'date-fns';
+import { format } from 'date-fns';
 import { Images, FilterX, Calendar as CalendarIcon } from 'lucide-react';
 import type { PhotoRecord } from '@/types/photo';
 import type { BodyPart } from '@/types/body-part';
 import { BodyPartLabels, BODY_PARTS } from '@/types/body-part';
+import { applyTimelineFilter, type TimelineFilter } from '@/lib/utils/timeline-filter';
 import { PhotoBento } from './photo-bento';
 import { EmptyState } from '@/components/empty-state';
 import { Button } from '@/components/ui/button';
@@ -36,15 +37,24 @@ interface PhotoTimelineProps {
   photos: PhotoRecord[];
   onPhotoClick?: (photo: PhotoRecord) => void;
   showFilter?: boolean;
+  /** Fires on mount and whenever the filters change (all-off included).
+      The patient page carries it to the case report so the report — and its
+      print — cover exactly the photos the grid is showing. */
+  onFilterChange?: (filter: TimelineFilter) => void;
 }
+
+/** Select sentinel for the "not in a series" option — never a real series
+    name, which is free text and could otherwise collide. */
+const SERIES_NONE = '__unlinked__';
 
 export function PhotoTimeline({
   photos,
   onPhotoClick,
   showFilter = true,
+  onFilterChange,
 }: PhotoTimelineProps) {
   const [bodyPartFilter, setBodyPartFilter] = useState<BodyPart | 'all'>('all');
-  const [seriesFilter, setSeriesFilter] = useState<string | 'all'>('all');
+  const [seriesFilter, setSeriesFilter] = useState<string | 'all' | typeof SERIES_NONE>('all');
   const [attachmentsFilter, setAttachmentsFilter] = useState<'all' | 'with' | 'without'>('all');
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
   // ⌘/Ctrl multi-select feeding drag-the-selection linking. Held as ids;
@@ -61,20 +71,27 @@ export function PhotoTimeline({
     [photos],
   );
 
-  const filteredPhotos = useMemo(() => {
-    return photos.filter((photo) => {
-      if (bodyPartFilter !== 'all' && photo.bodyPart !== bodyPartFilter) return false;
-      if (seriesFilter !== 'all' && photo.lesionGroup !== seriesFilter) return false;
-      if (
-        attachmentsFilter !== 'all' &&
-        (photo.attachmentCount > 0) !== (attachmentsFilter === 'with')
-      ) {
-        return false;
-      }
-      if (selectedDate && !isSameDay(photo.capturedAt, selectedDate)) return false;
-      return true;
-    });
-  }, [photos, bodyPartFilter, seriesFilter, attachmentsFilter, selectedDate]);
+  const filter = useMemo<TimelineFilter>(
+    () => ({
+      series: seriesFilter === 'all' || seriesFilter === SERIES_NONE ? null : seriesFilter,
+      unlinked: seriesFilter === SERIES_NONE,
+      bodyPart: bodyPartFilter === 'all' ? null : bodyPartFilter,
+      attachments: attachmentsFilter,
+      date: selectedDate ?? null,
+    }),
+    [seriesFilter, bodyPartFilter, attachmentsFilter, selectedDate],
+  );
+
+  const filteredPhotos = useMemo(
+    () => applyTimelineFilter(photos, filter),
+    [photos, filter],
+  );
+
+  // Report the active filter upward — the Report button turns it into the
+  // query params that make the case report follow the grid.
+  useEffect(() => {
+    onFilterChange?.(filter);
+  }, [filter, onFilterChange]);
 
   const selection = useMemo(
     () => filteredPhotos.filter((p) => selectedIds.has(p.id)),
@@ -204,8 +221,8 @@ function FilterBar({
   onBodyPartChange: (next: BodyPart | 'all') => void;
   selectedDate?: Date;
   onDateChange: (next: Date | undefined) => void;
-  series: string | 'all';
-  onSeriesChange: (next: string | 'all') => void;
+  series: string | 'all' | typeof SERIES_NONE;
+  onSeriesChange: (next: string | 'all' | typeof SERIES_NONE) => void;
   seriesOptions: string[];
   attachments: 'all' | 'with' | 'without';
   onAttachmentsChange: (next: 'all' | 'with' | 'without') => void;
@@ -251,6 +268,7 @@ function FilterBar({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All lesion series</SelectItem>
+              <SelectItem value={SERIES_NONE}>Not in a series</SelectItem>
               {seriesOptions.map((name) => (
                 <SelectItem key={name} value={name}>
                   {name}

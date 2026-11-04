@@ -124,10 +124,34 @@
 }
 
 /* ----- print: patient case report ----- */
-/* The report page marks its printable root with .print-report; everything
- * else on the page (and the dashboard chrome around it) is hidden when the
- * browser print dialog renders, so "Save as PDF" produces a clean document. */
+/* The report page marks its printable root with .print-report and its layout
+ * wrapper with .print-page; dashboard chrome marks itself .print-hidden. When
+ * the print dialog renders, everything but the document is display:none'd —
+ * display, not visibility, so hidden chrome reserves no paper space and the
+ * article flows from the top of the page area and paginates naturally — and
+ * the article keeps its preview styling (Geist, teal rule, photo frames) with
+ * the screen-only card dressing (border, rounding, shadow) stripped, so the
+ * print-out reads like the Save-PDF document. print-color-adjust keeps the
+ * teal accent printing even with the browser's "background graphics" off, and
+ * the forced white canvas keeps a dark-mode page from printing dark paper. */
 @media print {
+  .print-hidden {
+    display: none !important;
+  }
+  /* The sidebar's desktop wrapper reserves a gap column in the flex row; on
+     paper it would indent the whole report. (The Sidebar primitive's desktop
+     root takes no className, hence the data-slot selector.) */
+  [data-slot='sidebar-gap'] {
+    display: none !important;
+  }
+  .print-page {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
   body * {
     visibility: hidden;
   }
@@ -136,13 +160,12 @@
     visibility: visible;
   }
   .print-report {
-    position: absolute;
-    inset: 0;
-    width: 100%;
     padding: 0;
-  }
-  .print-report .print-hidden {
-    display: none !important;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
   .print-report .print-break {
     break-inside: avoid;

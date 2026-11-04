@@ -12,15 +12,16 @@
  */
 
 import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useState, useEffect, useMemo, Suspense } from 'react';
 import { useTheme } from 'next-themes';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
-import { ArrowLeft, FileDown, Loader2, Mail, Printer } from 'lucide-react';
+import { ArrowLeft, FileDown, Filter, Loader2, Mail, Printer } from 'lucide-react';
 import type { Patient } from '@/types/patient';
 import { consentStatus, ConsentScopeLabels } from '@/types/patient';
-import { BodyPartLabels, bodyPartSurfaceLabel, type BodyPart, type Laterality, type Pinpoint } from '@/types/body-part';
+import { BodyPartLabels, BODY_PARTS, bodyPartSurfaceLabel, type BodyPart, type Laterality, type Pinpoint } from '@/types/body-part';
 import { BodyMapBadge } from '@/components/patient/body-map-badge';
 import { PinMarker } from '@/components/patient/body-map-picker';
 import { PartDetailDiagram, hasPartDetail } from '@/components/patient/part-detail-diagram';
@@ -30,6 +31,7 @@ import { auditService } from '@/lib/services/audit-service';
 import { accessService } from '@/lib/services/access-service';
 import { formatDateOfBirth } from '@/lib/utils/date-formatting';
 import { orderReportPhotos } from '@/lib/utils/report-order';
+import { applyTimelineFilter, isFilterActive, type TimelineFilter } from '@/lib/utils/timeline-filter';
 import { downscaleImageDataUrl } from '@/lib/utils/downscale-image';
 import { buildDefaultEmailDraft, type EmailDraft } from '@/lib/utils/report-email';
 import { EmailComposeDialog } from '@/components/patient/email-compose-dialog';
@@ -71,10 +73,39 @@ function sanitiseFileToken(name: string): string {
   return name.replace(/[/\\?%*:|"<>]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/** 'yyyy-MM-dd' → local Date, or null. Hand-rolled split on purpose: the
+    Date(string) constructor parses calendar dates as UTC midnight, which
+    lands on the previous local day for any offset behind UTC. */
+function parseLocalDate(value: string | null): Date | null {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 function ReportView() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const patientId = searchParams.get('id') as string;
+  // The timeline's filter, carried in the query params by the Report button:
+  // the report — preview, Save PDF, email draft and print — covers exactly
+  // the photos the grid was showing. Unparseable values fall back to "all".
+  const timelineFilter = useMemo<TimelineFilter>(
+    () => ({
+      series: searchParams.get('series') || null,
+      unlinked: searchParams.get('unlinked') === '1',
+      bodyPart: BODY_PARTS.find((p) => p === searchParams.get('bodyPart')) ?? null,
+      attachments:
+        searchParams.get('attachments') === 'with' ||
+        searchParams.get('attachments') === 'without'
+          ? (searchParams.get('attachments') as 'with' | 'without')
+          : 'all',
+      date: parseLocalDate(searchParams.get('date')),
+    }),
+    [searchParams],
+  );
+  const isFiltered = isFilterActive(timelineFilter);
   // The default email template follows the app theme at compose time
   // (undefined before mount — the compose only opens after that, and the
   // fallback below keeps the light palette). The clinic's branding (logo +
@@ -129,18 +160,17 @@ function ReportView() {
         setPreparedBy(clinician ?? p.ownerName ?? 'Clinician');
         if (cancelled) return;
 
-        // Full-size images, oldest first (the report reads chronologically),
-        // except that photos linked into a lesion series are grouped into one
-        // contiguous block positioned at the series' earliest capture, so a
-        // patient reads each lesion's story front to back.
-        // Previews are downscaled to ~1200px before entering the DOM: 50
-        // full-size base64 strings can push the Windows WebView2 renderer
-        // past its memory ceiling (white window / app crash). The PDF paths
-        // re-read the originals on disk, so print/email quality is unaffected.
+        // Follow the timeline's filter first (a series-only view reports just
+        // that series), then cap and order. Previews are downscaled to ~1200px
+        // before entering the DOM: 50 full-size base64 strings can push the
+        // Windows WebView2 renderer past its memory ceiling (white window /
+        // app crash). The PDF paths re-read the originals on disk, so
+        // print/email quality is unaffected.
         // ponytail: capped at 50 — even downscaled, a huge timeline keeps
         // growing the page. Upgrade path: paginate the report.
+        const filtered = applyTimelineFilter(records, timelineFilter);
         const MAX_REPORT_PHOTOS = 50;
-        const recent = [...records]
+        const recent = [...filtered]
           .sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime())
           .slice(0, MAX_REPORT_PHOTOS)
           .sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
@@ -182,9 +212,9 @@ function ReportView() {
         setPatient(p);
         setPhotos(loaded);
         setFailed(bad);
-        if (records.length > ordered.length) {
+        if (filtered.length > ordered.length) {
           toast.info(
-            `Report shows the ${ordered.length} most recent of ${records.length} photos.`
+            `Report shows the ${ordered.length} most recent of ${filtered.length} photos.`
           );
         }
       } catch {
@@ -197,7 +227,7 @@ function ReportView() {
     return () => {
       cancelled = true;
     };
-  }, [patientId, router]);
+  }, [patientId, timelineFilter, router]);
 
   const consent = useMemo(() => (patient ? consentStatus(patient) : 'none'), [patient]);
 
@@ -457,7 +487,7 @@ function ReportView() {
   if (!patient) return null;
 
   return (
-    <div className="container mx-auto max-w-4xl px-4 py-8 md:px-6 md:py-10">
+    <div className="print-page container mx-auto max-w-4xl px-4 py-8 md:px-6 md:py-10">
       <div className="print-hidden mb-6 flex flex-wrap items-center gap-2">
         <Button
           variant="ghost"
@@ -499,6 +529,21 @@ function ReportView() {
           </Button>
         </div>
       </div>
+
+      {/* Filtered follow-through: say what the report covers and offer the
+          full set back. Chrome only — the print-out stays the document. */}
+      {isFiltered && (
+        <div className="print-hidden mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-muted/50 px-3 py-2 text-sm">
+          <Filter className="size-4 shrink-0 text-muted-foreground" />
+          <span>
+            Filtered view — showing {photos.length} of {patient.photoCount}{' '}
+            {patient.photoCount === 1 ? 'photo' : 'photos'}.
+          </span>
+          <Button asChild variant="ghost" size="sm" className="h-auto px-2 py-0.5">
+            <Link href={`/patients/report?id=${patient.id}`}>Show all</Link>
+          </Button>
+        </div>
+      )}
 
       {/* Paper preview: the document artifact stays light-themed even in dark
           mode; only the surrounding chrome follows the app theme. */}
@@ -567,10 +612,21 @@ function ReportView() {
           <p className="mt-8 text-sm text-zinc-500">No photos on record for this patient.</p>
         ) : (
           <div className="mt-8 space-y-8">
-            {photos.map((photo, i) => (
+            {photos.map((photo, i) => {
+              // Series boundaries get exactly one hairline each: a block opens
+              // with a rule above its heading, and an unlabelled photo that
+              // follows a block gets its own rule — so a series block always
+              // reads as separated from the unlabelled photos around it, and
+              // back-to-back series never stack two rules.
+              const opensSeries =
+                !!photo.lesionGroup && photos[i - 1]?.lesionGroup !== photo.lesionGroup;
+              const followsSeries = !photo.lesionGroup && !!photos[i - 1]?.lesionGroup;
+              return (
               <div key={photo.id}>
-                {photo.lesionGroup && photos[i - 1]?.lesionGroup !== photo.lesionGroup && (
-                  <div className="print-keep">
+                {/* photo.lesionGroup first: TS narrows it to string for the
+                    seriesCounts lookups below (opensSeries implies it). */}
+                {photo.lesionGroup && opensSeries && (
+                  <div className="print-keep border-t border-zinc-200 pt-4">
                     <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500">
                       Linked series · {seriesCounts.get(photo.lesionGroup)}{' '}
                       {seriesCounts.get(photo.lesionGroup) === 1 ? 'photo' : 'photos'}
@@ -580,10 +636,8 @@ function ReportView() {
                 )}
                 <figure
                   className={`print-break flex flex-col gap-4 sm:flex-row ${
-                    photo.lesionGroup && photos[i - 1]?.lesionGroup !== photo.lesionGroup
-                      ? 'mt-4'
-                      : ''
-                  }`}
+                    opensSeries ? 'mt-4' : ''
+                  } ${followsSeries ? 'border-t border-zinc-200 pt-8' : ''}`}
                 >
                 <img
                   src={photo.url}
@@ -647,7 +701,8 @@ function ReportView() {
                 </figcaption>
               </figure>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

@@ -21,6 +21,7 @@ import type { Patient, ConsentScope } from '@/types/patient';
 import { ConsentScopeLabels, consentStatus, reviewStatus } from '@/types/patient';
 import type { PhotoRecord } from '@/types/photo';
 import { PhotoTimeline } from '@/components/photo/photo-timeline';
+import { ALL_TIMELINE_FILTER, type TimelineFilter } from '@/lib/utils/timeline-filter';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
 import { PhotoCompareDialog } from '@/components/photo/photo-compare-dialog';
 import { PhotoUpload } from '@/components/photo/photo-upload';
@@ -78,6 +79,25 @@ function PatientTimelineView() {
   const [isMarkingReviewed, setIsMarkingReviewed] = useState(false);
 
   const [patient, setPatient] = useState<Patient | null>(null);
+  // The timeline's active filter, reported up by PhotoTimeline; the Report
+  // link turns it into query params so the case report (and its print) covers
+  // exactly the photos the grid is showing. Default = no filter → full report.
+  const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>(ALL_TIMELINE_FILTER);
+
+  /** Case-report link carrying the timeline's active filter; only the filters
+      that are actually set become params, so an unfiltered grid → plain link
+      → the full report. */
+  const reportHref = useMemo(() => {
+    const params = new URLSearchParams({ id: patientId });
+    if (timelineFilter.series) params.set('series', timelineFilter.series);
+    if (timelineFilter.unlinked) params.set('unlinked', '1');
+    if (timelineFilter.bodyPart) params.set('bodyPart', timelineFilter.bodyPart);
+    if (timelineFilter.attachments !== 'all') {
+      params.set('attachments', timelineFilter.attachments);
+    }
+    if (timelineFilter.date) params.set('date', format(timelineFilter.date, 'yyyy-MM-dd'));
+    return `/patients/report?${params.toString()}`;
+  }, [patientId, timelineFilter]);
   const [isLoadingPatient, setIsLoadingPatient] = useState(true);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isConsentOpen, setIsConsentOpen] = useState(false);
@@ -315,7 +335,7 @@ function PatientTimelineView() {
               Compare
             </Button>
             <Button variant="outline" asChild>
-              <Link href={`/patients/report?id=${patient.id}`}>
+              <Link href={reportHref}>
                 <FileText className="size-4" />
                 Report
               </Link>
@@ -372,7 +392,12 @@ function PatientTimelineView() {
         </div>
       )}
 
-      <PhotoTimeline photos={photos} onPhotoClick={handlePhotoClick} showFilter />
+      <PhotoTimeline
+        photos={photos}
+        onPhotoClick={handlePhotoClick}
+        showFilter
+        onFilterChange={setTimelineFilter}
+      />
 
       <RecordConsentDialog
         patient={patient}
@@ -550,8 +575,11 @@ function EditPatientDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      {/* Bounded dialog: the header and action bar stay put while the form
+          scrolls between them — Save never leaves the window on short
+          screens. (Same mechanism as the capture/import dialogs.) */}
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden sm:max-w-md">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle>Edit patient details</DialogTitle>
           <DialogDescription>
             Update the patient name, date of birth, email, consent, or review
@@ -560,7 +588,11 @@ function EditPatientDialog({
         </DialogHeader>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(handleSubmit)} className="flex min-h-0 flex-1 flex-col">
+            {/* Full-bleed scroll region (px-6 restores the dialog's inset and
+                keeps focused inputs' rings clear of the clip edge). */}
+            <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+            <div className="space-y-4">
             <FormField
               control={form.control}
               name="name"
@@ -679,8 +711,10 @@ function EditPatientDialog({
                 </FormItem>
               )}
             />
+            </div>
+            </div>
 
-            <DialogFooter className="sm:justify-between">
+            <DialogFooter className="shrink-0 border-t pt-4 sm:justify-between">
               <Button
                 type="button"
                 variant="ghost"
@@ -777,41 +811,45 @@ function DeletePatientDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !isDeleting && onOpenChange(next)}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-hidden sm:max-w-md">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle>Delete “{patient.name}”?</DialogTitle>
           <DialogDescription>
             This permanently removes the patient and cannot be undone:
           </DialogDescription>
         </DialogHeader>
 
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>
-            {totalPhotos === 1 ? '1 photo' : `${totalPhotos} photos`} — including any soft-deleted
-            ones — and their files on disk
-          </li>
-          <li>Attached result files and sharing grants</li>
-        </ul>
-        <p className="text-sm text-muted-foreground">
-          The audit log keeps a record of the deletion and of this patient&apos;s history under
-          their name at the time.
-        </p>
+        <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+          <div className="space-y-4">
+            <ul className="list-disc space-y-1 pl-5 text-sm">
+              <li>
+                {totalPhotos === 1 ? '1 photo' : `${totalPhotos} photos`} — including any
+                soft-deleted ones — and their files on disk
+              </li>
+              <li>Attached result files and sharing grants</li>
+            </ul>
+            <p className="text-sm text-muted-foreground">
+              The audit log keeps a record of the deletion and of this patient&apos;s history under
+              their name at the time.
+            </p>
 
-        <div className="space-y-2">
-          <Label htmlFor="delete-confirm-name">
-            Type <span className="font-semibold">{patient.name}</span> to confirm
-          </Label>
-          <Input
-            id="delete-confirm-name"
-            value={confirmName}
-            onChange={(e) => setConfirmName(e.target.value)}
-            disabled={isDeleting}
-            autoComplete="off"
-            autoFocus
-          />
+            <div className="space-y-2">
+              <Label htmlFor="delete-confirm-name">
+                Type <span className="font-semibold">{patient.name}</span> to confirm
+              </Label>
+              <Input
+                id="delete-confirm-name"
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+                disabled={isDeleting}
+                autoComplete="off"
+                autoFocus
+              />
+            </div>
+          </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t pt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isDeleting}>
             Cancel
           </Button>

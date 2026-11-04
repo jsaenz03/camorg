@@ -186,15 +186,21 @@ export default function DashboardLayout({
         <CompanionProvider>
           {navLayout === 'top' ? null : <AppSidebar side={navLayout} />}
           <SidebarInset>
-            <LicenceBanner />
-            <DiskEncryptionBanner />
+            {/* Banner wrappers are display:contents on screen (invisible to
+                the flex column) and print-hidden on paper. */}
+            <div className="contents print-hidden">
+              <LicenceBanner />
+            </div>
+            <div className="contents print-hidden">
+              <DiskEncryptionBanner />
+            </div>
             {navLayout === 'top' ? (
               <TopNavHeader />
             ) : (
               /* The collapse/expand trigger sits on the edge the sidebar is
                  docked to — spatially next to the panel it controls — with a
                  glyph pointing at that panel. */
-              <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+              <header className="print-hidden sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/75">
                 {navLayout === 'left' && (
                   <>
                     <SidebarTrigger />
