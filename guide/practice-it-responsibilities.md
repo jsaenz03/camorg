@@ -32,7 +32,11 @@ decision, not the software's.
 
 Local-first makes the Camog workstation the vault. Screen locking, Camog's
 idle privacy lock (Settings → App settings), and who can sign in to the
-computer at all are practice controls — the app inherits all of them.
+computer at all are practice controls — the app inherits all of them. Run
+one instance of Camog at a time on the machine: the app is single-instance
+per Windows account, so two signed-in accounts (fast user switching) can
+each start their own copy against the same database, and simultaneous use
+can produce write conflicts.
 
 ## 3. The phone link is a LAN service, and it is opt-in
 

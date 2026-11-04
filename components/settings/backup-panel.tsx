@@ -191,7 +191,10 @@ export function BackupPanel() {
         <CardDescription>
           The database (patients, photo metadata, users) lives only on this machine — back it up
           to the photo storage folder regularly, especially when that folder is cloud-synced.
-          Backups are encrypted with a passphrase only your practice knows.
+          Backups are encrypted with a passphrase only your practice knows. A backup carries the
+          database only: photos come back once this machine&apos;s storage points at the same
+          (cloud-synced) folder, but the photo encryption key never travels — copy the photo-key
+          file from the old machine&apos;s app data directory too.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

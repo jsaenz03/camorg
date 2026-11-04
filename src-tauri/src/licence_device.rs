@@ -104,7 +104,14 @@ fn write_identity(path: &Path, id: &str) -> std::io::Result<()> {
   if let Some(dir) = path.parent() {
     std::fs::create_dir_all(dir)?;
   }
-  std::fs::write(path, id)?;
+  // Temp-then-rename: a torn identity file reads as invalid and a fresh
+  // identity is minted, burning the licence seat until re-activation.
+  let file = path.file_name().ok_or_else(|| {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+  })?;
+  let tmp = path.with_file_name(format!("{}.tmp", file.to_string_lossy()));
+  std::fs::write(&tmp, id)?;
+  std::fs::rename(&tmp, path)?;
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt;

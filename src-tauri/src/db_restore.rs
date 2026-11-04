@@ -69,6 +69,7 @@ pub fn apply_pending_restore(config_dir: &Path) -> Result<Option<()>, String> {
     if !is_sqlite_file(&staged) {
         let _ = fs::remove_file(config_dir.join(sibling(STAGED, "-wal")));
         let _ = fs::remove_file(config_dir.join(sibling(STAGED, "-shm")));
+        let _ = fs::remove_file(config_dir.join(sibling(STAGED, "-journal")));
         let _ = fs::remove_file(&staged);
         return Err("staged restore was not a valid database — discarded".into());
     }
@@ -81,6 +82,7 @@ pub fn apply_pending_restore(config_dir: &Path) -> Result<Option<()>, String> {
         // an interrupted swap there is no live database and the existing
         // pre-restore copy IS the user's data, not a stale leftover.
         let _ = fs::remove_file(config_dir.join(sibling(PRE_RESTORE, "-wal")));
+        let _ = fs::remove_file(config_dir.join(sibling(PRE_RESTORE, "-journal")));
         let _ = fs::remove_file(config_dir.join(PRE_RESTORE));
         fs::rename(&live, config_dir.join(PRE_RESTORE))
             .map_err(|e| format!("could not move the live database aside: {e}"))?;
@@ -92,11 +94,20 @@ pub fn apply_pending_restore(config_dir: &Path) -> Result<Option<()>, String> {
         fs::rename(&wal, config_dir.join(sibling(PRE_RESTORE, "-wal")))
             .map_err(|e| format!("could not move the live database's -wal aside: {e}"))?;
     }
+    // The rollback journal (the DB runs DELETE journal mode) belongs to the
+    // old database exactly like a -wal: move it beside the safety copy, or
+    // SQLite would roll its pages into the restored database at open.
+    let journal = config_dir.join(sibling(DB, "-journal"));
+    if journal.exists() {
+        fs::rename(&journal, config_dir.join(sibling(PRE_RESTORE, "-journal")))
+            .map_err(|e| format!("could not move the live database's -journal aside: {e}"))?;
+    }
     let _ = fs::remove_file(config_dir.join(sibling(DB, "-shm")));
     // Siblings the staging-side validation may have created on the staged
     // file; the staged database is self-contained after a clean close.
     let _ = fs::remove_file(config_dir.join(sibling(STAGED, "-wal")));
     let _ = fs::remove_file(config_dir.join(sibling(STAGED, "-shm")));
+    let _ = fs::remove_file(config_dir.join(sibling(STAGED, "-journal")));
 
     fs::rename(&staged, &live)
         .map_err(|e| format!("could not move the staged restore into place: {e}"))?;
@@ -234,6 +245,29 @@ mod tests {
 
         assert_eq!(fs::read(dir.join(DB)).unwrap(), sqlite_file("backup-new"));
         assert_eq!(fs::read(dir.join(PRE_RESTORE)).unwrap(), sqlite_file("live-old"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hot_rollback_journal_moves_aside_with_the_old_database() {
+        // A mid-transaction crash leaves a hot camog.db-journal beside a
+        // pending staged restore (DELETE journal mode). It must travel with
+        // the safety copy, not stay beside camog.db — SQLite would roll its
+        // pages into the restored database at open.
+        let dir = tempdir("hot-journal");
+        write(&dir.join(DB), &sqlite_file("live-old"));
+        write(&dir.join(STAGED), &sqlite_file("backup-new"));
+        write(&dir.join(sibling(DB, "-journal")), b"hot-journal");
+
+        assert_eq!(apply_pending_restore(&dir), Ok(Some(())));
+
+        assert_eq!(fs::read(dir.join(DB)).unwrap(), sqlite_file("backup-new"));
+        assert_eq!(fs::read(dir.join(PRE_RESTORE)).unwrap(), sqlite_file("live-old"));
+        assert_eq!(
+            fs::read(dir.join(sibling(PRE_RESTORE, "-journal"))).unwrap(),
+            b"hot-journal"
+        );
+        assert!(!dir.join(sibling(DB, "-journal")).exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

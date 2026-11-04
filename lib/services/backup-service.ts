@@ -140,12 +140,13 @@ class BackupService {
     await db.execute(`VACUUM INTO ${literal}`);
 
     // Seal in place: read the plaintext snapshot VACUUM just wrote, encrypt
-    // with the passphrase, and rename a .tmp sibling over it (a crash
-    // mid-seal leaves the plaintext snapshot, never a truncated cipher).
-    // ponytail: the plaintext file exists briefly; the live camog.db is
-    // plaintext anyway by design, so this window adds no new exposure.
+    // with the passphrase, then remove the plaintext BEFORE the sealed copy
+    // lands — a crash after the remove leaves only the .tmp cipher (which
+    // the backup-name regex ignores), never a truncated cipher or a
+    // readable full-database snapshot the pruner would keep as restorable.
     const plain = new Uint8Array(await readFile(target));
     const sealed = await encryptBackupBytes(plain, passphrase);
+    await remove(target);
     await writeFile(`${target}.tmp`, sealed);
     await rename(`${target}.tmp`, target);
 

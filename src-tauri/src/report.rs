@@ -1672,6 +1672,13 @@ fn email_case_report_inner(
   // Only the Windows branches below annotate how the draft left the device.
   #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
   let mut outcome = generate_case_report_inner(request.clone())?;
+  // Plaintext PHI in a shared temp dir: owner-only on Unix (Windows %TEMP%
+  // is already per-user).
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(&pdf_path, std::fs::Permissions::from_mode(0o600));
+  }
   let pdf =
     std::fs::read(&pdf_path).map_err(|e| format!("Could not read back the generated PDF: {e}"))?;
   let attachment_name = draft_attachment_name(&request.patient_name);
@@ -1695,6 +1702,9 @@ fn email_case_report_inner(
       );
       let _ = &pdf; // read back for the .eml paths only
       result?;
+      // The mail client copied the attachment when composing; the temp copy
+      // of a plaintext patient PDF can go now.
+      let _ = std::fs::remove_file(&pdf_path);
       outcome.handoff = Some(String::from("mapi"));
       Ok(outcome)
     } else {
@@ -1714,6 +1724,11 @@ fn email_case_report_inner(
       );
       std::fs::write(&eml_path, eml)
         .map_err(|e| format!("Could not stage the email draft: {e}"))?;
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&eml_path, std::fs::Permissions::from_mode(0o600));
+      }
       match win_shell::open_default(&eml_path.to_string_lossy()) {
         Ok(()) => {
           // The .eml embeds the PDF bytes; nothing needs the temp copy.
@@ -1767,6 +1782,11 @@ fn email_case_report_inner(
     );
     std::fs::write(&eml_path, eml)
       .map_err(|e| format!("Could not stage the email draft: {e}"))?;
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let _ = std::fs::set_permissions(&eml_path, std::fs::Permissions::from_mode(0o600));
+    }
     // The .eml embeds the PDF bytes; Mail never opens the file itself.
     let _ = std::fs::remove_file(&pdf_path);
     std::process::Command::new("open")

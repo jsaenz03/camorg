@@ -112,14 +112,25 @@ fn write_key_file(path: &std::path::Path, encoded: &str) -> Result<(), String> {
   if let Some(dir) = path.parent() {
     std::fs::create_dir_all(dir).map_err(|e| format!("Could not create the app data dir: {e}"))?;
   }
-  std::fs::write(path, encoded.trim())
+  // Temp-then-rename: a torn write of the key file would strand every
+  // encrypted photo on the machine (the key is never silently regenerated),
+  // so the key file can never appear half-written.
+  let name = path
+    .file_name()
+    .and_then(|n| n.to_str())
+    .ok_or("photo key path has no file name")?;
+  let tmp = path.with_file_name(format!("{name}.tmp"));
+  std::fs::write(&tmp, encoded.trim())
     .map_err(|e| format!("Could not store the photo key in the app data dir: {e}"))?;
   // Owner-only on Unix; the Windows profile directory is already per-user.
+  // The tmp file is 0600 before it is renamed into place.
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
   }
+  std::fs::rename(&tmp, path)
+    .map_err(|e| format!("Could not store the photo key in the app data dir: {e}"))?;
   Ok(())
 }
 

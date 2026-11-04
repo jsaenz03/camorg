@@ -598,6 +598,26 @@ fn classify_auth(
   AuthAction::Rejected { noted }
 }
 
+/// Temp-then-rename write with owner-only permissions on Unix (bearer
+/// credentials beside prefs — 0600 on all of them is harmless and simple).
+/// A torn write of any of these small files would silently rotate a
+/// credential or drop the pinned port, killing every saved phone link until
+/// the QR is re-scanned; the file never appears half-written, and the tmp
+/// copy is 0600 before it is renamed into place.
+fn write_file_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+  let file = path.file_name().ok_or_else(|| {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+  })?;
+  let tmp = path.with_file_name(format!("{}.tmp", file.to_string_lossy()));
+  std::fs::write(&tmp, contents)?;
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+  }
+  std::fs::rename(&tmp, path)
+}
+
 /// The pairing token is the bearer secret for the LAN link, and it persists
 /// across restarts: the same URL is served every session, so the phone's
 /// saved bookmark (or home-screen icon) keeps working without re-scanning
@@ -623,13 +643,8 @@ fn pairing_token(app: &AppHandle) -> Result<String, String> {
   }
   let token = format!("{:016x}", rand::random::<u64>());
   std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-  std::fs::write(&path, &token).map_err(|e| e.to_string())?;
   // Owner-only, like the photo key: the token is a bearer credential.
-  #[cfg(unix)]
-  {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-  }
+  write_file_atomic(&path, &token).map_err(|e| e.to_string())?;
   Ok(token)
 }
 
@@ -661,12 +676,7 @@ fn pairing_key(app: &AppHandle) -> Result<[u8; 32], String> {
   let key: [u8; 32] = rand::random();
   std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
   let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
-  std::fs::write(&path, &hex).map_err(|e| e.to_string())?;
-  #[cfg(unix)]
-  {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-  }
+  write_file_atomic(&path, &hex).map_err(|e| e.to_string())?;
   Ok(key)
 }
 
@@ -713,9 +723,10 @@ fn pin_port(app: &AppHandle, port: u16) -> Result<(), String> {
   let dir = app
     .path()
     .app_data_dir()
-    .map_err(|e| format!("could not resolve the app data dir: {e}"))?;
+    .map_err(|e| e.to_string())?;
   std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-  std::fs::write(dir.join("phone-link-port"), port.to_string()).map_err(|e| e.to_string())
+  write_file_atomic(&dir.join("phone-link-port"), &port.to_string())
+    .map_err(|e| e.to_string())
 }
 
 /// "Start automatically" preference (the Phone link dialog's toggle): when
@@ -772,7 +783,7 @@ fn migrate_auto_start_pref_in(dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
   }
   let json = serde_json::to_string(&PhoneLinkPrefs { remember: true }).map_err(|e| e.to_string())?;
-  std::fs::write(&prefs, json).map_err(|e| e.to_string())
+  write_file_atomic(&prefs, &json).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -791,7 +802,7 @@ pub fn set_phone_link_remember(app: AppHandle, remember: bool) -> Result<(), Str
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
   }
   let json = serde_json::to_string(&PhoneLinkPrefs { remember }).map_err(|e| e.to_string())?;
-  std::fs::write(&path, json).map_err(|e| e.to_string())
+  write_file_atomic(&path, &json).map_err(|e| e.to_string())
 }
 
 fn now_ms() -> u64 {
