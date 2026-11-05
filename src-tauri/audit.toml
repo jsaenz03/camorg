@@ -1,0 +1,14 @@
+# cargo-audit settings (read from ./audit.toml beside Cargo.toml —
+# the working directory of the audit step in the security-scan workflow).
+#
+# RUSTSEC-2023-0071 (Marvin Attack — timing sidechannel in rsa 0.9.10):
+# no patched version exists upstream (`patched = []` is intentional).
+# The only reachable path in the dependency graph is sqlx-mysql's auth
+# handshake (Cargo.lock: sqlx-mysql 0.8.6 → rsa), which a timing attacker
+# could observe. Camog opens SQLite databases only, so no RSA decryption
+# ever runs and no timing is observable. Clean-up path: prune the sqlx
+# mysql/postgres feature chain from src-tauri's dependency features to
+# remove the crate outright, then delete this allowlist entry.
+#
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]
