@@ -17,6 +17,8 @@ on:
 
 permissions:
   contents: read
+  # rustsec/audit-check posts its findings as a check run.
+  checks: write
 
 jobs:
   scan:
