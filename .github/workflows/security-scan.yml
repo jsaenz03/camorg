@@ -43,7 +43,7 @@ jobs:
       # the OpenNext build chain — upstream) and none ship in the desktop
       # installers. Tighten this gate to high when those two chains ship
       # fixes; tracked in the supplier's private assurance records.
-      - name: npm audit — production dependencies (gate: critical+)
+      - name: npm audit — dependencies gate at critical
         run: npm audit --omit=dev --audit-level=critical
 
       - name: npm audit — production dependencies, high+ (advisory)
