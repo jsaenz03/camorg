@@ -185,7 +185,12 @@ export default function DashboardLayout({
       <CaptureProvider>
         <CompanionProvider>
           {navLayout === 'top' ? null : <AppSidebar side={navLayout} />}
-          <SidebarInset>
+          {/* Horizontal containment lives on the inset, not the flex parent:
+              Chromium collapses empty fixed-width flex items (the sidebar
+              gap) when the flex container itself clips. With the inset
+              clipping, nothing overflows the document sideways and the fixed
+              sidebar can never be overlaid by horizontally-scrolled chrome. */}
+          <SidebarInset className="overflow-x-clip">
             {/* Banner wrappers are display:contents on screen (invisible to
                 the flex column) and print-hidden on paper. */}
             <div className="contents print-hidden">

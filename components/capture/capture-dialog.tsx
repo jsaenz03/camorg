@@ -756,7 +756,7 @@ function CaptureFlow({
   };
 
   return (
-    <div className="@container flex min-h-0 flex-1 flex-col gap-6">
+    <div className="@container flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto @3xl:overflow-hidden">
       {pending.length > 0 && (
         <Card className="shrink-0">
           <CardHeader>
@@ -825,10 +825,11 @@ function CaptureFlow({
       )}
 
       {/* Two panes once the dialog itself is wide enough (@3xl = 48rem of
-          container width) — independent of the window size. Below @3xl the
-          camera row sizes to its content and the form takes the remaining
-          height, scrolling internally with its action bar pinned. */}
-      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-6 @3xl:grid-cols-2 @3xl:grid-rows-1">
+          container width). Below that the panes stack at natural height — the
+          wrapper's single scroll region carries them (nothing squeezed out
+          of view; consistent with the other dialogs) — and the form's pinned
+          action bar keeps Save reachable by scrolling. */}
+      <div className="grid grid-rows-[auto_auto] gap-6 @3xl:grid-cols-2 @3xl:grid-rows-1 @3xl:min-h-0 @3xl:flex-1">
         {/* Left: Camera or Captured Photo (scrolls only if its card outgrows
             the space, e.g. a very short window). ScrollArea draws its bar as
             an overlay — a native scrollbar would narrow this column whenever

@@ -123,6 +123,19 @@
   }
 }
 
+/* ----- horizontal containment (desktop chrome) ----- */
+/* The dashboard chrome is anchored: AppSidebar is fixed and the top bar is
+ * sticky inside SidebarInset. A document-level horizontal scroll — any
+ * element whose row can't wrap on a narrow window — slides the inset, and
+ * with it the sticky top bar, sideways while the fixed sidebar stays put,
+ * so the bar paints over the sidebar. Horizontal document scrolling is not
+ * an app affordance: clip at the root. Vertical scrolling is unaffected,
+ * and regions that legitimately scroll sideways keep their own scrollers
+ * (TopNavHeader's tabs, detail-dialog chips, settings tables). */
+html {
+  overflow-x: clip;
+}
+
 /* ----- print: patient case report ----- */
 /* The report page marks its printable root with .print-report and its layout
  * wrapper with .print-page; dashboard chrome marks itself .print-hidden. When

@@ -50,8 +50,8 @@ export function DiskEncryptionBanner() {
   };
 
   return (
-    <div className="flex items-center justify-center gap-3 border-b border-destructive/20 bg-destructive/10 px-4 py-1.5 text-sm text-destructive">
-      <HardDrive className="size-4" />
+    <div className="flex flex-wrap items-center justify-center gap-3 border-b border-destructive/20 bg-destructive/10 px-4 py-1.5 text-sm text-destructive">
+      <HardDrive className="size-4 shrink-0" />
       {state === 'off' ? (
         <span>
           Disk encryption is off — patient details are readable if this

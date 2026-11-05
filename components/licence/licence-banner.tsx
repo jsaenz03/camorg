@@ -27,8 +27,8 @@ export function LicenceBanner() {
       Math.ceil(((status.trialEndsAt?.getTime() ?? 0) - Date.now()) / MS_PER_DAY)
     );
     return (
-      <div className="flex items-center justify-center gap-3 border-b border-primary/20 bg-primary/10 px-4 py-1.5 text-sm text-primary">
-        <Timer className="size-4" />
+      <div className="flex flex-wrap items-center justify-center gap-3 border-b border-primary/20 bg-primary/10 px-4 py-1.5 text-sm text-primary">
+        <Timer className="size-4 shrink-0" />
         <span>
           Trial — {daysLeft} {daysLeft === 1 ? 'day' : 'days'} left
         </span>
@@ -42,8 +42,8 @@ export function LicenceBanner() {
 
   if (status.state === 'read-only') {
     return (
-      <div className="flex items-center justify-center gap-3 border-b border-destructive/20 bg-destructive/10 px-4 py-1.5 text-sm text-destructive">
-        <ShieldAlert className="size-4" />
+      <div className="flex flex-wrap items-center justify-center gap-3 border-b border-destructive/20 bg-destructive/10 px-4 py-1.5 text-sm text-destructive">
+        <ShieldAlert className="size-4 shrink-0" />
         <span>
           Read-only mode — existing records stay viewable.
           {status.licence
@@ -63,8 +63,8 @@ export function LicenceBanner() {
   const expiresAt = status.licence?.expiresAt;
   if (expiresAt && expiresAt.getTime() - Date.now() <= RENEWAL_WINDOW_DAYS * MS_PER_DAY) {
     return (
-      <div className="flex items-center justify-center gap-3 border-b border-primary/20 bg-primary/10 px-4 py-1.5 text-sm text-primary">
-        <BadgeCheck className="size-4" />
+      <div className="flex flex-wrap items-center justify-center gap-3 border-b border-primary/20 bg-primary/10 px-4 py-1.5 text-sm text-primary">
+        <BadgeCheck className="size-4 shrink-0" />
         <span>Licence expires {format(expiresAt, 'd/MM/yyyy')} — renew to stay activated.</span>
         <Button size="sm" variant="secondary" className="h-7" onClick={openActivation}>
           Renew
