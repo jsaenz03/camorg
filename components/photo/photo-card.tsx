@@ -337,6 +337,7 @@ export function PhotoCard({
       <button
         type="button"
         ref={registerDropTarget}
+        data-photo-id={photo.id}
         onPointerDown={handlePointerDown}
         onClick={handleCardClick}
         onContextMenu={(e) => {

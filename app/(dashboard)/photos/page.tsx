@@ -320,8 +320,9 @@ export default function PhotosPage() {
               />
               {photos.length > 1 && (
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Tip: ⌘-click (Ctrl on Windows) photos to select several, then drag one onto
-                  another to link them all as one series.
+                  Tip: ⌘-click (Ctrl on Windows) photos — or Ctrl-drag a box over them — to select
+                  several, then drag one onto another to link them all as one series. Escape (or
+                  a click on empty space) clears the selection.
                 </p>
               )}
               {hasMore && (

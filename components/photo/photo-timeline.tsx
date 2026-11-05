@@ -197,8 +197,9 @@ export function PhotoTimeline({
       />
       {filteredPhotos.length > 1 && (
         <p className="text-xs text-muted-foreground">
-          Tip: ⌘-click (Ctrl on Windows) photos to select several, then drag one onto another to
-          link them all as one series.
+          Tip: ⌘-click (Ctrl on Windows) photos — or Ctrl-drag a box over them — to select several,
+          then drag one onto another to link them all as one series. Escape (or a click on empty
+          space) clears the selection.
         </p>
       )}
     </div>

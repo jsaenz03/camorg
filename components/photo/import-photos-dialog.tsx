@@ -23,6 +23,7 @@ import { readDir, readFile, stat } from '@tauri-apps/plugin-fs';
 import { photoService } from '@/lib/services/photo-service';
 import { auditService } from '@/lib/services/audit-service';
 import { usePatients } from '@/lib/hooks/use-patients';
+import { AddPatientDialog } from '@/components/patient/add-patient-dialog';
 import { BODY_PARTS, BodyPartLabels } from '@/types/body-part';
 import type { BodyPart } from '@/types/body-part';
 import { LicenceReadOnlyError } from '@/lib/validators/errors';
@@ -57,6 +58,9 @@ function formatBytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
+/** Select sentinel for the "add a new patient" entry — never a real id. */
+const ADD_NEW_PATIENT = '__add_new__';
+
 interface ImportPhotosDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -77,6 +81,9 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
   const [failed, setFailed] = useState<{ name: string; message: string }[]>([]);
   const [skippedCount, setSkippedCount] = useState(0);
   const [licenceBlocked, setLicenceBlocked] = useState(false);
+  // The patient picker's "add new" entry opens the add-patient dialog over
+  // this one; a created patient is selected for the import automatically.
+  const [addOpen, setAddOpen] = useState(false);
 
   // A fresh open starts over; results stay readable until the dialog closes.
   useEffect(() => {
@@ -92,6 +99,7 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
       setFailed([]);
       setSkippedCount(0);
       setLicenceBlocked(false);
+      setAddOpen(false);
     }
   }, [open]);
 
@@ -306,7 +314,19 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Patient</label>
-                <Select value={patientId} onValueChange={setPatientId}>
+                <Select
+                  value={patientId}
+                  onValueChange={(v) => {
+                    // The list refreshes itself through the attention event
+                    // patient creation fires, so the new record appears in
+                    // place and is picked up for the batch.
+                    if (v === ADD_NEW_PATIENT) {
+                      setAddOpen(true);
+                      return;
+                    }
+                    setPatientId(v);
+                  }}
+                >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select patient" />
                   </SelectTrigger>
@@ -316,6 +336,9 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
                         {p.name}
                       </SelectItem>
                     ))}
+                    <SelectItem value={ADD_NEW_PATIENT}>
+                      + Add new patient…
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -444,6 +467,18 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
           )}
         </DialogFooter>
       </DialogContent>
+
+      {/* “Add new patient…” opens the add-patient form over this dialog; on
+          creation the record is picked for the batch immediately — the
+          picker's list refreshes on its own (the attention event patient
+          creation fires). */}
+      <AddPatientDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onCreated={(created) => {
+          setPatientId(created.id);
+        }}
+      />
     </Dialog>
   );
 }
