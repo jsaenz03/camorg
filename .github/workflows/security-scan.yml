@@ -59,3 +59,9 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: src-tauri
+          # RUSTSEC-2023-0071 (Marvin Attack — timing sidechannel in rsa
+          # 0.9.10): unpatched upstream, and its only reachable path is
+          # sqlx-mysql's auth handshake, which Camog never exercises (SQLite
+          # only). Reasoned in src-tauri/audit.toml, which also feeds the
+          # action in place of local audits.
+          ignore: RUSTSEC-2023-0071
