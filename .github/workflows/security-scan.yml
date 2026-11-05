@@ -62,6 +62,7 @@ jobs:
           # RUSTSEC-2023-0071 (Marvin Attack — timing sidechannel in rsa
           # 0.9.10): unpatched upstream, and its only reachable path is
           # sqlx-mysql's auth handshake, which Camog never exercises (SQLite
-          # only). Reasoned in src-tauri/audit.toml, which also feeds the
-          # action in place of local audits.
+          # only). Reasoned in src-tauri/audit.toml, which serves local
+          # cargo-audit runs; the action does not read that file, so the
+          # allowlist is passed here.
           ignore: RUSTSEC-2023-0071

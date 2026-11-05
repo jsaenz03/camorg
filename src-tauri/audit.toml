@@ -1,5 +1,7 @@
-# cargo-audit settings (read from ./audit.toml beside Cargo.toml —
-# the working directory of the audit step in the security-scan workflow).
+# cargo-audit settings (read from ./audit.toml beside Cargo.toml by local
+# cargo audit runs — the security-scan workflow's audit-check action does
+# not read this file; its allowlist is passed via the workflow's ignore
+# input, kept in sync with the entry below).
 #
 # RUSTSEC-2023-0071 (Marvin Attack — timing sidechannel in rsa 0.9.10):
 # no patched version exists upstream (`patched = []` is intentional).
