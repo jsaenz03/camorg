@@ -98,7 +98,17 @@ export default function PhotosPage() {
   useEffect(() => {
     if (selectedIds.size === 0) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.defaultPrevented) setSelectedIds(new Set());
+      if (e.key === 'Escape' && !e.defaultPrevented) {
+        setSelectedIds(new Set());
+        // The last ⌘/Ctrl-clicked tile keeps focus after the clear, and
+        // Chromium paints its :focus-visible ring from the Escape keydown
+        // itself — same colour as the selection ring (--ring is --primary),
+        // so the tile reads as "one still selected". Release it too.
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && active.hasAttribute('data-photo-id')) {
+          active.blur();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -232,10 +242,10 @@ export default function PhotosPage() {
                   onValueChange={(v) => setAttachments(v as 'any' | 'with' | 'without')}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Any photo" />
+                    <SelectValue placeholder="Attachments" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="any">Any photo</SelectItem>
+                    <SelectItem value="any">All photos</SelectItem>
                     <SelectItem value="with">With attachments</SelectItem>
                     <SelectItem value="without">Without attachments</SelectItem>
                   </SelectContent>

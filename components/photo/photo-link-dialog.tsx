@@ -267,8 +267,11 @@ export function PhotoLinkDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Full-bleed scroll region — px-6 restores the dialog's inset. */}
-        <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
+        {/* Full-bleed scroll region — px-6 restores the dialog's inset; py-3
+            keeps the series input's focus ring clear of the clip edge (the
+            input ends this region whenever a fresh multi-link has no hints
+            or chips), and gives the thumbs air below the description. */}
+        <div className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6 py-3">
         <div className="flex items-center justify-center gap-3">
           <LinkThumb photo={source} count={multi ? sources.length : undefined} />
           {unlinking ? (
