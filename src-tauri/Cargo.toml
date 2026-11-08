@@ -57,7 +57,7 @@ if-addrs = "0.15.0"
 flate2 = "1"
 # The updater-signature acceptance test (specs/006) drives the same minisign
 # verifier tauri-plugin-updater uses internally.
-minisign-verify = "0.2"
+minisign-verify = "0.3"
 # The phone-link HTTP integration test drives handle_request through Tauri's
 # mock runtime (no window, real sockets); same crate as the main dependency,
 # test feature enabled for tests only.
