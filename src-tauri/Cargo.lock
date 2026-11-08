@@ -110,7 +110,7 @@ name = "app"
 version = "0.14.1"
 dependencies = [
  "aes-gcm",
- "base64 0.22.1",
+ "base64 0.23.1",
  "flate2",
  "if-addrs",
  "keyring",
