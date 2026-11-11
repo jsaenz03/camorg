@@ -220,7 +220,7 @@ jobs:
           '@ | Out-File -FilePath .\INSTALL-test-msix.txt -Encoding utf8
 
       - name: Upload the package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ github.event.inputs.identity_name == '' && 'camog-test-msix' || 'camog-store-msix' }}
           path: |
