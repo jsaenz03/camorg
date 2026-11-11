@@ -41,7 +41,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout (for scripts/make-msix.ps1 and the brand tiles)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download the NSIS setup
         shell: pwsh
