@@ -16,6 +16,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 import type { Clinician } from '@/types/clinician';
+import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP } from '@/types/clinician';
 import type { BodyPart } from '@/types/body-part';
 import { BodyPartLabels, BODY_PARTS as BodyPartValues } from '@/types/body-part';
 
@@ -204,13 +205,17 @@ function ProfileCard({
     };
   }, []);
 
-  async function updatePrefs(patch: Partial<Clinician['preferences']>) {
+  async function updatePrefs(
+    patch: Partial<Clinician['preferences']>,
+  ): Promise<boolean> {
     try {
       await authService.updatePreferences(patch);
       await onchanged();
       toast.success('Preference saved');
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Save failed');
+      return false;
     }
   }
 
@@ -226,6 +231,21 @@ function ProfileCard({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Save failed');
     }
+  }
+
+  // Interface scale: dragging updates the readout locally; the preference
+  // (and the live UI, via the dashboard layout) commits on release so one
+  // drag is one save instead of one per tick. A failed save snaps the
+  // readout back to the persisted value.
+  const [scaleDraft, setScaleDraft] = useState(clinician.preferences.uiScale);
+  useEffect(() => {
+    setScaleDraft(clinician.preferences.uiScale);
+  }, [clinician.preferences.uiScale]);
+
+  async function commitScale() {
+    if (scaleDraft === clinician.preferences.uiScale) return;
+    const saved = await updatePrefs({ uiScale: scaleDraft });
+    if (!saved) setScaleDraft(clinician.preferences.uiScale);
   }
 
   return (
@@ -255,6 +275,39 @@ function ProfileCard({
           <p className="text-xs text-muted-foreground">
             Where the main navigation lives. &ldquo;Tabs at the top&rdquo;
             replaces the sidebar with tabs along the header.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-baseline justify-between">
+            <label htmlFor="ui-scale" className="text-sm font-medium">
+              Interface scale
+            </label>
+            <span className="text-sm tabular-nums text-muted-foreground">
+              {scaleDraft === 100 ? 'Default' : `${scaleDraft}%`}
+            </span>
+          </div>
+          <input
+            id="ui-scale"
+            type="range"
+            min={UI_SCALE_MIN}
+            max={UI_SCALE_MAX}
+            step={UI_SCALE_STEP}
+            value={scaleDraft}
+            onChange={(e) => setScaleDraft(Number(e.target.value))}
+            onPointerUp={commitScale}
+            onKeyUp={commitScale}
+            onBlur={commitScale}
+            className="w-full accent-primary"
+            aria-valuetext={
+              scaleDraft === 100 ? 'Default, 100%' : `${scaleDraft}%`
+            }
+            aria-describedby="ui-scale-help"
+          />
+          <p id="ui-scale-help" className="text-xs text-muted-foreground">
+            Makes everything in the app larger or smaller. 100% is the default
+            — try a lower scale if the interface feels too big for your
+            screen.
           </p>
         </div>
 

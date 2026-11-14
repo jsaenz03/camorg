@@ -287,7 +287,7 @@ function PatientTimelineView() {
           </>
         }
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {consent === 'valid' ? (
               <Badge variant="outline" className="gap-1 border-primary/40 text-primary" title={patient.consentExpiresAt ? `Expires ${format(patient.consentExpiresAt, 'dd/MM/yyyy')}` : 'No expiry set'}>
                 <ShieldCheck className="size-3" />

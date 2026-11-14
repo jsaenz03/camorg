@@ -145,6 +145,20 @@ export default function DashboardLayout({
     if (!session) router.replace('/login');
   }, [loading, session, router]);
 
+  // Interface scale (Settings → Profile): the root font-size drives every
+  // rem-based size in the UI, so one percentage zooms the whole app. 100
+  // clears the override; unmounting (sign-out) resets it so the auth pages
+  // always render at the default.
+  const uiScale = clinician?.preferences.uiScale ?? 100;
+
+  useEffect(() => {
+    document.documentElement.style.fontSize =
+      uiScale === 100 ? '' : `${uiScale}%`;
+    return () => {
+      document.documentElement.style.fontSize = '';
+    };
+  }, [uiScale]);
+
   if (loading || !session) {
     return (
       <div className="flex min-h-dvh flex-col">

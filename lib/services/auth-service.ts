@@ -10,6 +10,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { invoke } from '@tauri-apps/api/core';
 import type { Clinician, ClinicianRow, ClinicianRole } from '@/types/clinician';
+import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP } from '@/types/clinician';
 import type { Invitation, AppSettings, InvitationKind } from '@/types/invitation';
 import type {
   ClinicianRegister,
@@ -71,6 +72,19 @@ function sanitiseAutoLogoutTimeout(value: unknown): number | null {
     : null;
 }
 
+/**
+ * Trust-boundary guard for the interface scale: a finite percentage inside
+ * the slider's range, rounded to a 5% stop. Anything else falls back to
+ * the 100% default.
+ */
+function sanitiseUiScale(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 100;
+  return Math.min(
+    UI_SCALE_MAX,
+    Math.max(UI_SCALE_MIN, Math.round(value / UI_SCALE_STEP) * UI_SCALE_STEP),
+  );
+}
+
 /** Effective auto-logout: the user's own choice, else the org-wide default. */
 function resolveSessionTimeoutMs(userMs: number | null, orgMs: number): number {
   return userMs ?? orgMs;
@@ -97,6 +111,7 @@ function parsePreferences(json: string): Clinician['preferences'] {
         parsed.navLayout === 'right' || parsed.navLayout === 'top'
           ? parsed.navLayout
           : 'left',
+      uiScale: sanitiseUiScale(parsed.uiScale),
       dashboardWidgets: Array.isArray(parsed.dashboardWidgets)
         ? parsed.dashboardWidgets.filter((w): w is string => typeof w === 'string')
         : null,
@@ -110,6 +125,7 @@ function parsePreferences(json: string): Clinician['preferences'] {
       showSubpartSuggestions: true,
       autoLogoutTimeoutMs: null,
       navLayout: 'left',
+      uiScale: 100,
       dashboardWidgets: null,
     };
   }

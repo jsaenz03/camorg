@@ -9,6 +9,12 @@ export type ClinicianRole = 'admin' | 'clinician';
 /** Where the primary navigation lives. */
 export type NavLayout = 'left' | 'right' | 'top';
 
+/** Interface scale bounds and step (%): shared by the Settings slider and
+ *  the preference sanitiser in auth-service. */
+export const UI_SCALE_MIN = 80;
+export const UI_SCALE_MAX = 130;
+export const UI_SCALE_STEP = 5;
+
 /**
  * Represents authenticated user who captures and manages photos.
  *
@@ -39,6 +45,8 @@ export interface Clinician {
     autoLogoutTimeoutMs: number | null;
     /** Navigation chrome: sidebar pinned left/right, or tabs along the top. */
     navLayout: NavLayout;
+    /** Interface scale as a percentage (80–130); 100 is the default. */
+    uiScale: number;
     /** Ordered dashboard widget ids; null = the default layout. Unknown ids
      *  (from a newer app version) are kept but ignored at render time. */
     dashboardWidgets: string[] | null;
