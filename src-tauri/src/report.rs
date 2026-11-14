@@ -89,8 +89,10 @@ pub struct ReportRequest {
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportPhoto {
-  /// Absolute path to the on-disk JPEG. The webview already enforced
-  /// patient-level access control before offering the report.
+  /// Absolute path to the on-disk photo (normally JPEG; uploads and imports
+  /// saved with auto-compress off may keep PNG/WebP bytes). The webview
+  /// already enforced patient-level access control before offering the
+  /// report.
   pub path: String,
   /// Pre-formatted dd/MM/yyyy capture date.
   pub captured_label: String,
@@ -1244,6 +1246,26 @@ pub async fn generate_case_report(request: ReportRequest) -> Result<ReportOutcom
   }
 }
 
+/// Decode stored photo bytes into a krilla image. Files are named .jpg, but
+/// a photo saved with auto-compress off keeps its original upload/import
+/// bytes, and those paths accept PNG and WebP alongside JPEG — the webview
+/// sniffs the content when it previews (why Print tolerates them), so the
+/// PDF renderer sniffs too: JPEG and PNG embed natively, anything else the
+/// `image` crate can decode (WebP) is transcoded to PNG in memory.
+fn decode_report_image(bytes: Vec<u8>) -> Result<Image, String> {
+  match (bytes.first().copied(), bytes.get(1).copied()) {
+    (Some(0xFF), Some(0xD8)) => return Image::from_jpeg(bytes.into(), true),
+    (Some(0x89), Some(b'P')) => return Image::from_png(bytes.into(), true),
+    _ => {}
+  }
+  let decoded = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+  let mut png = Vec::new();
+  decoded
+    .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+    .map_err(|e| e.to_string())?;
+  Image::from_png(png.into(), true)
+}
+
 fn generate_case_report_inner(request: ReportRequest) -> Result<ReportOutcome, String> {
   // Poison can only follow a panic mid-render; the lock state is still fine.
   let _serialize = GENERATE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1263,8 +1285,12 @@ fn generate_case_report_inner(request: ReportRequest) -> Result<ReportOutcome, S
     // through unchanged (photo_crypto::decrypt_or_plain).
     let bytes = crate::photo_crypto::decrypt_or_plain(&raw)
       .map_err(|e| format!("The photo captured {} could not be decrypted: {e}", p.captured_label))?;
-    let image = Image::from_jpeg(bytes.into(), true)
-      .map_err(|_| format!("The photo captured {} is not a readable image file.", p.captured_label))?;
+    let image = decode_report_image(bytes).map_err(|_| {
+      format!(
+        "The photo captured {} is not a readable image file. Use Print for this report instead, or remove the photo from the report.",
+        p.captured_label
+      )
+    })?;
     photos.push(PhotoDraw { image, photo: p.clone() });
   }
 
@@ -2249,6 +2275,25 @@ mod mapi {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// Photos land on disk as .jpg whatever bytes were uploaded or imported
+  /// (auto-compress off keeps the originals): PNG embeds natively, WebP is
+  /// transcoded, and anything else — including a JPEG-magic file with a
+  /// corrupt body — fails so the caller can raise its friendly message.
+  #[test]
+  fn decode_report_image_sniffs_format_not_file_name() {
+    let encode = |format| {
+      let mut buf = std::io::Cursor::new(Vec::new());
+      image::DynamicImage::new_rgb8(2, 1)
+        .write_to(&mut buf, format)
+        .expect("test encode");
+      buf.into_inner()
+    };
+    assert!(decode_report_image(encode(image::ImageFormat::Png)).is_ok());
+    assert!(decode_report_image(encode(image::ImageFormat::WebP)).is_ok());
+    assert!(decode_report_image(vec![0xDE, 0xAD, 0xBE, 0xEF]).is_err());
+    assert!(decode_report_image(vec![0xFF, 0xD8, 0x00, 0x01]).is_err());
+  }
 
   /// Decompress every stream and check the operators we rely on: every photo
   /// is drawn exactly once (Do), and no path is ever filled+stroked (B) —

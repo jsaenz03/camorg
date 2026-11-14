@@ -50,6 +50,10 @@ aes-gcm = "0.10"
 # (backup_keychain.rs).
 keyring = "2"
 krilla = "0.8"
+# Report PDF: photos saved with auto-compress off keep their original
+# upload/import bytes, which accept PNG and WebP alongside JPEG — krilla
+# embeds JPEG/PNG natively, so only WebP needs decoding/re-encoding here.
+image = { version = "0.25", default-features = false, features = ["webp", "png"] }
 skrifa = "0.42"
 if-addrs = "0.15.0"
 
