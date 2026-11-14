@@ -555,7 +555,9 @@ export default function LoginPage() {
                 <div className="space-y-1.5">
                   <Label htmlFor="forgot-backup-select">Backup</Label>
                   <Select value={recoveryBackup} onValueChange={setRecoveryBackup}>
-                    <SelectTrigger id="forgot-backup-select">
+                    {/* w-full like the passphrase field below: a longer
+                        backup timestamp must not resize the field. */}
+                    <SelectTrigger id="forgot-backup-select" className="w-full">
                       <SelectValue placeholder="Pick a backup" />
                     </SelectTrigger>
                     <SelectContent>

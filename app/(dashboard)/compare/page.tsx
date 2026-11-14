@@ -85,7 +85,9 @@ function CompareView() {
     <div className="space-y-1.5">
       <Label className="text-xs font-medium text-muted-foreground">{label}</Label>
       <Select value={value ?? undefined} onValueChange={onChange}>
-        <SelectTrigger aria-label={which}>
+        {/* w-full: the grid cell reserves the width, so picking a patient
+            with a longer name doesn't resize the picker. */}
+        <SelectTrigger aria-label={which} className="w-full">
           <SelectValue placeholder="Choose a patient" />
         </SelectTrigger>
         <SelectContent>

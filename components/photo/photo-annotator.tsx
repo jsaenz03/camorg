@@ -744,7 +744,9 @@ export default function PhotoAnnotator({
           <select
             aria-label="Font"
             title="Font"
-            className="h-8 cursor-pointer rounded-md bg-transparent px-1.5 text-sm outline-none"
+            // Chromium pre-sizes a select to its widest option; cap it so a
+            // long font name can neither blow out the toolbar nor resize it.
+            className="h-8 max-w-44 cursor-pointer rounded-md bg-transparent px-1.5 text-sm outline-none"
             value={font}
             disabled={isSaving}
             onChange={(e) => handleFontChange(e.target.value)}

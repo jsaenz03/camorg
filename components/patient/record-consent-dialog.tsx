@@ -130,7 +130,9 @@ export function RecordConsentDialog({
           <div className="space-y-2">
             <Label htmlFor="consent-scope">What the consent covers</Label>
             <Select value={scope} onValueChange={(v) => setScope(v as ConsentScope)} disabled={isSaving}>
-              <SelectTrigger id="consent-scope">
+              {/* w-full like the expiry input below: the scope label's length
+                  must not resize the field on selection. */}
+              <SelectTrigger id="consent-scope" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

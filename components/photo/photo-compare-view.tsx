@@ -501,7 +501,10 @@ export function PhotoCompareView({
     <div className="flex flex-col gap-1">
       <Label className="text-xs text-muted-foreground">{label}</Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger aria-label={label} className="min-w-32">
+        {/* Fixed width: selecting a long series name must not squeeze the
+            photo pickers beside it (the row's flex-1 items absorb nothing
+            then, and long values truncate inside the dropdown instead). */}
+        <SelectTrigger aria-label={label} className="w-[180px]">
           <SelectValue placeholder={allLabel} />
         </SelectTrigger>
         <SelectContent>

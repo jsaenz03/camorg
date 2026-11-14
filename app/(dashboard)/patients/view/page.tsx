@@ -657,7 +657,9 @@ function EditPatientDialog({
                   <FormLabel>Photo consent</FormLabel>
                   <Select onValueChange={field.onChange} value={field.value} disabled={isSaving}>
                     <FormControl>
-                      <SelectTrigger>
+                      {/* w-full like the sibling inputs: the scope label's
+                          length must not resize the field on selection. */}
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Choose a consent scope" />
                       </SelectTrigger>
                     </FormControl>
