@@ -1,7 +1,13 @@
-# cargo-audit settings (read from ./audit.toml beside Cargo.toml by local
-# cargo audit runs — the security-scan workflow's audit-check action does
-# not read this file; its allowlist is passed via the workflow's ignore
-# input, kept in sync with the entry below).
+# cargo-audit allowlist — kept in sync with the ignore input in
+# .github/workflows/security-scan.yml, which the audit-check action
+# splits on commas and passes to cargo audit as repeated --ignore
+# flags. This file is the reasoning record; cargo-audit 0.23 (current
+# latest, what CI installs) no longer reads audit.toml automatically —
+# verified locally 16/11/2026: its entries had no effect and the
+# --ignore flags were required — so local runs must pass the pair
+# explicitly:
+#   cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0459
+# (older cargo-audit versions read ./audit.toml beside Cargo.toml.)
 #
 # RUSTSEC-2023-0071 (Marvin Attack — timing sidechannel in rsa 0.9.10):
 # no patched version exists upstream (`patched = []` is intentional).
@@ -12,5 +18,20 @@
 # mysql/postgres feature chain from src-tauri's dependency features to
 # remove the crate outright, then delete this allowlist entry.
 #
+# RUSTSEC-2026-0459 (CVE-2026-119375 — SQLite <3.54.0 bundled by
+# libsqlite3-sys can return uninitialised page-cache memory when a
+# process opens a database alongside a sibling WAL whose page size
+# differs; reached via Cargo.lock: tauri-plugin-sql 2.6.0 → sqlx 0.8.6
+# → sqlx-sqlite 0.8.6 → libsqlite3-sys 0.30.1): patched only in
+# libsqlite3-sys 0.39+ (bundled SQLite 3.54.0/3.54.1), which no published sqlx
+# accepts — sqlx-sqlite 0.9.0 still caps the requirement at <0.38.0 and
+# tauri-plugin-sql 2.6.0 pins sqlx ^0.8 — so there is no in-tree fix
+# today. Exploitation requires local write access to a DB + WAL pair at
+# a path the app then opens (the app opens only its own app-data DB,
+# after db_restore's header check for restores), which already implies
+# the attacker controls the database file itself. Clean-up path: bump
+# sqlx once it accepts libsqlite3-sys 0.39+, then delete this entry
+# (and the workflow's matching ignore — the two are kept in sync).
+#
 [advisories]
-ignore = ["RUSTSEC-2023-0071"]
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0459"]

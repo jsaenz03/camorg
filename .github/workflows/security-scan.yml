@@ -17,8 +17,12 @@ on:
 
 permissions:
   contents: read
-  # rustsec/audit-check posts its findings as a check run.
+  # rustsec/audit-check posts its findings as a check run and, when it
+  # finds vulnerabilities, files a report issue — without issues: write
+  # that POST fails with "Resource not accessible by integration" and
+  # masks the actual advisory (the 16/11/2026 scheduled run #25 failure).
   checks: write
+  issues: write
 
 jobs:
   scan:
@@ -65,4 +69,14 @@ jobs:
           # only). Reasoned in src-tauri/audit.toml, which serves local
           # cargo-audit runs; the action does not read that file, so the
           # allowlist is passed here.
-          ignore: RUSTSEC-2023-0071
+          # RUSTSEC-2026-0459 (CVE-2026-119375 — libsqlite3-sys 0.30.1
+          # bundles a SQLite that can return uninitialised page-cache memory
+          # for a crafted DB + mismatched-page-size WAL pair, reached via
+          # tauri-plugin-sql → sqlx-sqlite): patched only in
+          # libsqlite3-sys 0.39+, which no published sqlx accepts
+          # (sqlx-sqlite 0.9.0 caps <0.38.0; tauri-plugin-sql 2.6.0 pins
+          # sqlx ^0.8) — unfixable in-tree until sqlx bumps. Exploitation
+          # needs local write access to the app's database path, which
+          # already implies control of the DB itself. Same file has the
+          # full reasoning; drop both ignores when sqlx accepts 0.39+.
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0459
