@@ -11,6 +11,7 @@
 
 import { useMemo } from 'react';
 import type { PhotoRecord } from '@/types/photo';
+import { comparePredecessor } from '@/lib/photo-compare';
 import { PhotoCompareView } from '@/components/photo/photo-compare-view';
 import {
   Dialog,
@@ -24,14 +25,22 @@ interface PhotoCompareDialogProps {
   photos: PhotoRecord[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Opened from a photo's Compare action: the right pane starts on this
+      photo and the left on its predecessor — the previous capture in its
+      lesion series when linked, otherwise the capture taken immediately
+      before it. Omitted (header Compare button) = the newest-two default. */
+  focusPhotoId?: string | null;
 }
 
-export function PhotoCompareDialog({ photos, open, onOpenChange }: PhotoCompareDialogProps) {
+export function PhotoCompareDialog({ photos, open, onOpenChange, focusPhotoId }: PhotoCompareDialogProps) {
   // Newest first; default to the two most recent captures.
   const sorted = useMemo(
     () => [...photos].sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime()),
     [photos],
   );
+
+  const focus = focusPhotoId ? (sorted.find((p) => p.id === focusPhotoId) ?? null) : null;
+  const predecessor = focus ? comparePredecessor(focus, sorted) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -54,6 +63,8 @@ export function PhotoCompareDialog({ photos, open, onOpenChange }: PhotoCompareD
             rightPool={sorted}
             leftLabel="Earlier / reference"
             rightLabel="Later / current"
+            initialLeftId={focus ? (predecessor?.id ?? null) : undefined}
+            initialRightId={focus ? focus.id : undefined}
           />
         )}
       </DialogContent>

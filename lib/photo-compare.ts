@@ -26,6 +26,40 @@ export function defaultComparePicks(
  * load this module straight from Node.
  */
 
+/** Structural minimum the predecessor rule needs from a photo record. */
+export interface ComparablePhoto {
+  id: string;
+  /** Date-like: real records carry Date; anything with getTime() compares. */
+  capturedAt: { getTime(): number };
+  /** Null = saved without a series — only the "immediately before" rule applies. */
+  lesionGroup: string | null;
+}
+
+/**
+ * The photo a given capture is compared against: the previous capture in its
+ * lesion series when it is linked (its before/after chain), otherwise the
+ * capture taken immediately before it. Null when nothing precedes it — the
+ * photo is the earliest there is, so there is nothing to stand beside it.
+ */
+export function comparePredecessor<P extends ComparablePhoto>(
+  photo: P,
+  pool: P[],
+): P | null {
+  const timeOf = (p: { capturedAt: { getTime(): number } }) => p.capturedAt.getTime();
+  const earlier = pool.filter((p) => p.id !== photo.id && timeOf(p) < timeOf(photo));
+  // Latest of a candidate list — the "immediately before" pick.
+  const newest = (candidates: P[]): P | null =>
+    candidates.reduce<P | null>(
+      (latest, p) => (latest === null || timeOf(p) > timeOf(latest) ? p : latest),
+      null,
+    );
+  if (photo.lesionGroup) {
+    const inSeries = newest(earlier.filter((p) => p.lesionGroup === photo.lesionGroup));
+    if (inSeries) return inSeries;
+  }
+  return newest(earlier);
+}
+
 /** Structural minimum the filters need from a photo record. */
 export interface FilterablePhoto {
   /** Null = saved without one; only surfaces under the "all" filter. */

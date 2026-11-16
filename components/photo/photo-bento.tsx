@@ -38,6 +38,8 @@ interface PhotoBentoProps {
   onSelectionChange?: (photo: PhotoRecord, selected: boolean) => void;
   /** Fired after a link or unlink saves from a drag that started on a selected tile. */
   onSaved?: () => void;
+  /** Compare affordance handed down to every tile's hover overlay. */
+  onCompare?: (photo: PhotoRecord) => void;
   /** Index of the tile to feature (2×2). Defaults to 0 (newest). Set to -1 to disable. */
   featuredIndex?: number;
   className?: string;
@@ -66,6 +68,7 @@ export function PhotoBento({
   selection,
   onSelectionChange,
   onSaved,
+  onCompare,
   featuredIndex = 0,
   className,
 }: PhotoBentoProps) {
@@ -257,6 +260,7 @@ export function PhotoBento({
               onSelectionChange ? (selected) => onSelectionChange(photo, selected) : undefined
             }
             onSaved={onSaved}
+            onCompare={onCompare ? () => onCompare(photo) : undefined}
             fillContainer
             className={cn(
               'h-full',

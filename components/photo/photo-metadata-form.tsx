@@ -7,7 +7,7 @@
 
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -151,6 +151,15 @@ export function PhotoMetadataForm({
       if (form.getValues('laterality')) form.setValue('laterality', undefined);
     }
   }, [bodyPartValue, form]);
+
+  // The capture-date calendar pops out of a bounded dialog (capture and
+  // photo-upload dialogs), so it collides against the dialog card and clamps
+  // to the space it leaves — the same containment the DOB input uses; a
+  // short window scrolls the calendar inside the popover instead of letting
+  // it run past the dialog's bottom edge.
+  const dateTriggerRef = useRef<HTMLButtonElement>(null);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [dateBoundary, setDateBoundary] = useState<HTMLElement | undefined>(undefined);
 
   // The X mark belongs to the part (and its diagram) it was placed on — drop
   // it whenever the part or side changes outside the body map.
@@ -390,10 +399,21 @@ export function PhotoMetadataForm({
           render={({ field }) => (
             <FormItem className="flex flex-col">
               <FormLabel>Capture date</FormLabel>
-              <Popover>
+              <Popover
+                open={datePickerOpen}
+                onOpenChange={(open) => {
+                  setDateBoundary(
+                    open
+                      ? (dateTriggerRef.current?.closest<HTMLElement>('[data-slot="dialog-content"]') ?? undefined)
+                      : undefined,
+                  );
+                  setDatePickerOpen(open);
+                }}
+              >
                 <PopoverTrigger asChild>
                   <FormControl>
                     <Button
+                      ref={dateTriggerRef}
                       type="button"
                       variant="outline"
                       role="combobox"
@@ -412,7 +432,11 @@ export function PhotoMetadataForm({
                     </Button>
                   </FormControl>
                 </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
+                <PopoverContent
+                  className="w-auto max-h-(--radix-popover-content-available-height) overflow-y-auto p-0"
+                  align="start"
+                  collisionBoundary={dateBoundary}
+                >
                   <Calendar
                     mode="single"
                     selected={field.value}

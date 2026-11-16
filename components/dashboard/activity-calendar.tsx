@@ -69,7 +69,10 @@ export function ActivityCalendar({
           selected={selectedDate ?? undefined}
           onSelect={handleSelect}
           modifiers={{ captured: capturedDays }}
-          className="mx-auto"
+          // Cell size capped at its 100%-scale 32px so the rem-scaled grid
+          // can't outgrow its dashboard column at the 130% interface-scale
+          // ceiling (same cap as the photos filter rail).
+          className="mx-auto [--cell-size:min(--spacing(8),32px)]"
           classNames={{
             // The dot must live on the day button (where data-captured is set);
             // react-day-picker passes day_button classes into DayButton props.

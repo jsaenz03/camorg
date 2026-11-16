@@ -13,6 +13,7 @@ import {
   applyPan,
   applyZoom,
   comparePartOptions,
+  comparePredecessor,
   compareSeriesOptions,
   defaultComparePicks,
   DEFAULT_COMPARE_TRANSFORM,
@@ -148,5 +149,41 @@ assert.deepEqual(resolveCompareFilters(pool, 'face', 'Face mole'), { part: 'face
 assert.deepEqual(resolveCompareFilters(pool, 'chest', 'Face mole'), { part: 'all', series: 'Face mole' });
 assert.deepEqual(resolveCompareFilters(pool, 'face', 'Gone series'), { part: 'face', series: 'all' });
 assert.deepEqual(resolveCompareFilters([], 'face', 'Face mole'), { part: 'all', series: 'all' });
+
+// ---------------------------------------------------------------------------
+// Predecessor rule (compare-from-a-photo entry)
+// ---------------------------------------------------------------------------
+// A chronology mixing linked chains and loose photos, in capture order.
+const cp = (id, capturedAt, lesionGroup = null) => ({ id, capturedAt: new Date(capturedAt), lesionGroup });
+const chronology = [
+  cp('p1', '2026-01-10'),                       // loose, earliest overall
+  cp('p2', '2026-02-01', 'Mole'),               // series Mole, first capture
+  cp('p3', '2026-03-05'),                       // loose, sits between the chain
+  cp('p4', '2026-04-02', 'Mole'),               // series Mole, second capture
+  cp('p5', '2026-05-20'),                       // loose, newest
+];
+
+// Unlinked: the capture taken immediately before it.
+assert.equal(comparePredecessor(chronology[2], chronology).id, 'p2');
+assert.equal(comparePredecessor(chronology[4], chronology).id, 'p4');
+
+// Linked: the previous capture in its own series, skipping the loose photo
+// that was taken in between.
+assert.equal(comparePredecessor(chronology[3], chronology).id, 'p2');
+
+// First capture of its series: falls back to the immediately-before capture.
+assert.equal(comparePredecessor(chronology[1], chronology).id, 'p1');
+
+// Earliest overall: no predecessor, nothing to compare against.
+assert.equal(comparePredecessor(chronology[0], chronology), null);
+const solo = [cp('solo', '2026-06-01')];
+assert.equal(comparePredecessor(solo[0], solo), null);
+
+// Pool order is irrelevant — the rule reads timestamps, not positions.
+assert.equal(comparePredecessor(chronology[3], [...chronology].reverse()).id, 'p2');
+
+// Same-instant captures never count as "before" one another.
+const sameInstant = [cp('x1', '2026-06-01'), cp('x2', '2026-06-01')];
+assert.equal(comparePredecessor(sameInstant[0], sameInstant), null);
 
 console.log('compare engine self-check passed');

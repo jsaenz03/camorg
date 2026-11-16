@@ -10,7 +10,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { CalendarIcon } from 'lucide-react';
 import { parseDobInput } from '@/lib/utils/date-formatting';
@@ -39,6 +39,24 @@ export function DobInput({
   const parsed = value.trim() ? parseDobInput(value) : null;
   const invalid = value.trim() !== '' && !parsed;
 
+  // Collide against the dialog card when the picker opens inside one (the
+  // popover portals to the body, so Radix's default viewport boundary lets
+  // the calendar run past the dialog's bottom edge on short windows —
+  // measured 42px past the dialog and 29px off-screen at 900×520). Clamped
+  // to the space the boundary leaves, a short window scrolls the calendar
+  // inside the popover instead.
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [boundary, setBoundary] = useState<HTMLElement | undefined>(undefined);
+
+  function handlePickerOpen(open: boolean) {
+    setBoundary(
+      open
+        ? (triggerRef.current?.closest<HTMLElement>('[data-slot="dialog-content"]') ?? undefined)
+        : undefined,
+    );
+    setPickerOpen(open);
+  }
+
   function handleBlur() {
     // Echo the canonical form back so the user sees how it was read.
     if (parsed) onChange(format(parsed, 'dd/MM/yyyy'));
@@ -58,9 +76,10 @@ export function DobInput({
         aria-invalid={invalid || undefined}
         className="min-w-0 flex-1"
       />
-      <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+      <Popover open={pickerOpen} onOpenChange={handlePickerOpen}>
         <PopoverTrigger asChild>
           <Button
+            ref={triggerRef}
             type="button"
             variant="outline"
             size="icon"
@@ -71,7 +90,11 @@ export function DobInput({
             <CalendarIcon className="size-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="end">
+        <PopoverContent
+          className="w-auto max-h-(--radix-popover-content-available-height) overflow-y-auto p-0"
+          align="end"
+          collisionBoundary={boundary}
+        >
           <Calendar
             mode="single"
             selected={parsed ?? undefined}

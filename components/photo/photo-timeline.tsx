@@ -37,6 +37,8 @@ interface PhotoTimelineProps {
   photos: PhotoRecord[];
   onPhotoClick?: (photo: PhotoRecord) => void;
   showFilter?: boolean;
+  /** Compare affordance handed down to every tile's hover overlay. */
+  onCompare?: (photo: PhotoRecord) => void;
   /** Fires on mount and whenever the filters change (all-off included).
       The patient page carries it to the case report so the report — and its
       print — cover exactly the photos the grid is showing. */
@@ -51,6 +53,7 @@ export function PhotoTimeline({
   photos,
   onPhotoClick,
   showFilter = true,
+  onCompare,
   onFilterChange,
 }: PhotoTimelineProps) {
   const [bodyPartFilter, setBodyPartFilter] = useState<BodyPart | 'all'>('all');
@@ -204,6 +207,7 @@ export function PhotoTimeline({
         selection={selection}
         onSelectionChange={(photo, selected) => toggleSelected(photo.id, selected)}
         onSaved={() => setSelectedIds(new Set())}
+        onCompare={onCompare}
       />
       {filteredPhotos.length > 1 && (
         <p className="text-xs text-muted-foreground">
@@ -263,7 +267,13 @@ function FilterBar({
               {selectedDate ? format(selectedDate, 'd MMM yyyy') : 'Date'}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto p-0" align="end">
+          {/* Clamped to the space below the trigger so a short window scrolls
+              the calendar inside the popover instead of running it off-screen
+              (same containment as the DOB and capture-date pickers). */}
+          <PopoverContent
+            className="w-auto max-h-(--radix-popover-content-available-height) overflow-y-auto p-0"
+            align="end"
+          >
             <Calendar
               mode="single"
               selected={selectedDate}

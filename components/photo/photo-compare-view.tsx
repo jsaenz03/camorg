@@ -74,6 +74,13 @@ interface PhotoCompareViewProps {
   rightLabel: string;
   /** Seed body-part filter (Compare page deep link ?part=). */
   initialPart?: BodyPart | 'all';
+  /** Opened from a photo's Compare action: the left pane seeds on this photo
+      (its predecessor) instead of the pool's newest. Validated against the
+      pool — a stale id falls back to the default seed rather than blanking. */
+  initialLeftId?: string | null;
+  /** Opened from a photo's Compare action: the right pane seeds on this photo
+      (the one that was clicked). */
+  initialRightId?: string | null;
   /** Sizing hook for the host page; defaults to filling a flex column. */
   className?: string;
 }
@@ -89,6 +96,8 @@ export function PhotoCompareView({
   leftLabel,
   rightLabel,
   initialPart = 'all',
+  initialLeftId,
+  initialRightId,
   className,
 }: PhotoCompareViewProps) {
   // Cascade filters: the part dropdown lists the parts the current series
@@ -196,8 +205,19 @@ export function PhotoCompareView({
     if (resolved.series !== seriesFilter) setSeriesFilter(resolved.series);
     if (resolved.part === partFilter && resolved.series === seriesFilter) {
       const picks = defaultComparePicks(leftSorted, rightSorted);
-      setLeftId(picks.leftId);
-      setRightId(picks.rightId);
+      // A focus seed (opened from a photo's Compare action) wins over the
+      // newest-two default — but only while both ids resolve in the filtered
+      // pools, so a stale focus falls back instead of leaving a pane blank.
+      setLeftId(
+        initialLeftId && leftSorted.some((p) => p.id === initialLeftId)
+          ? initialLeftId
+          : picks.leftId,
+      );
+      setRightId(
+        initialRightId && rightSorted.some((p) => p.id === initialRightId)
+          ? initialRightId
+          : picks.rightId,
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- poolKey covers pool identity; array deps would reseed on every refresh
   }, [poolKey]);

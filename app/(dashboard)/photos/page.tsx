@@ -170,12 +170,14 @@ export default function PhotosPage() {
             </CardHeader>
             <CardContent className="pt-0">
               {/* Smaller cells so the calendar fits and centres inside the
-                  280px filter rail (default 32px cells overflow the card). */}
+                  280px filter rail (default 32px cells overflow the card).
+                  The 28px cap keeps the rem-scaled cell size from outgrowing
+                  the fixed rail at the 130% interface-scale ceiling. */}
               <Calendar
                 mode="single"
                 selected={selectedDate}
                 onSelect={setSelectedDate}
-                className="mx-auto [--cell-size:--spacing(7)]"
+                className="mx-auto [--cell-size:min(--spacing(7),28px)]"
               />
               {selectedDate && (
                 <Button

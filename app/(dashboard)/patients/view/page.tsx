@@ -24,6 +24,8 @@ import { PhotoTimeline } from '@/components/photo/photo-timeline';
 import { ALL_TIMELINE_FILTER, type TimelineFilter } from '@/lib/utils/timeline-filter';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
 import { PhotoCompareDialog } from '@/components/photo/photo-compare-dialog';
+import { PhotoChronologyStrip } from '@/components/photo/photo-chronology-strip';
+import { comparePredecessor } from '@/lib/photo-compare';
 import { PhotoUpload } from '@/components/photo/photo-upload';
 import { useCapture, reviewFollowUpCapture } from '@/components/capture/capture-provider';
 import { ReviewBadge } from '@/components/patient/review-badge';
@@ -104,6 +106,10 @@ function PatientTimelineView() {
   const [activePhoto, setActivePhoto] = useState<PhotoRecord | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
+  // A photo whose Compare action opened the dialog (strip thumbnail or bento
+  // tile): the dialog seeds on it and its predecessor. Null = the header
+  // Compare button, which opens on the newest-two default.
+  const [compareFocusId, setCompareFocusId] = useState<string | null>(null);
 
   const { photos, isLoading: isLoadingPhotos, error, refresh } = usePhotos({
     patientId,
@@ -151,6 +157,22 @@ function PatientTimelineView() {
     setActivePhoto(photo);
     setDialogOpen(true);
   }, []);
+
+  /** Compare entry from a photo (chronology strip thumbnail or bento tile's
+      pill): the clicked photo vs its predecessor — the previous capture in
+      its lesion series when linked, otherwise the capture taken immediately
+      before it. The earliest capture has nothing to stand beside it yet. */
+  const handleComparePhoto = useCallback(
+    (photo: PhotoRecord) => {
+      if (!comparePredecessor(photo, activePhotos)) {
+        toast.info('This is the earliest photo for this patient — nothing to compare it against yet.');
+        return;
+      }
+      setCompareFocusId(photo.id);
+      setCompareOpen(true);
+    },
+    [activePhotos],
+  );
 
   const handleBackClick = useCallback(() => {
     router.push('/patients');
@@ -286,8 +308,8 @@ function PatientTimelineView() {
             {patient.ownerName && <> · Owner: {patient.ownerName}</>}
           </>
         }
-        actions={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+        status={
+          <>
             {consent === 'valid' ? (
               <Badge variant="outline" className="gap-1 border-primary/40 text-primary" title={patient.consentExpiresAt ? `Expires ${format(patient.consentExpiresAt, 'dd/MM/yyyy')}` : 'No expiry set'}>
                 <ShieldCheck className="size-3" />
@@ -315,6 +337,10 @@ function PatientTimelineView() {
                 </>
               )}
             </Badge>
+          </>
+        }
+        actions={
+          <>
             {review === 'overdue' && (
               <Button variant="outline" onClick={handleMarkReviewed} disabled={isMarkingReviewed}>
                 {isMarkingReviewed ? <Loader2 className="size-4 animate-spin" /> : <CalendarCheck className="size-4" />}
@@ -327,7 +353,10 @@ function PatientTimelineView() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => setCompareOpen(true)}
+              onClick={() => {
+                setCompareFocusId(null);
+                setCompareOpen(true);
+              }}
               disabled={patient.photoCount < 2}
               title={patient.photoCount < 2 ? 'Needs at least two photos' : 'Compare two photos side by side'}
             >
@@ -356,7 +385,7 @@ function PatientTimelineView() {
               <Camera className="size-4" />
               Capture
             </Button>
-          </div>
+          </>
         }
       />
 
@@ -392,9 +421,20 @@ function PatientTimelineView() {
         </div>
       )}
 
+      {/* Chronology strip: capture order left → right on a timeline line;
+          a thumbnail click compares that photo with its predecessor. */}
+      {activePhotos.length >= 2 && (
+        <PhotoChronologyStrip
+          photos={activePhotos}
+          onCompare={handleComparePhoto}
+          className="mb-4"
+        />
+      )}
+
       <PhotoTimeline
         photos={photos}
         onPhotoClick={handlePhotoClick}
+        onCompare={handleComparePhoto}
         showFilter
         onFilterChange={setTimelineFilter}
       />
@@ -429,6 +469,7 @@ function PatientTimelineView() {
         photos={activePhotos}
         open={compareOpen}
         onOpenChange={setCompareOpen}
+        focusPhotoId={compareFocusId}
       />
     </div>
   );

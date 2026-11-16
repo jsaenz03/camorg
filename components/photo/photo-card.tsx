@@ -19,7 +19,7 @@
 
 import { useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { AlarmClock, Link2, Loader2, Paperclip } from 'lucide-react';
+import { AlarmClock, Columns2, Link2, Loader2, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
 import type { PhotoRecord } from '@/types/photo';
 import { bodyPartDisplayLabel } from '@/types/body-part';
@@ -108,6 +108,9 @@ interface PhotoCardProps {
   /** Fired after a link or unlink saves from a drag that started on a
       selected tile — the gallery clears the consumed selection. */
   onSaved?: () => void;
+  /** Compare affordance: a pill in the hover overlay that hands this tile
+      to the compare dialog. Undefined = no pill (galleries without one). */
+  onCompare?: () => void;
   /** Tone of the tile surface. Default uses card tokens. */
   className?: string;
   /**
@@ -125,6 +128,7 @@ export function PhotoCard({
   onSelectionChange,
   selection,
   onSaved,
+  onCompare,
   className,
   fillContainer = false,
 }: PhotoCardProps) {
@@ -462,9 +466,34 @@ export function PhotoCard({
             />
           )}
 
-          {/* Hover overlay: full date + notes */}
+          {/* Hover overlay: full date + notes, plus the compare pill when
+              the gallery carries one. A span (not a button) — it lives inside
+              the tile's own <button>, and nesting buttons is invalid HTML. */}
           {!error && !isLoading && (
             <div className="pointer-events-none absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/70 via-black/0 to-black/0 p-3 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
+              {onCompare && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Compare with the previous photo"
+                  title="Compare with the previous photo"
+                  className="pointer-events-auto absolute right-2 top-2 inline-flex items-center gap-1 rounded-md bg-black/60 px-2 py-1 text-xs font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCompare();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onCompare();
+                  }}
+                >
+                  <Columns2 className="size-3.5" />
+                  Compare
+                </span>
+              )}
               <p className="text-xs font-medium text-white drop-shadow">
                 {formatCaptureDate(photo.capturedAt)}
               </p>
