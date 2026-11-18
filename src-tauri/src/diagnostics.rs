@@ -334,6 +334,35 @@ pub fn diagnostics_clear(app: tauri::AppHandle) -> ClearDiagnosticsOutcome {
   outcome
 }
 
+/// Open the log folder itself — Finder/Explorer showing `camog.log`. Unlike
+/// reveal_saved_report (which selects its path inside the parent folder —
+/// right for a saved PDF, useless for "where is my log"), the Diagnostics
+/// "Open log folder" action lands the user inside the folder that holds the
+/// log. The path is resolved here so the frontend never echoes one back.
+#[tauri::command]
+pub fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+  use tauri::Manager;
+  let dir = app
+    .path()
+    .app_log_dir()
+    .map_err(|e| format!("Log folder location is unavailable: {e}"))?;
+
+  #[cfg(target_os = "macos")]
+  let result = std::process::Command::new("open").arg(&dir).spawn().map(|_| ());
+
+  #[cfg(target_os = "windows")]
+  let result = std::process::Command::new("explorer").arg(&dir).spawn().map(|_| ());
+
+  #[cfg(all(unix, not(target_os = "macos")))]
+  let result = std::process::Command::new("xdg-open").arg(&dir).spawn().map(|_| ());
+
+  result.map_err(|e| {
+    let msg = format!("Could not open the log folder: {e}");
+    record(Level::Error, "open-log-folder", &msg, None);
+    msg
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

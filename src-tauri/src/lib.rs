@@ -483,6 +483,7 @@ pub fn run() {
       diagnostics::record_web_diagnostic,
       diagnostics::diagnostics_info,
       diagnostics::diagnostics_clear,
+      diagnostics::open_log_folder,
       diagnostics::disk_encryption_status
     ])
     .run(tauri::generate_context!())

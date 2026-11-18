@@ -213,14 +213,11 @@ export function DiagnosticsPanel() {
     }
   }
 
-  async function openLogFolder() {
-    if (!info?.logDir) {
-      toast.error('Log folder location is unavailable');
-      return;
-    }
-    invoke('reveal_saved_report', { path: info.logDir }).catch((e: unknown) =>
-      toast.error(String(e)),
-    );
+  // The backend resolves the log dir itself and opens it (Finder/Explorer
+  // showing camog.log) — reveal_saved_report would only select the folder
+  // inside its parent instead of opening it.
+  function openLogFolder() {
+    invoke('open_log_folder').catch((e: unknown) => toast.error(String(e)));
   }
 
   async function clear() {
