@@ -21,7 +21,12 @@ import type { Patient, ConsentScope } from '@/types/patient';
 import { ConsentScopeLabels, consentStatus, reviewStatus } from '@/types/patient';
 import type { PhotoRecord } from '@/types/photo';
 import { PhotoTimeline } from '@/components/photo/photo-timeline';
-import { ALL_TIMELINE_FILTER, type TimelineFilter } from '@/lib/utils/timeline-filter';
+import {
+  ALL_TIMELINE_FILTER,
+  applyTimelineFilter,
+  isFilterActive,
+  type TimelineFilter,
+} from '@/lib/utils/timeline-filter';
 import { PhotoDetailDialog } from '@/components/photo/photo-detail-dialog';
 import { PhotoCompareDialog } from '@/components/photo/photo-compare-dialog';
 import { PhotoChronologyStrip } from '@/components/photo/photo-chronology-strip';
@@ -126,6 +131,14 @@ function PatientTimelineView() {
     [photos],
   );
 
+  // The chronology strip follows the timeline's filter controls exactly like
+  // the bento below it — the same shared reducer over the active photos,
+  // seeded by the filter PhotoTimeline reports upward.
+  const stripPhotos = useMemo(
+    () => applyTimelineFilter(activePhotos, timelineFilter),
+    [activePhotos, timelineFilter],
+  );
+
   useEffect(() => {
     if (!patientId) {
       toast.error('No patient selected');
@@ -161,17 +174,23 @@ function PatientTimelineView() {
   /** Compare entry from a photo (chronology strip thumbnail or bento tile's
       pill): the clicked photo vs its predecessor — the previous capture in
       its lesion series when linked, otherwise the capture taken immediately
-      before it. The earliest capture has nothing to stand beside it yet. */
+      before it — resolved within the filtered set, so the pair always
+      matches what the strip and bento are showing. The earliest capture in
+      that view has nothing to stand beside it yet. */
   const handleComparePhoto = useCallback(
     (photo: PhotoRecord) => {
-      if (!comparePredecessor(photo, activePhotos)) {
-        toast.info('This is the earliest photo for this patient — nothing to compare it against yet.');
+      if (!comparePredecessor(photo, stripPhotos)) {
+        toast.info(
+          isFilterActive(timelineFilter)
+            ? 'This is the earliest photo in the filtered view — nothing to compare it against yet.'
+            : 'This is the earliest photo for this patient — nothing to compare it against yet.',
+        );
         return;
       }
       setCompareFocusId(photo.id);
       setCompareOpen(true);
     },
-    [activePhotos],
+    [stripPhotos, timelineFilter],
   );
 
   const handleBackClick = useCallback(() => {
@@ -422,10 +441,11 @@ function PatientTimelineView() {
       )}
 
       {/* Chronology strip: capture order left → right on a timeline line;
-          a thumbnail click compares that photo with its predecessor. */}
-      {activePhotos.length >= 2 && (
+          a thumbnail click compares that photo with its predecessor. Shows
+          the filtered set, so it hides when the filters narrow below two. */}
+      {stripPhotos.length >= 2 && (
         <PhotoChronologyStrip
-          photos={activePhotos}
+          photos={stripPhotos}
           onCompare={handleComparePhoto}
           className="mb-4"
         />
@@ -466,7 +486,7 @@ function PatientTimelineView() {
       />
 
       <PhotoCompareDialog
-        photos={activePhotos}
+        photos={stripPhotos}
         open={compareOpen}
         onOpenChange={setCompareOpen}
         focusPhotoId={compareFocusId}
