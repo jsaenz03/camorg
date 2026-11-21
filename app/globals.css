@@ -134,6 +134,13 @@
  * (TopNavHeader's tabs, detail-dialog chips, settings tables). */
 html {
   overflow-x: clip;
+  /* Reserve the vertical scrollbar gutter so content-height changes — a
+     filter shrinking the gallery, a dialog churn — can't appear/disappear
+     the Windows classic scrollbar and shift the whole canvas sideways on
+     every selection. Overlay-scrollbar platforms (macOS, Win11 fluent) take
+     no space, so this changes nothing there. Pinned by
+     tests/scrollbar-stability.spec.ts. */
+  scrollbar-gutter: stable;
 }
 
 /* ----- print: patient case report ----- */

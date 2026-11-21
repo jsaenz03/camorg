@@ -54,7 +54,11 @@ function SelectContent({
   className,
   children,
   position = "popper",
-  align = "center",
+  /* Left-edge alignment: a panel wider than its trigger (long item labels in
+     the timeline bar's fixed w-[180px] selects) must not center and overhang
+     both sides of the trigger on every pull — the dropdown box visibly shifts.
+     Same-width panels (w-full form selects) are unaffected. */
+  align = "start",
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
   return (
