@@ -76,6 +76,22 @@ Cloudflare Worker (`activation-server/`).
   dialog rule instead; `installers/repair-phone-link-firewall.ps1` (run as
   admin) recreates the correct rule without a reinstall.
 
+## macOS bundle safety
+
+- `npm run desktop:build` (tauri build, `targets: "all"`) **overwrites** whatever
+  is in `src-tauri/target/release/bundle/` — on 25 Nov 2026 it silently replaced
+  the signed + notarised 0.15.1 DMG with an ad-hoc build, and a notarised
+  artifact is single-copy (no Downloads/NAS mirror by default). The only cure
+  is re-notarisation, and Apple's queue can take hours. Therefore:
+  - Need a locally testable app? `npx tauri build --bundles app` — never a full
+    build — whenever `bundle/dmg/` holds an artifact worth keeping (or move the
+    artifacts aside first).
+  - A Developer-ID-signed .app launches locally with no Gatekeeper prompt even
+    before notarisation, so local testing never needs the DMG.
+  - Notarise exactly once, at release time, on the final DMG:
+    `notarytool submit --keychain-profile CAMOG_NOTARY --wait` → `stapler
+    staple` → `spctl -a -vv`. Never submit an artifact you might rebuild.
+
 ## Approved roadmap
 
 - `specs/006-signed-update-channel` — **SHIPPED as 0.12.0** (30 Oct): tauri
