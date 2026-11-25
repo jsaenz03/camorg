@@ -403,8 +403,11 @@ function PhotoPreview({ file }: { file: File }) {
   }
   return (
     <div className="relative aspect-video max-h-[30dvh] w-full overflow-hidden rounded-lg border bg-black">
+      {/* Absolute for the same WebKit reason as the capture dialog's
+          preview: inside a ScrollArea a static img's h-full falls back to
+          the photo's natural height, centring the picture below the box. */}
       {/* eslint-disable-next-line @next/next/no-img-element -- static export; blob URL preview */}
-      <img src={url} alt="Photo to add" className="h-full w-full object-contain" />
+      <img src={url} alt="Photo to add" className="absolute inset-0 h-full w-full object-contain" />
     </div>
   );
 }

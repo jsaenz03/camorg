@@ -845,10 +845,17 @@ function CaptureFlow({
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
+                  {/* Absolute: WebKit lays out the ScrollArea's display:table
+                      content with percentage heights unresolved, so a static
+                      img's h-full fell back to the photo's natural pixel
+                      height — object-contain centred the picture far below
+                      this clipped box (a black preview until the photo was
+                      saved). Chromium resolves it, so Windows never showed
+                      it. */}
                   <img
                     src={capturedPhoto.dataUrl}
                     alt="Captured photo"
-                    className="w-full h-full object-contain"
+                    className="absolute inset-0 h-full w-full object-contain"
                   />
                 </div>
                 <div className="flex gap-2">

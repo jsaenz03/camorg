@@ -352,12 +352,15 @@ export function CameraCapture({
     <Card className="overflow-hidden">
       {/* Video Preview */}
       <div className="relative aspect-video bg-black">
+        {/* Absolute for the same WebKit reason as the capture dialog's photo
+            preview: inside the ScrollArea a static h-full video falls back to
+            its frame height once frames arrive, zooming the live preview. */}
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className="w-full h-full object-cover"
+          className="absolute inset-0 h-full w-full object-cover"
           aria-label="Camera preview"
         />
 
