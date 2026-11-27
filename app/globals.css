@@ -117,6 +117,11 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    scrollbar-width: none;
+  }
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
   }
   body {
     @apply bg-background text-foreground;
@@ -134,14 +139,26 @@
  * (TopNavHeader's tabs, detail-dialog chips, settings tables). */
 html {
   overflow-x: clip;
-  /* Reserve the vertical scrollbar gutter so content-height changes — a
-     filter shrinking the gallery, a dialog churn — can't appear/disappear
-     the Windows classic scrollbar and shift the whole canvas sideways on
-     every selection. Overlay-scrollbar platforms (macOS, Win11 fluent) take
-     no space, so this changes nothing there. Pinned by
-     tests/scrollbar-stability.spec.ts. */
-  scrollbar-gutter: stable;
 }
+
+/* ----- scrollbars: none — scrolling stays, layout space doesn't ----- */
+/* Every scrollbar is hidden — `scrollbar-width: none` (Chromium 121+ and
+   Safari 18.2+, i.e. both Tauri webviews) with a ::-webkit-scrollbar fallback
+   for anything older — while wheel, trackpad, keyboard and Radix ScrollArea's
+   own DOM thumbs keep scrolling everywhere. The point is that a classic
+   scrollbar (Windows) consumes layout width, and react-remove-scroll — which
+   scroll-locks every Radix Dialog and Select — measures gap =
+   innerWidth − documentElement.clientWidth and injects
+   body[data-scroll-locked] { margin-right: <gap>px !important } even though
+   the overflow-x: clip rule above guarantees the lock never removed the
+   viewport scrollbar: opening a modal pulled the whole canvas ~17px left and
+   closing let it spring back (measured: body/SidebarInset width Δ −17px while
+   locked). scrollbar-gutter: stable made it constant by reserving the gutter
+   even with nothing to scroll. With no layout scrollbar anywhere,
+   clientWidth == innerWidth always, so the measured gap — and the
+   compensation margin — are always 0, and the content-height churn the
+   gutter rule used to absorb can't occur either. Pinned by
+   tests/scrollbar-stability.spec.ts and scripts/self-check-scrollbar-free.mjs. */
 
 /* ----- print: patient case report ----- */
 /* The report page marks its printable root with .print-report and its layout
