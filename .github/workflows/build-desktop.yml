@@ -170,3 +170,7 @@ jobs:
             --title "Edge build (main @ ${GITHUB_SHA:0:7})" \
             --prerelease \
             --notes "Automated build of \`main\` — [run #${GITHUB_RUN_NUMBER}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Untested pre-release; prefer the latest stable release for daily use."
+          # The 0.15.3 run's recreate came out as a draft (URL turned into
+          # /releases/untagged-…, invisible on the Releases page). Publishing
+          # is idempotent for a release that's already public.
+          gh release edit edge --draft=false >/dev/null
