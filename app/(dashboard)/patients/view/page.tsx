@@ -916,7 +916,7 @@ function DeletePatientDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isDeleting}>
             Cancel
           </Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={!canDelete || isDeleting}>
+          <Button variant="destructive" onClick={handleDelete} disabled={!canDelete || isDeleting} data-confirm-shortcut>
             {isDeleting ? (
               <>
                 <Loader2 className="size-4 animate-spin" />

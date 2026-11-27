@@ -277,7 +277,9 @@ export function PhotoDetailDialog({
   // pointer-events lockdown, leaving them unclickable and typing dead.
   if (annotate && imageUrl) {
     return (
-      <div className="fixed inset-0 z-50 bg-background p-3 md:p-6">
+      // data-escape-owner: while annotating, Escape belongs to this screen —
+      // the dashboard's escape-back must not navigate underneath it.
+      <div data-escape-owner="" className="fixed inset-0 z-50 bg-background p-3 md:p-6">
         <div className="h-full w-full overflow-hidden rounded-xl border shadow-lg">
           <PhotoAnnotator
             src={imageUrl}

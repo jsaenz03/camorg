@@ -248,7 +248,7 @@ export function PatientAccessPanel() {
             <Button variant="outline" onClick={() => (setEditing(null), setSharing(null))}>
               Cancel
             </Button>
-            <Button onClick={save} disabled={saving || !sharing}>
+            <Button onClick={save} disabled={saving || !sharing} data-confirm-shortcut>
               {saving && <Loader2 className="size-4 animate-spin" />}
               Save
             </Button>

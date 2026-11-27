@@ -94,12 +94,14 @@ export default function PhotosPage() {
 
   // Escape deselects — the manual way out of a half-built link drop. An
   // Escape already consumed by an open dialog (defaultPrevented) leaves the
-  // selection alone.
+  // selection alone, and clearing claims the Escape (preventDefault) so the
+  // dashboard's escape-back steps up the hierarchy on the NEXT press only.
   useEffect(() => {
     if (selectedIds.size === 0) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !e.defaultPrevented) {
         setSelectedIds(new Set());
+        e.preventDefault();
         // The last ⌘/Ctrl-clicked tile keeps focus after the clear, and
         // Chromium paints its :focus-visible ring from the Escape keydown
         // itself — same colour as the selection ring (--ring is --primary),

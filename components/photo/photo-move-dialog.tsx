@@ -216,7 +216,7 @@ export function PhotoMoveDialog({ photo, open, onOpenChange, onMoved }: PhotoMov
             >
               Cancel
             </Button>
-            <Button type="button" onClick={handleMove} disabled={!selected || isMoving}>
+            <Button type="button" onClick={handleMove} disabled={!selected || isMoving} data-confirm-shortcut>
               {isMoving ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (

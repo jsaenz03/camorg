@@ -93,7 +93,7 @@ export function LicenceActivationDialog() {
         </div>
         </div>
         <DialogFooter className="shrink-0 border-t pt-4">
-          <Button onClick={submit} disabled={submitting || !key.trim()} className="w-full">
+          <Button onClick={submit} disabled={submitting || !key.trim()} className="w-full" data-confirm-shortcut>
             {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}
             Activate
           </Button>

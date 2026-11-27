@@ -106,7 +106,7 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
               second screen for Camog: a capture camera and a pocket view of
               every patient and photo you can open on this computer.
             </p>
-            <Button onClick={handleStart} disabled={starting} className="w-full">
+            <Button onClick={handleStart} disabled={starting} className="w-full" data-confirm-shortcut>
               {starting ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />

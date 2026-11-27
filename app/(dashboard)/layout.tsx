@@ -27,6 +27,8 @@ import { CaptureProvider, CaptureHost } from '@/components/capture/capture-provi
 import { ThemeToggle } from '@/components/theme-toggle';
 import { UserMenu } from '@/components/user-menu';
 import { IdleLockOverlay } from '@/components/idle-lock-overlay';
+import { ConfirmShortcut } from '@/components/confirm-shortcut';
+import { EscapeBack } from '@/components/escape-back';
 import { LicenceBanner } from '@/components/licence/licence-banner';
 import { DiskEncryptionBanner } from '@/components/dashboard/disk-encryption-banner';
 import { ChangePasscodeForm } from '@/components/settings/change-passcode-form';
@@ -246,6 +248,8 @@ export default function DashboardLayout({
       <AutoBackupKick />
       <UpdateCheckKick />
       <IdleLockGate />
+      <ConfirmShortcut />
+      <EscapeBack />
     </SidebarProvider>
   );
 }

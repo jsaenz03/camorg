@@ -450,7 +450,7 @@ export function ImportPhotosDialog({ open, onOpenChange, onImported }: ImportPho
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button disabled={!canImport} onClick={() => void runImport()}>
+              <Button disabled={!canImport} onClick={() => void runImport()} data-confirm-shortcut>
                 <Upload className="size-4" />
                 Import {importable.length} photo{importable.length === 1 ? '' : 's'}
               </Button>

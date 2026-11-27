@@ -208,7 +208,7 @@ export function StorageCleanupDialog({ cleanup, onClose }: StorageCleanupDialogP
               <Button variant="outline" onClick={onClose}>
                 Keep files
               </Button>
-              <Button variant="destructive" disabled={!canDelete} onClick={() => void deleteFiles()}>
+              <Button variant="destructive" disabled={!canDelete} onClick={() => void deleteFiles()} data-confirm-shortcut>
                 <Trash2 className="size-4" />
                 Delete {cleanup.files.length} file{cleanup.files.length === 1 ? '' : 's'} permanently
               </Button>
