@@ -1498,7 +1498,15 @@ fn spawn_handler<R: Runtime>(
 // thread and must not block the UI mid-upload.
 #[tauri::command]
 pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, String> {
-  stop_remote_camera().await;
+  let _lifecycle = CAMERA_LIFECYCLE.lock().unwrap();
+  start_session(&app)
+}
+
+/// The starting half of the lifecycle. Caller holds CAMERA_LIFECYCLE: the
+/// session stopped here is the one REMOTE_CAMERA tracked, so no concurrent
+/// start can strand a spawned server thread.
+fn start_session(app: &AppHandle) -> Result<RemoteCameraInfo, String> {
+  stop_session();
 
   // Bind every interface (0.0.0.0), not just today's default route: the
   // link keeps working when the machine switches networks (Wi-Fi ↔ hotspot)
@@ -1508,7 +1516,7 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   // Bind the pinned port first so last session's URL keeps working; only if
   // something else grabbed it fall back to an ephemeral port (and re-pin, so
   // the new URL is the stable one going forward).
-  let pinned = pinned_port(&app)?;
+  let pinned = pinned_port(app)?;
   let (server, port) = match pinned.and_then(|p| {
     let listener = bind_listener(bind_all, p).ok()?;
     Server::from_listener(listener, None).ok().map(|server| (server, p))
@@ -1535,12 +1543,12 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
           None,
         );
       }
-      pin_port(&app, port)?;
+      pin_port(app, port)?;
       (server, port)
     }
   };
-  let token = pairing_token(&app)?;
-  let key = pairing_key(&app)?;
+  let token = pairing_token(app)?;
+  let key = pairing_key(app)?;
   let urls = pairing_urls(lan_ip(), tailscale_ip(), port, &token, &key);
   let server = Arc::new(server);
   let last_seen_ms = Arc::new(AtomicU64::new(now_ms()));
@@ -1552,7 +1560,7 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   let guard = Arc::new(AuthGuard::new());
   let sessions = Arc::new(SessionStore::new());
   let thread = spawn_handler(
-    app,
+    app.clone(),
     Arc::clone(&server),
     Arc::new(LinkContext {
       token: token.clone(),
@@ -1610,8 +1618,21 @@ pub async fn start_remote_camera(app: AppHandle) -> Result<RemoteCameraInfo, Str
   Ok(RemoteCameraInfo { urls })
 }
 
-#[tauri::command]
-pub async fn stop_remote_camera() {
+/// Serialises the link lifecycle across the async commands below. They run
+/// concurrently on Tauri's runtime, and two starts firing in the same
+/// second used to orphan a server thread: each stop saw an empty
+/// REMOTE_CAMERA, the loser of the pinned-port bind fell back to an
+/// ephemeral port, and the port winner's already-spawned thread was left
+/// untracked — a zombie listener holding its start-time token, 404ing
+/// every later pairing code on the saved address (27 Nov 2026: phones
+/// kept bouncing off exactly such a zombie on the old port). The bodies
+/// stay deliberately synchronous — stop's join and the binds are blocking
+/// — so the critical section is milliseconds and the lock is never held
+/// across an await.
+static CAMERA_LIFECYCLE: Mutex<()> = Mutex::new(());
+
+/// The stopping half of the lifecycle. Caller holds CAMERA_LIFECYCLE.
+fn stop_session() {
   if let Some(mut remote_camera) = REMOTE_CAMERA.lock().unwrap().take() {
     // Session revocation, made explicit: every paired phone signs out the
     // moment the link ends, without touching the pairing code.
@@ -1626,6 +1647,12 @@ pub async fn stop_remote_camera() {
   *AWAITING_REPORT.lock().unwrap() = None;
 }
 
+#[tauri::command]
+pub async fn stop_remote_camera() {
+  let _lifecycle = CAMERA_LIFECYCLE.lock().unwrap();
+  stop_session();
+}
+
 /// Rotate the pairing code ("New code" in the phone link dialog): stop the
 /// link, forget the persisted token, start again on the same pinned port.
 /// The previous code stops working the moment the server restarts — a phone
@@ -1636,7 +1663,8 @@ pub async fn stop_remote_camera() {
 /// so a re-paired phone picks it straight back up.
 #[tauri::command]
 pub async fn reset_pairing_token(app: AppHandle) -> Result<RemoteCameraInfo, String> {
-  stop_remote_camera().await;
+  let _lifecycle = CAMERA_LIFECYCLE.lock().unwrap();
+  stop_session();
   let dir = app
     .path()
     .app_data_dir()
@@ -1660,7 +1688,7 @@ pub async fn reset_pairing_token(app: AppHandle) -> Result<RemoteCameraInfo, Str
     "Pairing code rotated — previously paired phones must re-scan.",
     None,
   );
-  start_remote_camera(app).await
+  start_session(&app)
 }
 
 /// The pairing URLs of the running link, if any. Lets a second surface (the
@@ -2162,6 +2190,18 @@ mod tests {
     // home-screen container (a scan opens the browser, never the icon).
     assert!(LINK_HTML.contains(r#"id="paste""#));
     assert!(LINK_HTML.contains(r#"id="paste-go""#));
+    // The camera-app scan leads on both hint paths; paste sits collapsed
+    // under Reconnect (a typed bare address used to land on it with no
+    // cross-device clipboard to fill it from) and reopens itself after a
+    // failed restore — when this box is why the phone came back.
+    assert!(LINK_HTML.contains(r#"Open this phone\u2019s Camera app"#));
+    assert!(LINK_HTML.contains(r#"<details id="paste-wrap">"#));
+    assert!(LINK_HTML.contains(r"paste-wrap').open = true"));
+    // A bounced saved link (the desktop rotated its code) says WHY instead
+    // of repeating the generic hint, and standalone containers get the
+    // paste box too — a QR scan can never reach them.
+    assert!(LINK_HTML.contains(r"The link this phone remembered no longer works"));
+    assert!(LINK_HTML.contains(r"(display-mode: standalone)"));
     // The companion page's half of the handshake.
     assert!(PAGE_HTML.contains("fetch('link-code')"));
     assert!(PAGE_HTML.contains("rememberLink"));

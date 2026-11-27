@@ -3314,13 +3314,18 @@ const PAGE_HTML: &str = r##"<!doctype html>
 // desktop restart is healed silently by the companion page (the saved
 // pairing URL re-mints it), but a rotated or lost link used to dead-end on
 // a bare 404 with nothing to do but leave and re-scan from the camera app.
-// This page is the way back in: restore the saved link with one tap, paste
-// an address copied from the Phone link dialog (the only channel that
-// reaches a standalone home-screen container — its storage stays empty no
-// matter how often the QR is scanned, because the scan opens the browser,
-// not the installed app), or scan the desktop's QR from here. Static and
-// secret-free — the pairing code only ever arrives through the phone's own
-// action — so it is safe to hand to unauthenticated requests.
+// This page is the way back in: restore the saved link with one tap, or
+// scan the desktop's QR from here. The camera-app scan is the primary
+// instruction on every path — typing the bare server address used to land
+// on a prominent paste field no cross-device clipboard can fill (only
+// Apple's Universal Clipboard bridges the copy), so the paste box now sits
+// collapsed under "Reconnect": still the only channel that reaches a
+// standalone home-screen container (its storage stays empty no matter how
+// often the QR is scanned, because the scan opens the browser, not the
+// installed app), and it re-uncollapses itself when a restore has already
+// failed. Static and secret-free — the pairing code only ever arrives
+// through the phone's own action — so it is safe to hand to
+// unauthenticated requests.
 const LINK_HTML: &str = r##"<!doctype html>
 <html lang="en">
 <head>
@@ -3392,11 +3397,24 @@ const LINK_HTML: &str = r##"<!doctype html>
   #scanbox video { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
   #err { color: var(--error); }
   #paste {
-    width: 100%; max-width: 340px; min-height: 48px; padding: 13px 16px;
+    width: 100%; max-width: none; min-height: 48px; padding: 13px 16px;
     border-radius: var(--radius); border: 1px solid var(--border);
     background: var(--card); color: var(--fg); font: inherit; font-size: 16px;
   }
   #paste::placeholder { color: var(--muted); }
+  /* The demoted reconnect row. Styled directly rather than via .btn:
+     Safari forces summary to display:list-item, so the flex .btn box
+     misrenders there — this page's whole audience is phone browsers. */
+  #paste-wrap { width: 100%; max-width: 340px; }
+  #paste-wrap summary {
+    display: block; list-style: none; width: 100%; min-height: 48px;
+    padding: 13px 16px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--card); color: var(--fg);
+    font-size: 17px; font-weight: 600; text-align: center; cursor: pointer;
+  }
+  #paste-wrap summary::-webkit-details-marker { display: none; }
+  #paste-wrap summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  #paste-fields { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
 </style>
 </head>
 <body class="light">
@@ -3408,15 +3426,20 @@ const LINK_HTML: &str = r##"<!doctype html>
         <div class="tagline">Phone link</div>
       </div>
     </header>
-    <p id="hint">Scan the QR code shown in Camog on your computer, or paste an address copied from its Phone link dialog.</p>
+    <p id="hint">Tap Scan QR code below, or point this phone&rsquo;s camera app at the QR code in Camog&rsquo;s Phone link dialog.</p>
     <button type="button" class="btn btn-primary" id="scan" hidden>
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
       Scan QR code
     </button>
     <div id="scanbox" hidden><video id="video" autoplay playsinline muted></video></div>
     <button type="button" class="btn btn-secondary" id="restore" hidden>Restore saved link</button>
-    <input id="paste" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste a link copied from Camog">
-    <button type="button" class="btn btn-secondary" id="paste-go">Link with pasted address</button>
+    <details id="paste-wrap">
+      <summary>Reconnect with a pasted address</summary>
+      <div id="paste-fields">
+        <input id="paste" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste a link copied from Camog">
+        <button type="button" class="btn btn-secondary" id="paste-go">Link with pasted address</button>
+      </div>
+    </details>
     <p id="err"></p>
   </main>
 <script>
@@ -3464,12 +3487,18 @@ const LINK_HTML: &str = r##"<!doctype html>
   // ping-ponging (the companion page clears it once a link is live again).
   var saved = null;
   try { saved = localStorage.getItem(LINK_KEY); } catch (e) {}
+  // A saved code that was already tried and bounced back here means the
+  // desktop rotated its pairing code since: this phone's memory is stale,
+  // and the generic hint would read as inexplicable (27 Nov feedback —
+  // repeated dead scans read as "scanning is broken, why must I paste").
+  var bounced = false;
   if (saved) {
     show($('restore'), true);
     $('restore').addEventListener('click', function () { go(saved); });
     var tried = null;
     try { tried = sessionStorage.getItem(TRIED_KEY); } catch (e) {}
     if (!tried) go(saved);
+    else bounced = true;
   }
 
   // Paste: the address copied under a QR in Camog's Phone link dialog
@@ -3481,6 +3510,16 @@ const LINK_HTML: &str = r##"<!doctype html>
   $('paste').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') go($('paste').value);
   });
+  // A phone back here after a failed restore almost certainly came back for
+  // this box (rotated code), and a standalone home-screen container has no
+  // other channel at all — a QR scan can never reach it. Present the box
+  // uncollapsed so reconnect stays one paste away.
+  var standalone = false;
+  try {
+    standalone = matchMedia('(display-mode: standalone)').matches ||
+      navigator.standalone === true;
+  } catch (e) { /* engines without matchMedia */ }
+  if (bounced || standalone) $('paste-wrap').open = true;
 
   // In-page QR scan where the engine can read codes itself (Android today;
   // iOS Safari has no BarcodeDetector, so there the button stays hidden and
@@ -3524,7 +3563,12 @@ const LINK_HTML: &str = r##"<!doctype html>
         });
     });
   } else {
-    $('hint').textContent = 'Scan this server\u2019s QR code with your camera app, paste a copied link, or restore the saved link.';
+    $('hint').textContent = 'Open this phone\u2019s Camera app and point it at the QR code in Camog\u2019s Phone link dialog \u2014 that links this phone, no typing needed.';
+  }
+  // The bounce explanation outranks both platform hints: it says WHY this
+  // page came back instead of repeating the instruction that just failed.
+  if (bounced) {
+    $('hint').textContent = 'The link this phone remembered no longer works \u2014 scan the QR code in Camog\u2019s Phone link dialog on your computer, or paste the address copied under it.';
   }
 })();
 </script>

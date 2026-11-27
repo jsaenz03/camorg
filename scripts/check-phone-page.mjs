@@ -1021,6 +1021,12 @@ await manualLink.goto(linkBase + 'link', { waitUntil: 'load' });
 const restoreVisible = await manualLink.isVisible('#restore');
 const scanTracksSupport = await manualLink.evaluate(() =>
   document.getElementById('scan').hidden === !('BarcodeDetector' in window));
+// The bounce case (this page holds a saved code that was tried and
+// rejected): the hint must say WHY the link died instead of repeating the
+// generic instruction, and the paste box must be uncovered unprompted.
+const bouncedHint = await manualLink.textContent('#hint');
+const pasteUncovered = await manualLink.evaluate(() =>
+  document.getElementById('paste-wrap').open);
 await manualLink.click('#restore');
 await manualLink.waitForSelector('#conn', { timeout: 8000 });
 await manualLink.close();
@@ -1038,6 +1044,8 @@ const checks = [
     healedPath === '/t/0123456789abcdef/' && healedCode === '0123456789abcdef'],
   ['link page keeps a manual restore; scan button tracks platform support',
     restoreVisible === true && scanTracksSupport === true],
+  ['link page explains a bounced saved link and uncovers paste',
+    bouncedHint.includes('no longer works') && pasteUncovered === true],
   ['library tab in page source', page.includes('id="tab-lib"')],
   ['search + patient rows + viewer present', ['id="search"', 'patient-row', 'id="stage"'].every((s) => page.includes(s))],
   ['grids flag photos that need review', gridDots === 3],

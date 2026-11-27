@@ -25,6 +25,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useCompanion } from '@/components/companion/companion-provider';
+import { confirmDialog } from '@/lib/utils/confirm';
 
 export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
   const {
@@ -53,6 +54,17 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
   };
 
   const handleNewCode = async () => {
+    // The reflexive click is the trap (27 Nov: seven rotations in ten
+    // minutes, each one killing the QR the phone was about to scan, while
+    // the user chased a paste page that a fresh scan — not a fresh code —
+    // fixes). Make the deliberate action deliberate.
+    if (
+      !(await confirmDialog(
+        'This instantly signs out every paired phone and invalidates all saved links — each device must scan the new QR once. Continue?',
+      ))
+    ) {
+      return;
+    }
     setRotating(true);
     await regenerate();
     setRotating(false);
@@ -139,6 +151,12 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
                     </span>
                   )}
                 </p>
+                {!phoneConnected && (
+                  <p className="text-xs text-center text-muted-foreground">
+                    Phone not connecting? Scan this code again — no new code
+                    needed.
+                  </p>
+                )}
               </div>
 
               {/* Session controls. */}
@@ -228,7 +246,7 @@ export function PhoneLinkDialog({ children }: { children: React.ReactNode }) {
 
             <div className="flex gap-2">
               <Button
-                variant="outline"
+                variant="ghost"
                 className="flex-1"
                 onClick={handleNewCode}
                 disabled={rotating}
