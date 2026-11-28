@@ -1,9 +1,11 @@
 name: Build Desktop Installers
 
-# Produces all four installers from CI — macOS DMG (Apple silicon + Intel)
-# and Windows x64 (.msi + NSIS .exe) — since Tauri cannot cross-compile
-# Windows binaries from macOS. (No MSIX: Tauri v2's CLI only bundles
+# Produces the installers from CI — macOS universal DMG (Apple Silicon +
+# Intel) and Windows x64 (.msi + NSIS .exe) — since Tauri cannot cross-
+# compile Windows binaries from macOS. (No MSIX: Tauri v2's CLI only bundles
 # msi/nsis on Windows; Store packaging happens outside tauri build.)
+# macOS legs sign + notarise only when the APPLE_CERTIFICATE / APPLE_API_*
+# secrets exist; without them the DMGs are ad-hoc as before.
 #
 # Triggers:
 #   - push to default branch -> checks + build (artifacts) + rolling 'edge' pre-release
@@ -75,9 +77,10 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
-          - platform: macos-latest
-            args: "--target x86_64-apple-darwin"
+            # One universal leg (both arch slices lipo'd together) — the DMG it
+            # produces is the exact artifact attached to stable releases and
+            # copied to the distribution page (AGENTS.md, releases convention).
+            args: "--target universal-apple-darwin"
           - platform: windows-latest
             args: ""
 
@@ -105,6 +108,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Stage Apple notary key (macOS)
+        # APPLE_API_KEY (below) is the App Store Connect Key ID; the .p8 file
+        # it authenticates with is written here from the APPLE_API_KEY_P8
+        # secret, and its path is passed to tauri via APPLE_API_KEY_PATH.
+        if: matrix.platform == 'macos-latest'
+        run: |
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/camog-notary.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/camog-notary.p8" >> "$GITHUB_ENV"
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+
       - name: Build Tauri app
         # Pinned to a commit SHA: this action runs with a write-capable token.
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
@@ -117,6 +131,19 @@ jobs:
           # and stable users can never auto-take a pre-release.
           TAURI_SIGNING_PRIVATE_KEY: ${{ matrix.platform == 'windows-latest' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ matrix.platform == 'windows-latest' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # macOS signing + notarisation: tauri-action imports the base64 .p12
+          # into an ephemeral keychain, then notarises and staples .app and
+          # .dmg with the App Store Connect API key. Every var here is empty
+          # until the APPLE_CERTIFICATE / APPLE_API_* secrets exist — empty
+          # means tauri skips signing entirely (ad-hoc DMGs, as before), so
+          # adding the secrets is what turns signing on, no code change.
+          APPLE_SIGNING_IDENTITY: "${{ matrix.platform == 'macos-latest' && 'Developer ID Application: JOHN RAPHAEL SAENZ (26LPTJU2YH)' || '' }}"
+          APPLE_CERTIFICATE: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          # Throwaway password for tauri-action's ephemeral CI keychain.
+          KEYCHAIN_PASSWORD: ${{ matrix.platform == 'macos-latest' && 'camog-ci-temp-keychain' || '' }}
+          APPLE_API_ISSUER: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_KEY_ID || '' }}
         with:
           args: ${{ matrix.args }}
           includeUpdaterJson: ${{ matrix.platform == 'windows-latest' }}
