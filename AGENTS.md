@@ -53,6 +53,18 @@ Cloudflare Worker (`activation-server/`).
   CARGO_PKG_VERSION, shown in Settings → Diagnostics; missing it ships an app
   that reports the previous version), commit, then publish a GitHub Release
   tagged `vX.Y.Z` — CI builds and attaches the installers to it.
+- macOS packaging is local (CI's mac DMGs are ad-hoc-signed only): at stable
+  release, build the signed universal DMG (`APPLE_SIGNING_IDENTITY="Developer
+  ID Application: JOHN RAPHAEL SAENZ (26LPTJU2YH)" npx tauri build --target
+  universal-apple-darwin`), notarise exactly once (`notarytool submit
+  --keychain-profile CAMOG_NOTARY --wait` → `stapler staple`), attach to the
+  stable release replacing the unsigned CI DMGs, copy it over BOTH
+  `activation-server/public/download/Camog-macOS-AppleSilicon.dmg` and
+  `Camog-macOS-Intel.dmg` (gitignored; one universal file under both names),
+  then `wrangler deploy` from `activation-server/` (worker deploy is a
+  separate manual step — push ≠ publish). Verify with `stapler validate` +
+  spctl on the app inside the MOUNTED dmg; spctl on the raw .dmg always
+  reports "not an app" even when valid.
 
 ## Windows specifics
 

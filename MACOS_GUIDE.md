@@ -11,30 +11,13 @@ other tools on the machine.
 
 1. Download the latest installer from
    [camog-license.cliniciq.com.au](https://camog-license.cliniciq.com.au):
-   - `Camog_*_aarch64.dmg` — Macs with Apple Silicon (M1/M2/M3/M4)
-   - `Camog_*_x64.dmg` — Intel Macs
+   - the macOS `.dmg` — one universal installer that runs on Apple Silicon
+     (M1/M2/M3/M4) and Intel Macs alike
    - (Windows machines: use the `.msi` — its setup wizard also installs the
      WebView2 component automatically if the machine is missing it)
 2. Open the `.dmg` and drag **Camog** into **Applications**
-3. Launch Camog from Applications
-   - Camog is not signed with an Apple Developer certificate, so on modern
-     macOS a browser-downloaded copy is blocked on first launch with a
-     misleading **"'Camog' is damaged and can't be opened"** message. The app
-     is fine — macOS just refuses unsigned downloads. One-time fix: open
-     **Terminal** (Applications → Utilities → Terminal), paste this, press
-     Return, then launch Camog normally:
-     ```bash
-     xattr -d com.apple.quarantine /Applications/Camog.app
-     ```
-   - To avoid the workaround entirely, download the `.dmg` from Terminal
-     instead of a browser — files fetched with `curl` carry no quarantine
-     flag. Pick the file for your Mac from the
-     [distribution page](https://camog-license.cliniciq.com.au), e.g. for
-     Apple Silicon:
-     ```bash
-     curl -LO https://camog-license.cliniciq.com.au/download/Camog-macOS-AppleSilicon.dmg
-     ```
-     (Intel Macs: the `_x64.dmg` file.)
+3. Launch Camog from Applications — the macOS installer is signed and
+   notarised by Apple, so macOS opens it without Gatekeeper warnings
 4. The first-run wizard appears: name your organisation and create the first
    account — it becomes the organisation administrator
 5. Sign in with the account you just created
@@ -107,12 +90,11 @@ existing app in Applications. Your data is untouched. Pick the release marked
 
 ### App won't start
 1. Confirm macOS 10.15 (Catalina) or newer
-2. "'Camog' is damaged and can't be opened" — this is Gatekeeper refusing the
-   unsigned download, not real damage. Clear the quarantine flag (once):
-   ```bash
-   xattr -d com.apple.quarantine /Applications/Camog.app
-   ```
-   (see install step 3)
+2. A Gatekeeper warning ("'Camog' is damaged and can't be opened" or "cannot
+   verify the developer"): the installer is signed and notarised, so this
+   means the copy is stale or didn't come from the official distribution
+   page — delete it and re-download. (Installers downloaded before
+   28 November 2026 were unsigned; macOS refuses those on first launch.)
 3. If the database is corrupted, reset it (see Maintenance) — this deletes
    all data
 
@@ -161,9 +143,9 @@ npm run desktop:build
 
 Output lands in `src-tauri/target/release/bundle/`. CI (GitHub Actions)
 builds and attaches the macOS DMGs and Windows installers to each
-[Release](https://github.com/jsaenz03/camorg/releases) automatically. macOS
-builds are ad-hoc signed only (no Apple Developer certificate, no
-notarisation) — see install step 3 for the first-launch note.
+[Release](https://github.com/jsaenz03/camorg/releases) automatically. Those
+CI macOS DMGs are ad-hoc signed only — the signed, notarised installer is
+built locally at release time (see AGENTS.md, "macOS bundle safety").
 
 > **Warning:** a local `.env` with bootstrap credentials gets baked into a
 > locally built installer (Next inlines `NEXT_PUBLIC_*` values at build

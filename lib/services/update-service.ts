@@ -3,8 +3,9 @@
  *
  * Windows-only by design: the updater endpoints and public key live in
  * tauri.windows.conf.json and the signed artifacts are produced by CI, so
- * other platforms simply have no channel yet (macOS stays manual until its
- * builds are signed and notarised). The service only ever OFFERS an update —
+ * other platforms simply have no channel yet (macOS updates stay manual —
+ * the DMG is signed and notarised, but the updater channel isn't wired up).
+ * The service only ever OFFERS an update —
  * the download, signature verification and install always run on the user's
  * click, and the relaunch is a second explicit choice.
  */

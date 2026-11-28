@@ -94,7 +94,7 @@ You must not use the Software:
 
 ## 10. Early-stage software and installer signing
 
-Camog is an early-stage release. It may contain defects, and features may change. Installers distributed through the Microsoft Store are signed by the Store. Installers downloaded directly from our distribution page are **not code-signed** (Apple notarisation is pending), so your operating system may show security warnings (for example macOS Gatekeeper or Windows SmartScreen) that you must assess before proceeding. Verify that you downloaded the installer from our official distribution point before installing.
+Camog is an early-stage release. It may contain defects, and features may change. Installers distributed through the Microsoft Store are signed by the Store. macOS installers downloaded directly from our distribution page are **code-signed and notarised** by Apple, so macOS Gatekeeper should not warn when installing them. Windows installers downloaded directly from our distribution page are **not code-signed**, so Windows SmartScreen may show a security warning that you must assess before proceeding; packages offered by the Windows updater are separately signature-verified by the Software before installation. Verify that you downloaded the installer from our official distribution point before installing.
 
 ## 11. Warranties and the Australian Consumer Law
 

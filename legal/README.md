@@ -47,5 +47,8 @@ Still to confirm with the lawyer:
   release that changes it — and re-sync all three copies (public/legal for the
   in-app page, activation-server/public/legal for the public Store-listing URLs;
   CI checks both).
-- Direct-download installers are unsigned until Apple notarisation; ToS cl 10
-  states this. When the app is signed, update cl 10 and MACOS_GUIDE.md in the same release.
+- macOS direct-download installers are code-signed and notarised (Developer ID,
+  first shipped 28 November 2026 with 0.15.3); Windows direct downloads remain
+  unsigned (SmartScreen). ToS cl 10 states this — keep cl 10, MACOS_GUIDE.md and
+  the distribution page's download note accurate together whenever the signing
+  story changes.
