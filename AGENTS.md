@@ -55,17 +55,21 @@ Cloudflare Worker (`activation-server/`).
   tagged `vX.Y.Z` — CI builds and attaches the installers to it.
 - macOS DMG comes from CI already signed + notarised (APPLE_CERTIFICATE /
   APPLE_API_* repo secrets; universal mac leg + a post-build notarise+staple
-  step — tauri notarises only the .app). At stable release: verify it
-  (`stapler validate` on the DMG + spctl on the app inside the MOUNTED dmg;
-  spctl on the raw .dmg always reports "not an app" even when valid), copy it
-  over BOTH `activation-server/public/download/Camog-macOS-AppleSilicon.dmg`
-  and `Camog-macOS-Intel.dmg` (gitignored; one file under both names), then
-  `npx wrangler deploy --config wrangler.toml` from `activation-server/`
-  (worker deploy is a separate manual step — push ≠ publish). Local signed
-  builds are only a fallback: `APPLE_SIGNING_IDENTITY="Developer ID
-  Application: JOHN RAPHAEL SAENZ (26LPTJU2YH)" npx tauri build --target
-  universal-apple-darwin`, notarise exactly once (`notarytool submit
-  --keychain-profile CAMOG_NOTARY --wait` → `stapler staple`).
+  step — tauri notarises only the .app). At stable release run
+  `scripts/release-macos.sh [tag]` — it verifies the DMG (Team ID, stapler,
+  spctl on the app inside the MOUNTED dmg), copies it over BOTH
+  `activation-server/public/download/Camog-macOS-AppleSilicon.dmg` and
+  `Camog-macOS-Intel.dmg`, deploys with `npx wrangler deploy --config
+  wrangler.toml` and proves the live download byte-identical by sha256.
+  Flags: `--dry-run` (verify only), `--yes` (skip the deploy prompt).
+  By hand it is: verify (`stapler validate` + spctl on the mounted app;
+  spctl on the raw .dmg always reports "not an app" even when valid), copy
+  over both names, deploy from `activation-server/` (worker deploy is a
+  separate manual step — push ≠ publish). Local signed builds are only a
+  fallback: `APPLE_SIGNING_IDENTITY="Developer ID Application: JOHN RAPHAEL
+  SAENZ (26LPTJU2YH)" npx tauri build --target universal-apple-darwin`,
+  notarise exactly once (`notarytool submit --keychain-profile CAMOG_NOTARY
+  --wait` → `stapler staple`).
 
 ## Windows specifics
 
