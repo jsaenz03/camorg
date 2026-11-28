@@ -143,9 +143,10 @@ npm run desktop:build
 
 Output lands in `src-tauri/target/release/bundle/`. CI (GitHub Actions)
 builds and attaches the macOS DMGs and Windows installers to each
-[Release](https://github.com/jsaenz03/camorg/releases) automatically. Those
-CI macOS DMGs are ad-hoc signed only — the signed, notarised installer is
-built locally at release time (see AGENTS.md, "macOS bundle safety").
+[Release](https://github.com/jsaenz03/camorg/releases) automatically. With
+the Apple signing secrets in place CI produces the signed, notarised
+universal DMG itself (see AGENTS.md, releases convention); without them the
+DMGs are ad-hoc signed only.
 
 > **Warning:** a local `.env` with bootstrap credentials gets baked into a
 > locally built installer (Next inlines `NEXT_PUBLIC_*` values at build
