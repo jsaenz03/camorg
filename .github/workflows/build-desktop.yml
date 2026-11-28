@@ -154,6 +154,28 @@ jobs:
           # (empty on push/PR/dispatch, where tauri-action ignores it).
           releaseId: ${{ github.event_name == 'release' && github.event.release.id || '' }}
 
+      - name: Notarise and staple the DMG (macOS)
+        # Tauri's bundler notarises the .app but not the DMG it packs. This
+        # closes the gap so the artifact carries its own ticket, matching the
+        # DMGs notarised locally since 0.15.3. The p8 staged earlier persists
+        # in RUNNER_TEMP for the whole job.
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_API_KEY_ID" ]; then
+            echo "No App Store Connect key — skipping DMG notarisation (secrets not set)."
+            exit 0
+          fi
+          DMG=$(find src-tauri/target/*/release/bundle/dmg -name '*.dmg' | head -1)
+          echo "Notarising $DMG"
+          xcrun notarytool submit "$DMG" --key "$RUNNER_TEMP/camog-notary.p8" \
+            --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+        env:
+          APPLE_API_KEY_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_ISSUER || '' }}
+
       - name: Upload installers (build artifact)
         if: github.event_name != 'release'
         uses: actions/upload-artifact@v4
